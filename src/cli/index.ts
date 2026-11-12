@@ -18,6 +18,7 @@ program
   .option('--cli', 'Print the usage report in ANSI tables in the terminal and exit immediately', false)
   .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
   .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
+  .option('--update', 'Update ai-burnrate to the latest version from GitHub', false)
   .option('--uninstall', 'Uninstall ai-burnrate globally from your system', false);
 
 program.parse(process.argv);
@@ -26,10 +27,25 @@ const opts = program.opts<{
   cli?: boolean;
   open?: boolean;
   port?: string;
+  update?: boolean;
   uninstall?: boolean;
 }>();
 
 async function main() {
+  if (opts.update) {
+    console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold('ai-burnrate')} to the latest version from GitHub...`);
+    try {
+      execSync('npm install -g github:Cise07/ai-burnrate-tool', { stdio: 'inherit' });
+      console.log(`  ${pc.green('✓')} ${pc.bold('ai-burnrate')} updated successfully to the latest version!\n`);
+      process.exit(0);
+    } catch {
+      console.error(
+        `  ${pc.red('✗')} Failed to update automatically. Try running:\n  ${pc.cyan('npm install -g github:Cise07/ai-burnrate-tool')}\n`
+      );
+      process.exit(1);
+    }
+  }
+
   if (opts.uninstall) {
     console.log(`\n  ${pc.yellow('●')} Uninstalling ${pc.bold('ai-burnrate')} globally...`);
     try {

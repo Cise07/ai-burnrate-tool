@@ -81,6 +81,7 @@ Once installed, the **`burnrate`** (or **`ai-burnrate`**) command is available g
 | `burnrate --cli` | 📊 **Terminal Mode:** Syncs pricing, prints the full token & cost report in colorized ANSI tables in the terminal, and exits immediately. |
 | `burnrate --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without automatically opening the browser. |
 | `burnrate -p, --port <number>` | 🔌 **Custom Port:** Starts the dashboard on a specific port (default: `4321`, automatically falling back to the next free port if busy). |
+| `burnrate --update` | 🔄 **Self-Update:** Updates `ai-burnrate` to the latest release directly from GitHub. |
 | `burnrate --uninstall` | 🗑️ **Self-Uninstall:** Completely removes the global `burnrate` package from your system. |
 | `burnrate -V, --version` | 🏷️ Prints the installed version (`1.0.0`). |
 | `burnrate -h, --help` | ℹ️ Displays all available CLI options. |
