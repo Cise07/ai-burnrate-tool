@@ -156,32 +156,88 @@ export async function syncOfficialPricing(): Promise<{
       const litellm = (await res.json()) as Record<string, any>;
       const mapping: Array<{ ourKey: string; litellmKeys: string[] }> = [
         {
-          ourKey: 'claude-sonnet-4',
-          litellmKeys: ['claude-sonnet-4-20250514', 'anthropic/claude-sonnet-4-20250514'],
-        },
-        {
-          ourKey: 'claude-opus-4',
-          litellmKeys: ['claude-opus-4-20250514', 'anthropic/claude-opus-4-20250514'],
-        },
-        {
           ourKey: 'claude-3-7-sonnet',
-          litellmKeys: ['claude-3-7-sonnet-20250219', 'claude-3-7-sonnet-latest'],
+          litellmKeys: [
+            'anthropic.claude-3-7-sonnet-20250219-v1:0',
+            'claude-3-7-sonnet-20250219',
+            'claude-3-7-sonnet-latest',
+          ],
+        },
+        {
+          ourKey: 'claude-sonnet-4',
+          litellmKeys: [
+            'claude-sonnet-4-5-20250929',
+            'claude-sonnet-4-5',
+            'anthropic.claude-sonnet-4-5-20250929-v1:0',
+            'claude-sonnet-4-20250514',
+            'anthropic/claude-sonnet-4-20250514',
+          ],
         },
         {
           ourKey: 'claude-3-5-sonnet',
-          litellmKeys: ['claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-latest'],
+          litellmKeys: [
+            'anthropic.claude-3-5-sonnet-20241022-v2:0',
+            'claude-3-5-sonnet-20241022',
+            'claude-3-5-sonnet-latest',
+          ],
+        },
+        {
+          ourKey: 'claude-opus-4',
+          litellmKeys: [
+            'anthropic.claude-opus-4-20250514-v1:0',
+            'claude-opus-4-20250514',
+            'anthropic/claude-opus-4-20250514',
+          ],
+        },
+        {
+          ourKey: 'claude-3-opus',
+          litellmKeys: [
+            'anthropic.claude-3-opus-20240229-v1:0',
+            'claude-3-opus-20240229',
+          ],
         },
         {
           ourKey: 'claude-3-5-haiku',
-          litellmKeys: ['claude-3-5-haiku-20241022', 'claude-3-5-haiku-latest'],
+          litellmKeys: [
+            'anthropic.claude-3-5-haiku-20241022-v1:0',
+            'claude-3-5-haiku-20241022',
+            'claude-3-5-haiku-latest',
+          ],
+        },
+        {
+          ourKey: 'claude-haiku-4',
+          litellmKeys: [
+            'anthropic.claude-haiku-4-5-20251001-v1:0',
+            'claude-haiku-4-5-20251001',
+          ],
         },
         {
           ourKey: 'gemini-2.5-pro',
           litellmKeys: ['gemini/gemini-2.5-pro', 'gemini-2.5-pro'],
         },
         {
+          ourKey: 'gemini-pro',
+          litellmKeys: ['gemini/gemini-2.5-pro', 'gemini-2.5-pro'],
+        },
+        {
           ourKey: 'gemini-2.5-flash',
           litellmKeys: ['gemini/gemini-2.5-flash', 'gemini-2.5-flash'],
+        },
+        {
+          ourKey: 'gemini-flash',
+          litellmKeys: ['gemini/gemini-2.5-flash', 'gemini-2.5-flash'],
+        },
+        {
+          ourKey: 'gemini-3.8-flash',
+          litellmKeys: ['gemini/gemini-3.8-flash', 'gemini-3.8-flash'],
+        },
+        {
+          ourKey: 'gemini-flash-lite',
+          litellmKeys: [
+            'gemini/gemini-2.5-flash-lite',
+            'gemini-2.5-flash-lite',
+            'gemini/gemini-flash-lite-latest',
+          ],
         },
       ];
 
@@ -202,7 +258,7 @@ export async function syncOfficialPricing(): Promise<{
                 ? Number((entry.cache_read_input_token_cost * 1_000_000).toFixed(4))
                 : Number((inputPer1M * (existing.provider === 'anthropic' ? 0.1 : 0.25)).toFixed(4));
             const cacheWritePer1M =
-              typeof entry.cache_creation_input_token_cost === 'number'
+              typeof entry.cache_creation_input_token_cost === 'number' && entry.cache_creation_input_token_cost > 0
                 ? Number((entry.cache_creation_input_token_cost * 1_000_000).toFixed(4))
                 : existing.cacheWrite;
 
@@ -358,13 +414,22 @@ export function calculateTurnCost(
   const cacheWrite = Math.max(0, params.cacheWriteTokens);
   const output = Math.max(0, params.outputTokens);
 
-  const totalPromptTokens = nonCachedInput + cacheRead;
-  const promptEquivalentCost = (totalPromptTokens / 1_000_000) * rate.input;
-  const cacheWriteCost = (cacheWrite / 1_000_000) * rate.cacheWrite;
+  const cacheReadRate =
+    typeof rate.cacheRead === 'number'
+      ? rate.cacheRead
+      : rate.input * (rate.provider === 'anthropic' ? 0.1 : 0.25);
+  const cacheWriteRate =
+    typeof rate.cacheWrite === 'number'
+      ? rate.cacheWrite
+      : rate.input * (rate.provider === 'anthropic' ? 1.25 : 1.0);
+
+  const inputCost = (nonCachedInput / 1_000_000) * rate.input;
+  const cacheReadCost = (cacheRead / 1_000_000) * cacheReadRate;
+  const cacheWriteCost = (cacheWrite / 1_000_000) * cacheWriteRate;
   const outputCost = (output / 1_000_000) * rate.output;
 
-  const costUSD = promptEquivalentCost + outputCost + cacheWriteCost;
-  const cacheSavingsUSD = Math.max(0, (cacheRead / 1_000_000) * (rate.input - rate.cacheRead));
+  const costUSD = inputCost + cacheReadCost + cacheWriteCost + outputCost;
+  const cacheSavingsUSD = Math.max(0, (cacheRead / 1_000_000) * (rate.input - cacheReadRate));
 
   return {
     normalizedModel,
