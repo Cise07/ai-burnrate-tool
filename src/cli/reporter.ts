@@ -1,4 +1,5 @@
 import pc from 'picocolors';
+import { isPromoActive } from '../core/pricing.js';
 import type { BurnrateSnapshot } from '../core/types.js';
 
 function fmtTokens(n: number): string {
@@ -130,27 +131,38 @@ export function printCliReport(snapshot: BurnrateSnapshot): void {
     console.log(`  ${pc.dim('─'.repeat(96))}`);
 
     const sortedModels = Array.from(byModel.values()).sort((a, b) => b.cost - a.cost);
+    let hasPromo = false;
     for (const m of sortedModels) {
-      console.log(
-        `  ${padRight(m.label, 25)} ${padLeft(String(m.turns), 7)} ${padLeft(fmtTokens(m.input), 10)} ${padLeft(pc.cyan(fmtTokens(m.cache)), 12)} ${padLeft(pc.yellow(fmtTokens(m.output)), 10)} ${padLeft(fmtTokens(m.tokens), 11)} ${padLeft(pc.cyan(fmtUSD(m.savings)), 12)} ${padLeft(pc.green(fmtUSD(m.cost)), 10)}`
+      const rate = Object.values(snapshot.pricing.models).find(
+        (r) => r.label === m.label || m.label.startsWith(r.label)
       );
+      const isPromo = isPromoActive(rate);
+      if (isPromo) hasPromo = true;
+      const displayLabel = isPromo ? `${m.label} ${pc.yellow('★PROMO')}` : m.label;
+      console.log(
+        `  ${padRight(displayLabel, 30)} ${padLeft(String(m.turns), 7)} ${padLeft(fmtTokens(m.input), 10)} ${padLeft(pc.cyan(fmtTokens(m.cache)), 12)} ${padLeft(pc.yellow(fmtTokens(m.output)), 10)} ${padLeft(fmtTokens(m.tokens), 11)} ${padLeft(pc.cyan(fmtUSD(m.savings)), 12)} ${padLeft(pc.green(fmtUSD(m.cost)), 10)}`
+      );
+    }
+    if (hasPromo) {
+      console.log(`  ${pc.yellow('★')} ${pc.dim('Modelli con tariffe promozionali Google AI Studio attive.')}`);
     }
   }
 
   // Recent Sessions Table
   console.log(`\n${pc.bold(pc.white('  RECENT SESSIONS / WORKSPACES (Top 12)'))}`);
   console.log(
-    `  ${padRight(pc.dim('Tool'), 13)} ${padRight(pc.dim('Workspace'), 24)} ${padRight(pc.dim('Model'), 18)} ${padLeft(pc.dim('Input'), 9)} ${padLeft(pc.dim('Cache'), 9)} ${padLeft(pc.dim('Output'), 8)} ${padLeft(pc.dim('Cost'), 8)} ${padLeft(pc.dim('Active'), 11)}`
+    `  ${padRight(pc.dim('Tool'), 13)} ${padRight(pc.dim('Workspace'), 22)} ${padRight(pc.dim('Model'), 18)} ${padLeft(pc.dim('Input'), 8)} ${padLeft(pc.dim('Cache'), 8)} ${padLeft(pc.dim('Output'), 7)} ${padLeft(pc.dim('Cost'), 7)} ${padLeft(pc.dim('Created'), 11)} ${padLeft(pc.dim('Modified'), 11)}`
   );
-  console.log(`  ${pc.dim('─'.repeat(96))}`);
+  console.log(`  ${pc.dim('─'.repeat(108))}`);
 
   for (const s of sessions.slice(0, 12)) {
     const toolTag = s.source === 'antigravity' ? pc.cyan('Antigravity') : pc.magenta('Claude Code');
-    const ws = s.workspaceName.length > 22 ? '…' + s.workspaceName.slice(-21) : s.workspaceName;
+    const ws = s.workspaceName.length > 20 ? '…' + s.workspaceName.slice(-19) : s.workspaceName;
     const mod = s.primaryModelLabel.length > 16 ? s.primaryModelLabel.slice(0, 16) : s.primaryModelLabel;
-    const dateStr = s.lastActiveAt ? s.lastActiveAt.slice(0, 10) : '-';
+    const createdStr = s.startedAt ? s.startedAt.slice(0, 10) : '-';
+    const activeStr = s.lastActiveAt ? s.lastActiveAt.slice(0, 10) : '-';
     console.log(
-      `  ${padRight(toolTag, 13)} ${padRight(ws, 24)} ${padRight(mod, 18)} ${padLeft(fmtTokens(s.inputTokens), 9)} ${padLeft(pc.cyan(fmtTokens(s.cacheReadTokens)), 9)} ${padLeft(pc.yellow(fmtTokens(s.outputTokens)), 8)} ${padLeft(pc.green(fmtUSD(s.costUSD)), 8)} ${padLeft(pc.dim(dateStr), 11)}`
+      `  ${padRight(toolTag, 13)} ${padRight(ws, 22)} ${padRight(mod, 18)} ${padLeft(fmtTokens(s.inputTokens), 8)} ${padLeft(pc.cyan(fmtTokens(s.cacheReadTokens)), 8)} ${padLeft(pc.yellow(fmtTokens(s.outputTokens)), 7)} ${padLeft(pc.green(fmtUSD(s.costUSD)), 7)} ${padLeft(pc.dim(createdStr), 11)} ${padLeft(pc.dim(activeStr), 11)}`
     );
   }
 

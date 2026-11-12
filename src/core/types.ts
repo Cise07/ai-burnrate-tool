@@ -7,6 +7,14 @@ export interface ModelRate {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  isPromo?: boolean;
+  promoStart?: string;
+  promoEnd?: string;
+  promoNote?: string;
+  standardInput?: number;
+  standardOutput?: number;
+  standardCacheRead?: number;
+  standardCacheWrite?: number;
 }
 
 export interface RateSnapshot {

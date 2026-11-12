@@ -27,7 +27,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { BurnrateSnapshot, SessionStats, ToolSource } from '../core/types';
+import type { BurnrateSnapshot, ModelRate, SessionStats, ToolSource } from '../core/types';
 
 type ToolFilter = 'all' | ToolSource;
 type TimeRange = '24h' | '7d' | '30d' | 'all';
@@ -99,6 +99,30 @@ function formatRelativeTime(iso: string): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
   return iso.slice(0, 10);
+}
+
+function formatPreciseDateTime(iso: string | undefined): { date: string; time: string } {
+  if (!iso) return { date: '—', time: '—' };
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return { date: iso.slice(0, 10), time: '' };
+    const date = d.toLocaleDateString('it-IT', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    const time = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return { date, time };
+  } catch {
+    return { date: iso.slice(0, 10), time: iso.slice(11, 19) };
+  }
+}
+
+function isPromoActive(rate: ModelRate | undefined, targetDate?: string | number): boolean {
+  if (!rate || !rate.isPromo) return false;
+  const now = targetDate ? new Date(targetDate).getTime() : Date.now();
+  if (Number.isNaN(now)) return false;
+  const start = rate.promoStart ? new Date(rate.promoStart).getTime() : null;
+  const end = rate.promoEnd ? new Date(rate.promoEnd).getTime() : null;
+  if (start !== null && !Number.isNaN(start) && now < start) return false;
+  if (end !== null && !Number.isNaN(end) && now > end) return false;
+  return true;
 }
 
 const MODEL_COLORS = ['#10b981', '#06b6d4', '#a855f7', '#ec4899', '#f59e0b', '#3b82f6'];
@@ -227,6 +251,7 @@ export default function App() {
       string,
       {
         model: string;
+        normalizedModel?: string;
         costUSD: number;
         tokens: number;
         inputTokens: number;
@@ -234,6 +259,7 @@ export default function App() {
         cacheReadTokens: number;
         turns: number;
         source: ToolSource;
+        rate?: ModelRate;
       }
     >();
     const filteredSessions: SessionStats[] = [];
@@ -288,23 +314,36 @@ export default function App() {
         dayEntry.tokens += t.totalTokens;
         dailyMap.set(dayKey, dayEntry);
 
-        const modEntry = modelMap.get(t.modelLabel) || {
-          model: t.modelLabel,
-          costUSD: 0,
-          tokens: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          turns: 0,
-          source: session.source,
-        };
+        let modEntry = modelMap.get(t.modelLabel);
+        if (!modEntry) {
+          const matchedRate =
+            (t.normalizedModel ? snapshot.pricing?.models?.[t.normalizedModel] : undefined) ||
+            Object.values(snapshot.pricing?.models || {}).find(
+              (r) => r.label === t.modelLabel || r.label.toLowerCase() === t.model.toLowerCase()
+            );
+          modEntry = {
+            model: t.modelLabel,
+            normalizedModel: t.normalizedModel,
+            costUSD: 0,
+            tokens: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            turns: 0,
+            source: session.source,
+            rate: matchedRate,
+          };
+          modelMap.set(t.modelLabel, modEntry);
+        }
         modEntry.costUSD += t.costUSD;
         modEntry.tokens += t.totalTokens;
         modEntry.inputTokens += t.inputTokens;
         modEntry.outputTokens += t.outputTokens;
         modEntry.cacheReadTokens += t.cacheReadTokens;
         modEntry.turns += 1;
-        modelMap.set(t.modelLabel, modEntry);
+        if (!modEntry.rate && t.normalizedModel && snapshot.pricing?.models?.[t.normalizedModel]) {
+          modEntry.rate = snapshot.pricing.models[t.normalizedModel];
+        }
       }
 
       totalCostUSD += sCost;
@@ -901,15 +940,26 @@ export default function App() {
                           <span className="text-xs font-semibold text-zinc-100 truncate" title={m.model}>
                             {m.model}
                           </span>
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                              m.source === 'antigravity'
-                                ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
-                                : 'bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20'
-                            }`}
-                          >
-                            {m.source === 'antigravity' ? 'AGY' : 'Claude'}
-                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isPromoActive(m.rate) && (
+                              <span
+                                className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
+                                title={m.rate?.promoNote || 'Tariffa promozionale attiva'}
+                              >
+                                <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                                PROMO
+                              </span>
+                            )}
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                                m.source === 'antigravity'
+                                  ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
+                                  : 'bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20'
+                              }`}
+                            >
+                              {m.source === 'antigravity' ? 'AGY' : 'Claude'}
+                            </span>
+                          </div>
                         </div>
 
                         <div className="mt-2 flex items-baseline justify-between">
@@ -956,6 +1006,73 @@ export default function App() {
                           <span className="text-amber-300">{formatTokens(m.outputTokens)}</span>
                         </div>
                       </div>
+
+                      {m.rate && (() => {
+                        const promoActive = isPromoActive(m.rate);
+                        const curInput = promoActive ? m.rate.input : (m.rate.standardInput ?? m.rate.input);
+                        const curCache = promoActive ? m.rate.cacheRead : (m.rate.standardCacheRead ?? m.rate.cacheRead);
+                        const curOutput = promoActive ? m.rate.output : (m.rate.standardOutput ?? m.rate.output);
+
+                        return (
+                          <div className="pt-2.5 border-t border-zinc-800/70 flex flex-col gap-1.5">
+                            <div className="flex items-center justify-between text-[11px] font-mono">
+                              <span className="text-zinc-400">Tariffa per 1M tok:</span>
+                              {promoActive && (
+                                <span className="text-[10px] font-semibold text-amber-400 flex items-center gap-1">
+                                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                                  In Promozione
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-1.5 bg-zinc-900/90 p-2 rounded border border-zinc-800/80 text-[10px] font-mono">
+                              <div>
+                                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Input</span>
+                                <div className="flex items-baseline gap-1">
+                                  {promoActive && m.rate.standardInput && (
+                                    <span className="line-through text-zinc-600 text-[9px]">
+                                      {formatMoney(m.rate.standardInput, currency)}
+                                    </span>
+                                  )}
+                                  <span className="text-zinc-200 font-semibold">
+                                    {formatMoney(curInput, currency)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div>
+                                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Cached</span>
+                                <span className="text-cyan-400 font-semibold">
+                                  {formatMoney(curCache, currency)}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Output</span>
+                                <div className="flex items-baseline gap-1">
+                                  {promoActive && m.rate.standardOutput && (
+                                    <span className="line-through text-zinc-600 text-[9px]">
+                                      {formatMoney(m.rate.standardOutput, currency)}
+                                    </span>
+                                  )}
+                                  <span className="text-amber-300 font-semibold">
+                                    {formatMoney(curOutput, currency)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {promoActive && m.rate.promoNote && (
+                              <div className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
+                                <span className="text-amber-400">●</span>
+                                <span className="truncate" title={m.rate.promoNote}>
+                                  {m.rate.promoNote}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -1002,7 +1119,8 @@ export default function App() {
                   <th className="py-3 px-4 text-right">Cache Read</th>
                   <th className="py-3 px-4 text-right">Cache Saved</th>
                   <th className="py-3 px-4 text-right">API Cost</th>
-                  <th className="py-3 px-4 text-right">Last Active</th>
+                  <th className="py-3 px-4 text-right">Created</th>
+                  <th className="py-3 px-4 text-right">Last Modified</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 text-xs">
@@ -1089,23 +1207,38 @@ export default function App() {
                           {formatMoney(s.costUSD, currency)}
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-400">
-                          {formatRelativeTime(s.lastActiveAt)}
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-xs">
+                          <div className="text-zinc-200">{formatPreciseDateTime(s.startedAt).date}</div>
+                          <div className="text-[10px] text-zinc-500">{formatPreciseDateTime(s.startedAt).time}</div>
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-xs">
+                          <div className="text-zinc-200">{formatPreciseDateTime(s.lastActiveAt).date}</div>
+                          <div className="text-[10px] text-emerald-400/90 flex items-center justify-end gap-1">
+                            <span>{formatPreciseDateTime(s.lastActiveAt).time}</span>
+                            <span className="text-zinc-500">({formatRelativeTime(s.lastActiveAt)})</span>
+                          </div>
                         </td>
                       </tr>
 
                       {isExpanded && (
                         <tr className="bg-zinc-950/80 border-b border-zinc-800/80">
-                          <td colSpan={10} className="px-4 py-3 sm:px-6 sm:py-4">
+                          <td colSpan={11} className="px-4 py-3 sm:px-6 sm:py-4">
                             <div className="rounded-lg bg-zinc-900/60 border border-zinc-800/90 p-4 space-y-3">
                               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                                 <span className="font-semibold text-zinc-200 flex items-center gap-2">
                                   <Cpu className="w-4 h-4 text-emerald-400" />
                                   Models Involved in this Project ({sessionModels.length})
                                 </span>
-                                <span className="text-[11px] font-mono text-zinc-400 truncate max-w-md">
-                                  Log: <span className="text-zinc-300">{s.filePath}</span>
-                                </span>
+                                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-zinc-400">
+                                  <span>
+                                    Creato: <span className="text-zinc-200">{formatPreciseDateTime(s.startedAt).date} {formatPreciseDateTime(s.startedAt).time}</span>
+                                  </span>
+                                  <span>•</span>
+                                  <span>
+                                    Ultima modifica: <span className="text-emerald-400">{formatPreciseDateTime(s.lastActiveAt).date} {formatPreciseDateTime(s.lastActiveAt).time}</span>
+                                  </span>
+                                </div>
                               </div>
 
                               <div className="overflow-x-auto">
@@ -1127,11 +1260,24 @@ export default function App() {
                                     {sessionModels.map((m) => {
                                       const costShare =
                                         s.costUSD > 0 ? (m.costUSD / s.costUSD) * 100 : 0;
+                                      const modelRate =
+                                        (m.normalizedModel ? snapshot?.pricing?.models?.[m.normalizedModel] : undefined) ||
+                                        Object.values(snapshot?.pricing?.models || {}).find(
+                                          (r) => r.label === m.modelLabel
+                                        );
                                       return (
                                         <tr key={m.modelLabel} className="hover:bg-zinc-800/20">
                                           <td className="py-2.5 px-3 font-mono font-medium text-zinc-200 flex items-center gap-2">
                                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                                            {m.modelLabel}
+                                            <span>{m.modelLabel}</span>
+                                            {isPromoActive(modelRate) && (
+                                              <span
+                                                className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                                title={modelRate?.promoNote || 'Tariffa promozionale attiva'}
+                                              >
+                                                PROMO
+                                              </span>
+                                            )}
                                           </td>
                                           <td className="py-2.5 px-3 text-right font-mono text-zinc-300">
                                             {m.turns}

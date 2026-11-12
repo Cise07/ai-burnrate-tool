@@ -90,7 +90,8 @@ function ratesDiffer(a, b) {
         if (Math.abs(ma.input - mb.input) > 1e-6 ||
             Math.abs(ma.output - mb.output) > 1e-6 ||
             Math.abs(ma.cacheRead - mb.cacheRead) > 1e-6 ||
-            Math.abs(ma.cacheWrite - mb.cacheWrite) > 1e-6) {
+            Math.abs(ma.cacheWrite - mb.cacheWrite) > 1e-6 ||
+            Boolean(ma.isPromo) !== Boolean(mb.isPromo)) {
             return true;
         }
     }
@@ -112,10 +113,12 @@ export async function syncOfficialPricing() {
         const res = await fetch(REPO_PRICING_URL, { signal: AbortSignal.timeout(3000) });
         if (res.ok) {
             const remoteConfig = (await res.json());
-            if (remoteConfig.models && typeof remoteConfig.models === 'object') {
+            if (remoteConfig.models &&
+                typeof remoteConfig.models === 'object' &&
+                (!current.updatedAt || (remoteConfig.updatedAt && remoteConfig.updatedAt > current.updatedAt))) {
                 for (const [k, rate] of Object.entries(remoteConfig.models)) {
                     if (rate && typeof rate.input === 'number' && typeof rate.output === 'number') {
-                        candidateModels[k] = rate;
+                        candidateModels[k] = { ...candidateModels[k], ...rate };
                     }
                 }
             }
@@ -232,12 +235,40 @@ export async function syncOfficialPricing() {
                         const cacheWritePer1M = typeof entry.cache_creation_input_token_cost === 'number' && entry.cache_creation_input_token_cost > 0
                             ? Number((entry.cache_creation_input_token_cost * 1_000_000).toFixed(4))
                             : existing.cacheWrite;
+                        let isPromo = existing.isPromo ?? false;
+                        let promoNote = existing.promoNote;
+                        let standardInput = existing.standardInput;
+                        let standardOutput = existing.standardOutput;
+                        if (existing.provider === 'google') {
+                            if (ourKey.includes('flash') && inputPer1M <= 0.75) {
+                                isPromo = true;
+                                promoNote = 'Promo Google AI (-50% fino al 31/12/2026)';
+                                standardInput = standardInput || 1.5;
+                                standardOutput = standardOutput || 7.5;
+                            }
+                            else if (ourKey.includes('pro') && inputPer1M <= 1.25) {
+                                isPromo = true;
+                                promoNote = 'Promo Google AI (<200k tokens)';
+                                standardInput = standardInput || 2.5;
+                                standardOutput = standardOutput || 12.5;
+                            }
+                            else if (ourKey.includes('argon')) {
+                                isPromo = true;
+                                promoNote = 'Promo Google AI Launch (-50% fino al 30/11/2026)';
+                                standardInput = 4.0;
+                                standardOutput = 20.0;
+                            }
+                        }
                         candidateModels[ourKey] = {
                             ...existing,
                             input: inputPer1M,
                             output: outputPer1M,
                             cacheRead: cacheReadPer1M,
                             cacheWrite: cacheWritePer1M,
+                            isPromo,
+                            promoNote,
+                            standardInput,
+                            standardOutput,
                         };
                         break;
                     }
@@ -247,6 +278,20 @@ export async function syncOfficialPricing() {
     }
     catch {
         // Offline fallback: keep local ledger intact
+    }
+    // Ensure active Google promotional pricing is strictly applied
+    if (candidateModels['gemini-4-argon']) {
+        candidateModels['gemini-4-argon'] = {
+            ...candidateModels['gemini-4-argon'],
+            input: 2.0,
+            output: 10.0,
+            cacheRead: 0.1,
+            cacheWrite: 2.0,
+            isPromo: true,
+            promoNote: 'Promo Google AI Launch (-50% fino al 30/11/2026)',
+            standardInput: 4.0,
+            standardOutput: 20.0,
+        };
     }
     if (ratesDiffer(latestSnapshot.models, candidateModels)) {
         const effectiveFrom = new Date().toISOString();
@@ -312,6 +357,20 @@ export function resolveModelKey(rawModel, source, pricing) {
     }
     return defaultKey;
 }
+export function isPromoActive(rate, targetTimestamp) {
+    if (!rate || !rate.isPromo)
+        return false;
+    const ts = targetTimestamp ? new Date(targetTimestamp).getTime() : Date.now();
+    if (Number.isNaN(ts))
+        return false;
+    const startMs = rate.promoStart ? new Date(rate.promoStart).getTime() : null;
+    const endMs = rate.promoEnd ? new Date(rate.promoEnd).getTime() : null;
+    if (startMs !== null && !Number.isNaN(startMs) && ts < startMs)
+        return false;
+    if (endMs !== null && !Number.isNaN(endMs) && ts > endMs)
+        return false;
+    return true;
+}
 /**
  * Resolves the exact ModelRate that was active at `turnTimestamp`.
  * Tokens consumed before a price change continue to use the historical rate active at that time.
@@ -319,6 +378,7 @@ export function resolveModelKey(rawModel, source, pricing) {
 export function getHistoricalRate(normalizedModel, source, turnTimestamp, pricing) {
     const fallbackKey = pricing.defaults[source];
     const history = pricing.history;
+    let baseRate = pricing.models[normalizedModel] ?? pricing.models[fallbackKey];
     if (history && history.length > 0 && turnTimestamp) {
         let activeSnapshot = history[0];
         for (const snap of history) {
@@ -330,10 +390,26 @@ export function getHistoricalRate(normalizedModel, source, turnTimestamp, pricin
             }
         }
         const historicalRate = activeSnapshot.models[normalizedModel] ?? activeSnapshot.models[fallbackKey];
-        if (historicalRate)
-            return historicalRate;
+        if (historicalRate) {
+            baseRate = historicalRate;
+        }
     }
-    return pricing.models[normalizedModel] ?? pricing.models[fallbackKey];
+    // Verify promo dates: discount applies ONLY during the promotional window
+    if (baseRate.isPromo && !isPromoActive(baseRate, turnTimestamp)) {
+        // Revert to non-discounted standard rate for tokens consumed outside the promo period
+        return {
+            ...baseRate,
+            isPromo: false,
+            input: baseRate.standardInput ?? baseRate.input,
+            output: baseRate.standardOutput ?? baseRate.output,
+            cacheRead: baseRate.standardCacheRead ??
+                (baseRate.standardInput
+                    ? baseRate.standardInput * (baseRate.provider === 'anthropic' ? 0.1 : 0.05)
+                    : baseRate.cacheRead),
+            cacheWrite: baseRate.standardCacheWrite ?? baseRate.standardInput ?? baseRate.cacheWrite,
+        };
+    }
+    return baseRate;
 }
 export function calculateTurnCost(params, pricing = loadPricing()) {
     const normalizedModel = resolveModelKey(params.rawModel, params.source, pricing);
