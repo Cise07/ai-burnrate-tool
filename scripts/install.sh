@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-REPO_URL="${BURNRATE_REPO:-github:Cise07/ai-burnrate-tool}"
+REPO_URL="${BURNRATE_REPO:-https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz}"
 
 echo ""
 echo -e "\033[1;32m  ⚡ AI-BURNRATE INSTALLER\033[0m"

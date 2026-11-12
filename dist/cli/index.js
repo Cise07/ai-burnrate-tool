@@ -24,12 +24,14 @@ async function main() {
     if (opts.update) {
         console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold('ai-burnrate')} to the latest version from GitHub...`);
         try {
-            execSync('npm install -g github:Cise07/ai-burnrate-tool', { stdio: 'inherit' });
+            execSync('npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz', {
+                stdio: 'inherit',
+            });
             console.log(`  ${pc.green('✓')} ${pc.bold('ai-burnrate')} updated successfully to the latest version!\n`);
             process.exit(0);
         }
         catch {
-            console.error(`  ${pc.red('✗')} Failed to update automatically. Try running:\n  ${pc.cyan('npm install -g github:Cise07/ai-burnrate-tool')}\n`);
+            console.error(`  ${pc.red('✗')} Failed to update automatically. Try running:\n  ${pc.cyan('npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz')}\n`);
             process.exit(1);
         }
     }

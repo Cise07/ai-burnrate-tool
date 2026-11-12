@@ -46,10 +46,10 @@ curl -fsSL https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/script
 
 ### 📦 Universal Alternative via `npm` (Cross-Platform)
 ```bash
-npm install -g github:Cise07/ai-burnrate-tool
+npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz
 ```
 
-*(Want to run it once without installing? Use `npx github:Cise07/ai-burnrate-tool`)*
+*(Want to run it once without installing? Use `npx https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz`)*
 
 ---
 

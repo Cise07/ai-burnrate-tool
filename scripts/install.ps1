@@ -3,7 +3,7 @@
 # Usage (Local):  .\scripts\install.ps1
 
 $ErrorActionPreference = "Stop"
-$RepoUrl = if ($env:BURNRATE_REPO) { $env:BURNRATE_REPO } else { "github:Cise07/ai-burnrate-tool" }
+$RepoUrl = if ($env:BURNRATE_REPO) { $env:BURNRATE_REPO } else { "https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz" }
 
 Write-Host ""
 Write-Host "  ⚡ AI-BURNRATE INSTALLER" -ForegroundColor Green
