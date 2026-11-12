@@ -134,10 +134,14 @@ export async function syncOfficialPricing(): Promise<{
   const candidateModels: Record<string, ModelRate> = structuredClone(latestSnapshot.models);
 
   // 1. Try syncing from official GitHub repository pricing.json
+  let remoteUpdatedAt: string | null = null;
   try {
     const res = await fetch(REPO_PRICING_URL, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const remoteConfig = (await res.json()) as Partial<PricingConfig>;
+      if (remoteConfig.updatedAt && typeof remoteConfig.updatedAt === 'string') {
+        remoteUpdatedAt = remoteConfig.updatedAt;
+      }
       if (
         remoteConfig.models &&
         typeof remoteConfig.models === 'object' &&
@@ -327,7 +331,9 @@ export async function syncOfficialPricing(): Promise<{
   }
 
   if (ratesDiffer(latestSnapshot.models, candidateModels)) {
-    const effectiveFrom = new Date().toISOString();
+    const effectiveFrom = remoteUpdatedAt
+      ? `${remoteUpdatedAt}T00:00:00.000Z`
+      : new Date().toISOString();
     current.history = current.history || [];
     current.history.push({
       effectiveFrom,
@@ -335,7 +341,7 @@ export async function syncOfficialPricing(): Promise<{
       models: candidateModels,
     });
     current.models = structuredClone(candidateModels);
-    current.updatedAt = effectiveFrom.slice(0, 10);
+    current.updatedAt = remoteUpdatedAt || effectiveFrom.slice(0, 10);
     cachedPricing = current;
     saveUserLedger(current);
     return { updated: true, effectiveFrom };

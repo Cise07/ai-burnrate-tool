@@ -453,7 +453,7 @@ export default function App() {
 
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3 overflow-x-auto whitespace-nowrap">
+        <div className="max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3 overflow-x-auto whitespace-nowrap">
           {/* Brand & Live Status */}
           <div className="flex items-center gap-2.5 shrink-0">
             <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shadow-inner shrink-0">
@@ -576,7 +576,7 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
         {/* Live Event Banner if a file just updated */}
         {lastChangedFile && (
           <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300">
@@ -1107,20 +1107,20 @@ export default function App() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse min-w-[940px] xl:min-w-0">
               <thead>
-                <tr className="border-b border-zinc-800/80 text-[11px] font-mono uppercase text-zinc-400 bg-zinc-950/40">
-                  <th className="py-3 px-3 w-8"></th>
-                  <th className="py-3 px-4">Tool</th>
-                  <th className="py-3 px-4">Workspace / Session</th>
-                  <th className="py-3 px-4">Primary Model</th>
-                  <th className="py-3 px-4 text-right">Turns</th>
-                  <th className="py-3 px-4 text-right">Input / Output</th>
-                  <th className="py-3 px-4 text-right">Cache Read</th>
-                  <th className="py-3 px-4 text-right">Cache Saved</th>
-                  <th className="py-3 px-4 text-right">API Cost</th>
-                  <th className="py-3 px-4 text-right">Created</th>
-                  <th className="py-3 px-4 text-right">Last Modified</th>
+                <tr className="border-b border-zinc-800/80 text-[10px] xl:text-[11px] font-mono uppercase text-zinc-400 bg-zinc-950/40">
+                  <th className="py-2.5 px-2 w-7 sm:w-8 text-center"></th>
+                  <th className="py-2.5 px-2 xl:px-3">Tool</th>
+                  <th className="py-2.5 px-2 xl:px-3">Workspace / Session</th>
+                  <th className="py-2.5 px-2 xl:px-3">Primary Model</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 text-right">Turns</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 text-right">Input / Output</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 text-right">Cache Read</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 text-right">Cache Saved</th>
+                  <th className="py-2.5 px-2 xl:px-3 text-right">API Cost</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 text-right">Created</th>
+                  <th className="py-2.5 px-2 xl:px-3 text-right">Last Modified</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 text-xs">
@@ -1137,7 +1137,7 @@ export default function App() {
                           isExpanded ? 'bg-zinc-900/40' : ''
                         }`}
                       >
-                        <td className="py-3 px-3 text-center">
+                        <td className="py-2 px-2 text-center">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1155,76 +1155,76 @@ export default function App() {
                           </button>
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap">
+                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap">
                           {s.source === 'antigravity' ? (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
                               <Terminal className="w-3 h-3" />
                               Antigravity
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25">
                               <Sparkles className="w-3 h-3" />
                               Claude Code
                             </span>
                           )}
                         </td>
 
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2 font-medium text-zinc-200">
+                        <td className="py-2 px-2 xl:px-3">
+                          <div className="flex items-center gap-1.5 font-medium text-zinc-200">
                             <FolderGit2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                            <span className="truncate max-w-[240px]" title={s.workspace}>
+                            <span className="truncate max-w-[120px] sm:max-w-[150px] lg:max-w-[180px] xl:max-w-[220px]" title={s.workspace}>
                               {s.workspaceName}
                             </span>
                           </div>
-                          <div className="text-[11px] text-zinc-500 font-mono truncate max-w-[260px]">
+                          <div className="text-[10.5px] text-zinc-500 font-mono truncate max-w-[120px] sm:max-w-[150px] lg:max-w-[180px] xl:max-w-[220px]" title={s.sessionId}>
                             {s.sessionId}
                           </div>
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap font-mono text-zinc-300">
+                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap font-mono text-[11px] xl:text-xs text-zinc-300">
                           {s.primaryModelLabel}
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-300">
+                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-300 text-[11px] xl:text-xs">
                           {s.turns}
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-400">
+                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-400 text-[11px] xl:text-xs">
                           <span className="text-zinc-200">{formatTokens(s.inputTokens)}</span>
-                          <span className="text-zinc-600 mx-1">/</span>
+                          <span className="text-zinc-600 mx-0.5">/</span>
                           <span className="text-zinc-300">{formatTokens(s.outputTokens)}</span>
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-cyan-400">
+                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-cyan-400 text-[11px] xl:text-xs">
                           {formatTokens(s.cacheReadTokens)}
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-fuchsia-400">
+                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-fuchsia-400 text-[11px] xl:text-xs">
                           {formatMoney(s.cacheSavingsUSD, currency)}
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono font-semibold text-emerald-400">
+                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono font-semibold text-emerald-400 text-[11px] xl:text-xs">
                           {formatMoney(s.costUSD, currency)}
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-xs">
+                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
                           <div className="text-zinc-200">{formatPreciseDateTime(s.startedAt).date}</div>
                           <div className="text-[10px] text-zinc-500">{formatPreciseDateTime(s.startedAt).time}</div>
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-xs">
+                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
                           <div className="text-zinc-200">{formatPreciseDateTime(s.lastActiveAt).date}</div>
-                          <div className="text-[10px] text-emerald-400/90 flex items-center justify-end gap-1">
+                          <div className="text-[10px] text-emerald-400/90 flex items-center justify-end gap-1" title={formatRelativeTime(s.lastActiveAt)}>
                             <span>{formatPreciseDateTime(s.lastActiveAt).time}</span>
-                            <span className="text-zinc-500">({formatRelativeTime(s.lastActiveAt)})</span>
+                            <span className="text-zinc-500 hidden xl:inline">({formatRelativeTime(s.lastActiveAt)})</span>
                           </div>
                         </td>
                       </tr>
 
                       {isExpanded && (
                         <tr className="bg-zinc-950/80 border-b border-zinc-800/80">
-                          <td colSpan={11} className="px-4 py-3 sm:px-6 sm:py-4">
-                            <div className="rounded-lg bg-zinc-900/60 border border-zinc-800/90 p-4 space-y-3">
+                          <td colSpan={11} className="px-3 py-3 sm:px-4 sm:py-3.5">
+                            <div className="rounded-lg bg-zinc-900/60 border border-zinc-800/90 p-3 sm:p-4 space-y-3">
                               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                                 <span className="font-semibold text-zinc-200 flex items-center gap-2">
                                   <Cpu className="w-4 h-4 text-emerald-400" />
@@ -1242,18 +1242,18 @@ export default function App() {
                               </div>
 
                               <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse text-xs">
+                                <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
                                   <thead>
                                     <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
-                                      <th className="py-2 px-3">Model</th>
-                                      <th className="py-2 px-3 text-right">Turns</th>
-                                      <th className="py-2 px-3 text-right">Input</th>
-                                      <th className="py-2 px-3 text-right">Cache Read</th>
-                                      <th className="py-2 px-3 text-right">Output</th>
-                                      <th className="py-2 px-3 text-right">Total Tokens</th>
-                                      <th className="py-2 px-3 text-right">Cache Saved</th>
-                                      <th className="py-2 px-3 text-right">API Cost</th>
-                                      <th className="py-2 px-3 text-right">Cost Share</th>
+                                      <th className="py-2 px-2.5">Model</th>
+                                      <th className="py-2 px-2 text-right">Turns</th>
+                                      <th className="py-2 px-2 text-right">Input</th>
+                                      <th className="py-2 px-2 text-right">Cache Read</th>
+                                      <th className="py-2 px-2 text-right">Output</th>
+                                      <th className="py-2 px-2 text-right">Total Tokens</th>
+                                      <th className="py-2 px-2 text-right">Cache Saved</th>
+                                      <th className="py-2 px-2.5 text-right">API Cost</th>
+                                      <th className="py-2 px-2 text-right">Cost Share</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-zinc-800/50">
@@ -1267,8 +1267,8 @@ export default function App() {
                                         );
                                       return (
                                         <tr key={m.modelLabel} className="hover:bg-zinc-800/20">
-                                          <td className="py-2.5 px-3 font-mono font-medium text-zinc-200 flex items-center gap-2">
-                                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                                          <td className="py-2 px-2.5 font-mono font-medium text-zinc-200 flex items-center gap-1.5 whitespace-nowrap">
+                                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
                                             <span>{m.modelLabel}</span>
                                             {isPromoActive(modelRate) && (
                                               <span
@@ -1279,28 +1279,28 @@ export default function App() {
                                               </span>
                                             )}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-300">
+                                          <td className="py-2 px-2 text-right font-mono text-zinc-300 text-[11px]">
                                             {m.turns}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-400">
+                                          <td className="py-2 px-2 text-right font-mono text-zinc-400 text-[11px]">
                                             {formatTokens(m.inputTokens)}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-cyan-400">
+                                          <td className="py-2 px-2 text-right font-mono text-cyan-400 text-[11px]">
                                             {formatTokens(m.cacheReadTokens)}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-300">
+                                          <td className="py-2 px-2 text-right font-mono text-zinc-300 text-[11px]">
                                             {formatTokens(m.outputTokens)}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-200 font-medium">
+                                          <td className="py-2 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
                                             {formatTokens(m.totalTokens)}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-fuchsia-400">
+                                          <td className="py-2 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
                                             {formatMoney(m.cacheSavingsUSD, currency)}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono font-semibold text-emerald-400">
+                                          <td className="py-2 px-2.5 text-right font-mono font-semibold text-emerald-400 text-[11px]">
                                             {formatMoney(m.costUSD, currency)}
                                           </td>
-                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-400">
+                                          <td className="py-2 px-2 text-right font-mono text-zinc-400 text-[11px]">
                                             {costShare.toFixed(1)}%
                                           </td>
                                         </tr>
@@ -1319,7 +1319,7 @@ export default function App() {
 
                 {analytics.sessions.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="py-10 text-center text-zinc-500 font-mono">
+                    <td colSpan={11} className="py-10 text-center text-zinc-500 font-mono">
                       No matching sessions found.
                     </td>
                   </tr>
