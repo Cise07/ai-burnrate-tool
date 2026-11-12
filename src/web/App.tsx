@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  ChevronDown,
+  ChevronRight,
   Cpu,
   Database,
   DollarSign,
@@ -46,6 +48,45 @@ function formatMoney(usdAmount: number, currency: Currency): string {
   return `${sym}${val.toFixed(2)}`;
 }
 
+interface SessionModelItem {
+  modelLabel: string;
+  normalizedModel: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  cacheSavingsUSD: number;
+}
+
+function getSessionModelBreakdown(turnHistory: UsageTurn[]): SessionModelItem[] {
+  const map = new Map<string, SessionModelItem>();
+  for (const t of turnHistory) {
+    const key = t.modelLabel || t.normalizedModel || 'Unknown';
+    const entry = map.get(key) || {
+      modelLabel: key,
+      normalizedModel: t.normalizedModel,
+      turns: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 0,
+      costUSD: 0,
+      cacheSavingsUSD: 0,
+    };
+    entry.turns += 1;
+    entry.inputTokens += t.inputTokens;
+    entry.outputTokens += t.outputTokens;
+    entry.cacheReadTokens += t.cacheReadTokens;
+    entry.totalTokens += t.totalTokens;
+    entry.costUSD += t.costUSD;
+    entry.cacheSavingsUSD += t.cacheSavingsUSD;
+    map.set(key, entry);
+  }
+  return Array.from(map.values()).sort((a, b) => b.costUSD - a.costUSD);
+}
+
 function formatRelativeTime(iso: string): string {
   if (!iso) return '—';
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -75,6 +116,19 @@ export default function App() {
     return (localStorage.getItem('burnrate_currency') as Currency) === 'EUR' ? 'EUR' : 'USD';
   });
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+
+  const toggleExpandSession = (key: string) => {
+    setExpandedSessions((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
 
   const toggleCurrency = (next: Currency) => {
     setCurrency(next);
@@ -273,6 +327,7 @@ export default function App() {
         totalTokens: sTotal,
         costUSD: sCost,
         cacheSavingsUSD: sSavings,
+        turnHistory: validTurns,
       });
     }
 
@@ -858,11 +913,21 @@ export default function App() {
                         </div>
 
                         <div className="mt-2 flex items-baseline justify-between">
-                          <span className="text-2xl font-bold font-mono text-white">
-                            {formatTokens(m.tokens)}
-                          </span>
-                          <span className="text-xs font-mono text-emerald-400">
+                          <div>
+                            <span className="text-2xl font-bold font-mono text-white">
+                              {formatTokens(m.tokens)}
+                            </span>
+                            <span className="text-[11px] text-zinc-500 font-mono ml-1">tokens</span>
+                          </div>
+                          <span className="text-xs font-mono text-zinc-400">
                             {sharePct.toFixed(1)}%
+                          </span>
+                        </div>
+
+                        <div className="mt-1.5 flex items-center justify-between text-xs font-mono">
+                          <span className="text-zinc-400">Total Spend:</span>
+                          <span className="font-semibold text-emerald-400">
+                            {formatMoney(m.costUSD, currency)}
                           </span>
                         </div>
 
@@ -928,6 +993,7 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-zinc-800/80 text-[11px] font-mono uppercase text-zinc-400 bg-zinc-950/40">
+                  <th className="py-3 px-3 w-8"></th>
                   <th className="py-3 px-4">Tool</th>
                   <th className="py-3 px-4">Workspace / Session</th>
                   <th className="py-3 px-4">Primary Model</th>
@@ -940,72 +1006,174 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 text-xs">
-                {analytics.sessions.slice(0, 60).map((s) => (
-                  <tr
-                    key={`${s.source}-${s.filePath}`}
-                    className="hover:bg-zinc-800/30 transition-colors group"
-                  >
-                    <td className="py-3 px-4 whitespace-nowrap">
-                      {s.source === 'antigravity' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
-                          <Terminal className="w-3 h-3" />
-                          Antigravity
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25">
-                          <Sparkles className="w-3 h-3" />
-                          Claude Code
-                        </span>
+                {analytics.sessions.slice(0, 60).map((s) => {
+                  const rowKey = `${s.source}-${s.filePath}`;
+                  const isExpanded = expandedSessions.has(rowKey);
+                  const sessionModels = isExpanded ? getSessionModelBreakdown(s.turnHistory) : [];
+
+                  return (
+                    <React.Fragment key={rowKey}>
+                      <tr
+                        onClick={() => toggleExpandSession(rowKey)}
+                        className={`hover:bg-zinc-800/30 transition-colors group cursor-pointer ${
+                          isExpanded ? 'bg-zinc-900/40' : ''
+                        }`}
+                      >
+                        <td className="py-3 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpandSession(rowKey);
+                            }}
+                            className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition"
+                            title={isExpanded ? 'Collapse models' : 'Expand models involved'}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {s.source === 'antigravity' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                              <Terminal className="w-3 h-3" />
+                              Antigravity
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25">
+                              <Sparkles className="w-3 h-3" />
+                              Claude Code
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2 font-medium text-zinc-200">
+                            <FolderGit2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                            <span className="truncate max-w-[240px]" title={s.workspace}>
+                              {s.workspaceName}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-zinc-500 font-mono truncate max-w-[260px]">
+                            {s.sessionId}
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap font-mono text-zinc-300">
+                          {s.primaryModelLabel}
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-300">
+                          {s.turns}
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-400">
+                          <span className="text-zinc-200">{formatTokens(s.inputTokens)}</span>
+                          <span className="text-zinc-600 mx-1">/</span>
+                          <span className="text-zinc-300">{formatTokens(s.outputTokens)}</span>
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-cyan-400">
+                          {formatTokens(s.cacheReadTokens)}
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-fuchsia-400">
+                          {formatMoney(s.cacheSavingsUSD, currency)}
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono font-semibold text-emerald-400">
+                          {formatMoney(s.costUSD, currency)}
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-400">
+                          {formatRelativeTime(s.lastActiveAt)}
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr className="bg-zinc-950/80 border-b border-zinc-800/80">
+                          <td colSpan={10} className="px-4 py-3 sm:px-6 sm:py-4">
+                            <div className="rounded-lg bg-zinc-900/60 border border-zinc-800/90 p-4 space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <span className="font-semibold text-zinc-200 flex items-center gap-2">
+                                  <Cpu className="w-4 h-4 text-emerald-400" />
+                                  Models Involved in this Project ({sessionModels.length})
+                                </span>
+                                <span className="text-[11px] font-mono text-zinc-400 truncate max-w-md">
+                                  Log: <span className="text-zinc-300">{s.filePath}</span>
+                                </span>
+                              </div>
+
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse text-xs">
+                                  <thead>
+                                    <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
+                                      <th className="py-2 px-3">Model</th>
+                                      <th className="py-2 px-3 text-right">Turns</th>
+                                      <th className="py-2 px-3 text-right">Input</th>
+                                      <th className="py-2 px-3 text-right">Cache Read</th>
+                                      <th className="py-2 px-3 text-right">Output</th>
+                                      <th className="py-2 px-3 text-right">Total Tokens</th>
+                                      <th className="py-2 px-3 text-right">Cache Saved</th>
+                                      <th className="py-2 px-3 text-right">API Cost</th>
+                                      <th className="py-2 px-3 text-right">Cost Share</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-zinc-800/50">
+                                    {sessionModels.map((m) => {
+                                      const costShare =
+                                        s.costUSD > 0 ? (m.costUSD / s.costUSD) * 100 : 0;
+                                      return (
+                                        <tr key={m.modelLabel} className="hover:bg-zinc-800/20">
+                                          <td className="py-2.5 px-3 font-mono font-medium text-zinc-200 flex items-center gap-2">
+                                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                                            {m.modelLabel}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-300">
+                                            {m.turns}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-400">
+                                            {formatTokens(m.inputTokens)}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono text-cyan-400">
+                                            {formatTokens(m.cacheReadTokens)}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-300">
+                                            {formatTokens(m.outputTokens)}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-200 font-medium">
+                                            {formatTokens(m.totalTokens)}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono text-fuchsia-400">
+                                            {formatMoney(m.cacheSavingsUSD, currency)}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono font-semibold text-emerald-400">
+                                            {formatMoney(m.costUSD, currency)}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-right font-mono text-zinc-400">
+                                            {costShare.toFixed(1)}%
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </td>
-
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2 font-medium text-zinc-200">
-                        <FolderGit2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                        <span className="truncate max-w-[240px]" title={s.workspace}>
-                          {s.workspaceName}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-zinc-500 font-mono truncate max-w-[260px]">
-                        {s.sessionId}
-                      </div>
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap font-mono text-zinc-300">
-                      {s.primaryModelLabel}
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-300">
-                      {s.turns}
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-400">
-                      <span className="text-zinc-200">{formatTokens(s.inputTokens)}</span>
-                      <span className="text-zinc-600 mx-1">/</span>
-                      <span className="text-zinc-300">{formatTokens(s.outputTokens)}</span>
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-cyan-400">
-                      {formatTokens(s.cacheReadTokens)}
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-fuchsia-400">
-                      {formatMoney(s.cacheSavingsUSD, currency)}
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right font-mono font-semibold text-emerald-400">
-                      {formatMoney(s.costUSD, currency)}
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right font-mono text-zinc-400">
-                      {formatRelativeTime(s.lastActiveAt)}
-                    </td>
-                  </tr>
-                ))}
+                    </React.Fragment>
+                  );
+                })}
 
                 {analytics.sessions.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="py-10 text-center text-zinc-500 font-mono">
+                    <td colSpan={10} className="py-10 text-center text-zinc-500 font-mono">
                       No matching sessions found.
                     </td>
                   </tr>
