@@ -37,6 +37,10 @@ Open PowerShell and run:
 ```powershell
 irm https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/install.ps1 | iex
 ```
+> 💡 **Note on Windows permissions:** If PowerShell blocks the script with an `ExecutionPolicy` or permission error, enable script execution for your user by running:
+> ```powershell
+> Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+> ```
 
 ### 🍎 macOS / 🐧 Linux (Bash / Zsh)
 Open your terminal and run:
