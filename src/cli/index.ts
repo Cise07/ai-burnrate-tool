@@ -11,7 +11,7 @@ import { startLogWatcher } from '../core/watcher.js';
 import { startServer } from '../server/index.js';
 import { printCliReport } from './reporter.js';
 
-const REPO_SLUG = 'Cise07/ai-burnrate-tool';
+const NPM_PACKAGE = 'ai-burnrate-tool';
 
 function getPackageVersion(): string {
   try {
@@ -23,38 +23,13 @@ function getPackageVersion(): string {
   }
 }
 
-async function resolveUpdateTarget(): Promise<{ label: string; url: string }> {
+function resolveNpmUpdateSpec(): string {
   const requested = process.env.BURNRATE_VERSION?.trim();
   if (requested) {
-    const tag = requested.startsWith('v') ? requested : `v${requested}`;
-    return {
-      label: tag,
-      url: `https://github.com/${REPO_SLUG}/archive/refs/tags/${tag}.tar.gz`,
-    };
+    const version = requested.replace(/^v/, '');
+    return `${NPM_PACKAGE}@${version}`;
   }
-
-  try {
-    const res = await fetch(`https://api.github.com/repos/${REPO_SLUG}/releases/latest`, {
-      headers: { 'User-Agent': 'ai-burnrate-cli' },
-      signal: AbortSignal.timeout(4000),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { tag_name?: string };
-      if (data.tag_name) {
-        return {
-          label: data.tag_name,
-          url: `https://github.com/${REPO_SLUG}/archive/refs/tags/${data.tag_name}.tar.gz`,
-        };
-      }
-    }
-  } catch {
-    // Fallback to main branch if no GitHub Release exists yet or offline
-  }
-
-  return {
-    label: 'main',
-    url: `https://github.com/${REPO_SLUG}/archive/refs/heads/main.tar.gz`,
-  };
+  return `${NPM_PACKAGE}@latest`;
 }
 
 const program = new Command();
@@ -66,7 +41,7 @@ program
   .option('--cli', 'Print the usage report in ANSI tables in the terminal and exit immediately', false)
   .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
   .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
-  .option('--update', 'Update ai-burnrate to the latest release from GitHub', false)
+  .option('--update', 'Update ai-burnrate-tool to the latest version from npm', false)
   .option('--uninstall', 'Uninstall ai-burnrate globally from your system', false);
 
 program.parse(process.argv);
@@ -81,17 +56,17 @@ const opts = program.opts<{
 
 async function main() {
   if (opts.update) {
-    const target = await resolveUpdateTarget();
-    console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold('ai-burnrate')} (${pc.cyan(target.label)}) from GitHub...`);
+    const targetSpec = resolveNpmUpdateSpec();
+    console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold(targetSpec)} from npm...`);
     try {
-      execSync(`npm install -g ${target.url}`, {
+      execSync(`npm install -g ${targetSpec}`, {
         stdio: 'inherit',
       });
-      console.log(`  ${pc.green('✓')} ${pc.bold('ai-burnrate')} updated successfully to ${pc.bold(target.label)}!\n`);
+      console.log(`  ${pc.green('✓')} ${pc.bold(targetSpec)} updated successfully!\n`);
       process.exit(0);
     } catch {
       console.error(
-        `  ${pc.red('✗')} Failed to update automatically. Try running:\n  ${pc.cyan(`npm install -g ${target.url}`)}\n`
+        `  ${pc.red('✗')} Failed to update automatically. Try running:\n  ${pc.cyan(`npm install -g ${targetSpec}`)}\n`
       );
       process.exit(1);
     }
