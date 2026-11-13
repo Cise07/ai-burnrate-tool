@@ -333,6 +333,7 @@ export async function syncOfficialPricing(): Promise<{
         {
           ourKey: 'claude-sonnet-4',
           litellmKeys: [
+            'claude-sonnet-4-6',
             'claude-sonnet-4-5-20250929',
             'claude-sonnet-4-5',
             'anthropic.claude-sonnet-4-5-20250929-v1:0',
@@ -346,6 +347,15 @@ export async function syncOfficialPricing(): Promise<{
             'anthropic.claude-3-5-sonnet-20241022-v2:0',
             'claude-3-5-sonnet-20241022',
             'claude-3-5-sonnet-latest',
+          ],
+        },
+        {
+          ourKey: 'claude-opus-4-5',
+          litellmKeys: [
+            'claude-opus-4-6',
+            'claude-opus-4-5-20251101',
+            'claude-opus-4-5',
+            'anthropic.claude-opus-4-5-20251101-v1:0',
           ],
         },
         {
@@ -532,6 +542,9 @@ export function resolveModelKey(
   }
 
   if (cleaned.includes('opus')) {
+    if (/opus[-_.\s]?4[-_.\s]?[5-9]/.test(cleaned) && pricing.models['claude-opus-4-5']) {
+      return 'claude-opus-4-5';
+    }
     return cleaned.includes('4') ? 'claude-opus-4' : 'claude-3-opus';
   }
   if (cleaned.includes('haiku')) {

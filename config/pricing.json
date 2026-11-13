@@ -38,6 +38,14 @@
       "cacheRead": 0.3,
       "cacheWrite": 3.75
     },
+    "claude-opus-4-5": {
+      "label": "Claude Opus 4.5+",
+      "provider": "anthropic",
+      "input": 5.0,
+      "output": 25.0,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
     "claude-opus-4": {
       "label": "Claude Opus 4.x",
       "provider": "anthropic",
@@ -65,10 +73,10 @@
     "claude-haiku-4": {
       "label": "Claude Haiku 4.x",
       "provider": "anthropic",
-      "input": 0.8,
-      "output": 4.0,
-      "cacheRead": 0.08,
-      "cacheWrite": 1.0
+      "input": 1.0,
+      "output": 5.0,
+      "cacheRead": 0.1,
+      "cacheWrite": 1.25
     },
     "gemini-4-argon": {
       "label": "Gemini 4 Argon",
