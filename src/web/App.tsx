@@ -5,6 +5,7 @@ import {
   Cpu,
   Database,
   DollarSign,
+  Download,
   FolderGit2,
   Layers,
   MessageSquare,
@@ -27,25 +28,24 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { BurnrateSnapshot, ModelRate, SessionStats, ToolSource, UsageTurn } from '../core/types';
-
-type ToolFilter = 'all' | ToolSource;
-type TimeRange = '24h' | '7d' | '30d' | 'all';
-type Currency = 'USD' | 'EUR';
-
-const EUR_RATE = 0.92;
+import {
+  EUR_RATE,
+  buildWorkspaceGroups,
+  formatMoney,
+  getSessionModelBreakdown,
+  normalizeWorkspaceKey,
+  workspacesToCsv,
+  workspacesToJson,
+  type Currency,
+  type TimeRange,
+  type ToolFilter,
+} from '../core/analytics';
+import type { BurnrateSnapshot, ModelRate, SessionStats, ToolSource } from '../core/types';
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toLocaleString();
-}
-
-function formatMoney(usdAmount: number, currency: Currency): string {
-  const val = currency === 'EUR' ? usdAmount * EUR_RATE : usdAmount;
-  const sym = currency === 'EUR' ? '€' : '$';
-  if (val > 0 && val < 0.01) return `<${sym}0.01`;
-  return `${sym}${val.toFixed(2)}`;
 }
 
 function formatRateMoney(usdAmount: number, currency: Currency): string {
@@ -56,183 +56,6 @@ function formatRateMoney(usdAmount: number, currency: Currency): string {
     return `${sym}${val.toFixed(4).replace(/(\.\d{2}\d*?)0+$/, '$1')}`;
   }
   return `${sym}${val.toFixed(2)}`;
-}
-
-interface SessionModelItem {
-  modelLabel: string;
-  normalizedModel: string;
-  turns: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  totalTokens: number;
-  costUSD: number;
-  cacheSavingsUSD: number;
-}
-
-function getSessionModelBreakdown(turnHistory: UsageTurn[]): SessionModelItem[] {
-  const map = new Map<string, SessionModelItem>();
-  for (const t of turnHistory) {
-    const key = t.modelLabel || t.normalizedModel || 'Unknown';
-    const entry = map.get(key) || {
-      modelLabel: key,
-      normalizedModel: t.normalizedModel,
-      turns: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      totalTokens: 0,
-      costUSD: 0,
-      cacheSavingsUSD: 0,
-    };
-    entry.turns += 1;
-    entry.inputTokens += t.inputTokens;
-    entry.outputTokens += t.outputTokens;
-    entry.cacheReadTokens += t.cacheReadTokens;
-    entry.totalTokens += t.totalTokens;
-    entry.costUSD += t.costUSD;
-    entry.cacheSavingsUSD += t.cacheSavingsUSD;
-    map.set(key, entry);
-  }
-  return Array.from(map.values()).sort((a, b) => b.costUSD - a.costUSD);
-}
-
-interface WorkspaceGroup {
-  workspaceKey: string;
-  workspace: string;
-  workspaceName: string;
-  sources: ToolSource[];
-  chats: SessionStats[];
-  turns: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  totalTokens: number;
-  costUSD: number;
-  cacheSavingsUSD: number;
-  startedAt: string;
-  lastActiveAt: string;
-  primaryModelLabel: string;
-  distinctModels: string[];
-}
-
-function normalizeWorkspaceKey(workspacePath: string): string {
-  const cleaned = (workspacePath || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
-  return cleaned ? cleaned.toLowerCase() : 'global / cli';
-}
-
-function buildWorkspaceGroups(sessions: SessionStats[]): WorkspaceGroup[] {
-  const map = new Map<
-    string,
-    {
-      workspaceKey: string;
-      workspace: string;
-      workspaceName: string;
-      sourceSet: Set<ToolSource>;
-      chats: SessionStats[];
-      turns: number;
-      inputTokens: number;
-      outputTokens: number;
-      cacheReadTokens: number;
-      cacheWriteTokens: number;
-      totalTokens: number;
-      costUSD: number;
-      cacheSavingsUSD: number;
-      startedAt: string;
-      lastActiveAt: string;
-      modelStats: Map<string, { turns: number; costUSD: number }>;
-    }
-  >();
-
-  for (const s of sessions) {
-    const key = normalizeWorkspaceKey(s.workspace);
-    let entry = map.get(key);
-    if (!entry) {
-      entry = {
-        workspaceKey: key,
-        workspace: s.workspace,
-        workspaceName: s.workspaceName,
-        sourceSet: new Set<ToolSource>(),
-        chats: [],
-        turns: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        totalTokens: 0,
-        costUSD: 0,
-        cacheSavingsUSD: 0,
-        startedAt: s.startedAt,
-        lastActiveAt: s.lastActiveAt,
-        modelStats: new Map(),
-      };
-      map.set(key, entry);
-    }
-
-    entry.sourceSet.add(s.source);
-    entry.chats.push(s);
-    entry.turns += s.turns;
-    entry.inputTokens += s.inputTokens;
-    entry.outputTokens += s.outputTokens;
-    entry.cacheReadTokens += s.cacheReadTokens;
-    entry.cacheWriteTokens += s.cacheWriteTokens;
-    entry.totalTokens += s.totalTokens;
-    entry.costUSD += s.costUSD;
-    entry.cacheSavingsUSD += s.cacheSavingsUSD;
-
-    if (s.startedAt && (!entry.startedAt || s.startedAt < entry.startedAt)) {
-      entry.startedAt = s.startedAt;
-    }
-    if (s.lastActiveAt && (!entry.lastActiveAt || s.lastActiveAt > entry.lastActiveAt)) {
-      entry.lastActiveAt = s.lastActiveAt;
-    }
-
-    for (const t of s.turnHistory) {
-      const label = t.modelLabel || t.normalizedModel || 'Unknown';
-      const prev = entry.modelStats.get(label) || { turns: 0, costUSD: 0 };
-      prev.turns += 1;
-      prev.costUSD += t.costUSD;
-      entry.modelStats.set(label, prev);
-    }
-  }
-
-  const groups: WorkspaceGroup[] = [];
-  for (const entry of map.values()) {
-    entry.chats.sort((a, b) => (b.lastActiveAt > a.lastActiveAt ? 1 : -1));
-    const orderedModels = Array.from(entry.modelStats.entries()).sort(
-      (a, b) => b[1].costUSD - a[1].costUSD || b[1].turns - a[1].turns
-    );
-    const topByTurns = Array.from(entry.modelStats.entries()).sort(
-      (a, b) => b[1].turns - a[1].turns || b[1].costUSD - a[1].costUSD
-    );
-
-    const sources: ToolSource[] = [];
-    if (entry.sourceSet.has('antigravity')) sources.push('antigravity');
-    if (entry.sourceSet.has('claude')) sources.push('claude');
-
-    groups.push({
-      workspaceKey: entry.workspaceKey,
-      workspace: entry.workspace,
-      workspaceName: entry.workspaceName,
-      sources,
-      chats: entry.chats,
-      turns: entry.turns,
-      inputTokens: entry.inputTokens,
-      outputTokens: entry.outputTokens,
-      cacheReadTokens: entry.cacheReadTokens,
-      cacheWriteTokens: entry.cacheWriteTokens,
-      totalTokens: entry.totalTokens,
-      costUSD: entry.costUSD,
-      cacheSavingsUSD: entry.cacheSavingsUSD,
-      startedAt: entry.startedAt,
-      lastActiveAt: entry.lastActiveAt,
-      primaryModelLabel: topByTurns[0]?.[0] || entry.chats[0]?.primaryModelLabel || 'Unknown',
-      distinctModels: orderedModels.map(([label]) => label),
-    });
-  }
-
-  return groups.sort((a, b) => (b.lastActiveAt > a.lastActiveAt ? 1 : -1));
 }
 
 function findModelRate(
@@ -683,6 +506,29 @@ export default function App() {
     analytics.referenceSubUSD > 0 ? Math.min(100, (analytics.totalCostUSD / analytics.referenceSubUSD) * 100) : 0;
   const subMultiplier =
     analytics.referenceSubUSD > 0 ? (analytics.totalCostUSD / analytics.referenceSubUSD).toFixed(1) : '0.0';
+
+  const exportReport = (format: 'csv' | 'json') => {
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const filename = `burnrate-${toolFilter}-${timeRange}-${dateStamp}.${format}`;
+    const content =
+      format === 'csv'
+        ? workspacesToCsv(analytics.workspaces, currency)
+        : workspacesToJson(analytics.workspaces, currency, {
+            toolFilter,
+            timeRange,
+            searchQuery,
+          });
+    const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const sortedModels = [...analytics.modelData].sort((a, b) => b.tokens - a.tokens);
   const canCollapseModels = sortedModels.length > 2;
@@ -1467,16 +1313,33 @@ export default function App() {
               </p>
             </div>
 
-            {/* Search Input */}
-            <div className="relative w-full sm:w-72">
-              <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Filter workspace, chat, model..."
-                className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono"
-              />
+            {/* Search & Export */}
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Filter workspace, chat, model..."
+                  className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {(['csv', 'json'] as const).map((fmt) => (
+                  <button
+                    key={fmt}
+                    type="button"
+                    disabled={analytics.workspaces.length === 0}
+                    onClick={() => exportReport(fmt)}
+                    title={`Export filtered report (${currency}) as ${fmt.toUpperCase()}`}
+                    className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/80 text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-400" />
+                    {fmt.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

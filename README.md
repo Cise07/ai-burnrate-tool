@@ -22,7 +22,7 @@ Track in real time how many tokens you are consuming across **Antigravity CLI** 
 - 🔄 **Automatic Official Price Sync & Historical Tariff Protection:** On startup (and on manual rescan), `ai-burnrate` automatically fetches the latest official per-token model prices from the public **LiteLLM Pricing Registry** and the official repository feed. Whenever a model's price changes, a new timestamped rate snapshot (`effectiveFrom`) is appended to `~/.burnrate/pricing-ledger.json`—**tokens consumed before the price change are never recalculated**, and the new tariff applies strictly to turns recorded after the change.
 - 💱 **Instant `$ USD` / `€ EUR` Currency Switch:** Toggle the entire dashboard (KPI cards, monthly subscription comparison, charts, and live session table) between US Dollars and Euros with persistent `localStorage` state.
 - 🧠 **Granular Per-Model Token Breakdown:** Dedicated central widget and ANSI CLI tables breaking down *Input (Uncached)*, *Cache Read (Context)*, and *Output (Thinking + Response/Code)* with automatic streaming chunk deduplication.
-- 🖥️ **Instant Terminal Mode (`--cli`):** Prints colorized ANSI tables (Tool Breakdown, Model Breakdown, and Top 12 Recent Sessions) directly in your terminal and exits immediately.
+- 🖥️ **Instant Terminal Mode (`--cli`):** Prints colorized ANSI tables (Tool Breakdown, Model Breakdown, and grouped Workspaces → Chats hierarchy with real chat titles) directly in your terminal, with optional `--eur`, `--tool`, `--range`, and `--json` flags.
 
 ---
 
@@ -54,7 +54,11 @@ Once installed, the **`burnrate`** (or **`ai-burnrate`**) command is available g
 | Command | Description |
 | :--- | :--- |
 | `burnrate` | 🟢 **Live Mode (Default):** Syncs official pricing, starts the local HTTP + SSE server, watches `~/.gemini` & `~/.claude`, and opens the React Dashboard in your browser. |
-| `burnrate --cli` | 📊 **Terminal Mode:** Syncs pricing, prints the full token & cost report in colorized ANSI tables in the terminal, and exits immediately. |
+| `burnrate --cli` | 📊 **Terminal Mode:** Syncs pricing, prints the workspace/chat token & cost report in colorized ANSI tables, and exits immediately. |
+| `burnrate --cli --eur` | 💶 **CLI EUR Mode:** Prints terminal costs in EUR (`€`) instead of USD (`$`). |
+| `burnrate --cli --tool <tool>` | 🔎 **CLI Tool Filter:** Filters `--cli` output by `all`, `antigravity`, or `claude`. |
+| `burnrate --cli --range <range>` | 🕒 **CLI Time Range:** Filters `--cli` output by `24h`, `7d`, `30d`, or `all`. |
+| `burnrate --cli --json` | 🧾 **CLI JSON Output:** Prints aggregated workspaces, chats, and per-model breakdowns as JSON. |
 | `burnrate --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without automatically opening the browser. |
 | `burnrate -p, --port <number>` | 🔌 **Custom Port:** Starts the dashboard on a specific port (default: `4321`, automatically falling back to the next free port if busy). |
 | `burnrate --update` | 🔄 **Self-Update:** Updates `ai-burnrate-tool` to the latest version from npm. |
@@ -110,8 +114,8 @@ npm uninstall -g ai-burnrate-tool
 - **📈 Interactive Charts & Model Token Widget:**
   - **Daily API Burn Rate:** Stacked area chart comparing Antigravity CLI and Claude Code spend over time.
   - **Cost by Model:** Horizontal bar chart ranking spend by model.
-  - **Total Token Usage by Model:** Central grid showing total tokens, percentage share, and `Input / Cached / Output` breakdown for every model.
-- **🗂️ Live Sessions & Workspaces Table:** Real-time searchable table displaying tool badge, relative workspace path (`~/...`), primary model, turns, input/output tokens, cache read tokens, cache savings, API cost, and relative last-active time.
+  - **Total Token Usage by Model:** Central grid showing total tokens, percentage share, and `Input / Cached / Output` breakdown for every model (keeps the top 2 most-used models visible and collapses extra models when more than 2 are used).
+- **🗂️ Live Sessions & Workspaces Table:** Real-time searchable table grouping all chats inside normalized workspaces (`~/...`) with human-readable chat titles, inline model summaries, expandable per-model breakdowns, and one-click **CSV / JSON** export.
 
 ---
 
@@ -131,6 +135,7 @@ ai-burnrate/
 │   │   ├── index.ts        # CLI entrypoint (#!/usr/bin/env node)
 │   │   └── reporter.ts     # ANSI terminal table formatter (--cli)
 │   ├── core/
+│   │   ├── analytics.ts    # Shared filtering, workspace grouping, currency & CSV/JSON export
 │   │   ├── parser.ts       # Dynamic ~/.gemini & ~/.claude JSONL parser
 │   │   ├── pricing.ts      # Official price auto-sync & historical rate ledger
 │   │   ├── watcher.ts      # Real-time file watcher with chokidar

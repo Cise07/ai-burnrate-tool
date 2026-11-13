@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import open from 'open';
 import pc from 'picocolors';
 import { scanAllLogs } from '../core/parser.js';
+import type { TimeRange, ToolFilter } from '../core/analytics.js';
 import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
 import { startLogWatcher } from '../core/watcher.js';
 import { startServer } from '../server/index.js';
@@ -39,6 +40,10 @@ program
   .description('Real-time local token & API equivalent cost tracker for Antigravity CLI and Claude Code')
   .version(getPackageVersion())
   .option('--cli', 'Print the usage report in ANSI tables in the terminal and exit immediately', false)
+  .option('--eur', 'Display costs in EUR (€) instead of USD ($) in --cli mode', false)
+  .option('--tool <tool>', 'Filter --cli report by tool (all, antigravity, claude)', 'all')
+  .option('--range <range>', 'Filter --cli report by time range (24h, 7d, 30d, all)', 'all')
+  .option('--json', 'Print --cli report as JSON instead of ANSI tables', false)
   .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
   .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
   .option('--update', 'Update ai-burnrate-tool to the latest version from npm', false)
@@ -48,11 +53,18 @@ program.parse(process.argv);
 
 const opts = program.opts<{
   cli?: boolean;
+  eur?: boolean;
+  tool?: string;
+  range?: string;
+  json?: boolean;
   open?: boolean;
   port?: string;
   update?: boolean;
   uninstall?: boolean;
 }>();
+
+const VALID_TOOLS: ReadonlySet<string> = new Set(['all', 'antigravity', 'claude']);
+const VALID_RANGES: ReadonlySet<string> = new Set(['24h', '7d', '30d', 'all']);
 
 async function main() {
   if (opts.update) {
@@ -84,8 +96,20 @@ async function main() {
     }
   }
 
+  const toolFilter = String(opts.tool || 'all').toLowerCase();
+  const timeRange = String(opts.range || 'all').toLowerCase();
+
+  if (!VALID_TOOLS.has(toolFilter)) {
+    console.error(pc.red(`Invalid --tool "${opts.tool}". Expected: all, antigravity, or claude.`));
+    process.exit(1);
+  }
+  if (!VALID_RANGES.has(timeRange)) {
+    console.error(pc.red(`Invalid --range "${opts.range}". Expected: 24h, 7d, 30d, or all.`));
+    process.exit(1);
+  }
+
   const syncResult = await syncOfficialPricing();
-  if (syncResult.updated && syncResult.effectiveFrom) {
+  if (syncResult.updated && syncResult.effectiveFrom && !(opts.cli && opts.json)) {
     console.log(
       `  ${pc.cyan('↻')} Official pricing updated (new tariff active for turns from ${pc.bold(syncResult.effectiveFrom)}; past turns preserved).`
     );
@@ -94,7 +118,12 @@ async function main() {
   const snapshot = scanAllLogs(true);
 
   if (opts.cli) {
-    printCliReport(snapshot);
+    printCliReport(snapshot, {
+      currency: opts.eur ? 'EUR' : 'USD',
+      toolFilter: toolFilter as ToolFilter,
+      timeRange: timeRange as TimeRange,
+      json: Boolean(opts.json),
+    });
     process.exit(0);
   }
 
