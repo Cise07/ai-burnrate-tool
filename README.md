@@ -59,7 +59,7 @@ Once installed, the **`burnrate`** (or **`ai-burnrate`**) command is available g
 | `burnrate -p, --port <number>` | 🔌 **Custom Port:** Starts the dashboard on a specific port (default: `4321`, automatically falling back to the next free port if busy). |
 | `burnrate --update` | 🔄 **Self-Update:** Updates `ai-burnrate-tool` to the latest version from npm. |
 | `burnrate --uninstall` | 🗑️ **Self-Uninstall:** Completely removes the global `burnrate` package from your system. |
-| `burnrate -V, --version` | 🏷️ Prints the installed version (`1.0.0`). |
+| `burnrate -V, --version` | 🏷️ Prints the installed version. |
 | `burnrate -h, --help` | ℹ️ Displays all available CLI options. |
 
 > 💡 **Clean Shutdown:** While running in live mode (`burnrate`), press `Ctrl+C` (`SIGINT`) to cleanly close all SSE streams, active HTTP sockets, and the `chokidar` file watcher.
