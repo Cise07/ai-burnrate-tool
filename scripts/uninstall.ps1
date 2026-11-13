@@ -5,7 +5,7 @@ Write-Host "  * AI-BURNRATE UNINSTALLER" -ForegroundColor Yellow
 Write-Host "  --------------------------------------------------" -ForegroundColor DarkGray
 
 if (Get-Command npm -ErrorAction SilentlyContinue) {
-    npm uninstall -g ai-burnrate
+    npm uninstall -g ai-burnrate-tool
     Write-Host "  + ai-burnrate has been completely removed." -ForegroundColor Green
 } else {
     Write-Host "  x npm not found in PATH." -ForegroundColor Red

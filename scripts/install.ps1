@@ -1,5 +1,24 @@
 $ErrorActionPreference = "Stop"
-$RepoUrl = if ($env:BURNRATE_REPO) { $env:BURNRATE_REPO } else { "https://github.com/Cise07/ai-burnrate-tool/archive/refs/heads/main.tar.gz" }
+$RepoSlug = "Cise07/ai-burnrate-tool"
+$RepoUrl = $env:BURNRATE_REPO
+if (-not $RepoUrl) {
+    if ($env:BURNRATE_VERSION) {
+        $Tag = if ($env:BURNRATE_VERSION.StartsWith("v")) { $env:BURNRATE_VERSION } else { "v$($env:BURNRATE_VERSION)" }
+        $RepoUrl = "https://github.com/$RepoSlug/archive/refs/tags/$Tag.tar.gz"
+    } else {
+        try {
+            $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$RepoSlug/releases/latest" -Headers @{ "User-Agent" = "ai-burnrate-installer" } -TimeoutSec 4
+            if ($Release.tag_name) {
+                $RepoUrl = "https://github.com/$RepoSlug/archive/refs/tags/$($Release.tag_name).tar.gz"
+            }
+        } catch {
+            # Fallback to main branch if no release is published yet
+        }
+        if (-not $RepoUrl) {
+            $RepoUrl = "https://github.com/$RepoSlug/archive/refs/heads/main.tar.gz"
+        }
+    }
+}
 
 Write-Host ""
 Write-Host "  * AI-BURNRATE INSTALLER" -ForegroundColor Green
@@ -16,7 +35,7 @@ Write-Host "  + Found Node.js $NodeVersion" -ForegroundColor Cyan
 
 if (Test-Path ".\package.json") {
     $Pkg = Get-Content ".\package.json" -Raw | ConvertFrom-Json
-    if ($Pkg.name -eq "ai-burnrate") {
+    if ($Pkg.name -eq "ai-burnrate-tool") {
         Write-Host "  * Installing from local repository..." -ForegroundColor Yellow
         npm install --silent
         npm run build

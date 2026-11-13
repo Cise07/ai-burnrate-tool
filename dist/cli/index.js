@@ -1,49 +1,95 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Command } from 'commander';
 import open from 'open';
 import pc from 'picocolors';
 import { scanAllLogs } from '../core/parser.js';
-import { syncOfficialPricing } from '../core/pricing.js';
+import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
 import { startLogWatcher } from '../core/watcher.js';
 import { startServer } from '../server/index.js';
 import { printCliReport } from './reporter.js';
+const REPO_SLUG = 'Cise07/ai-burnrate-tool';
+function getPackageVersion() {
+    try {
+        const pkgPath = path.join(getPackageRoot(), 'package.json');
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        return pkg.version || '1.0.0';
+    }
+    catch {
+        return '1.0.0';
+    }
+}
+async function resolveUpdateTarget() {
+    const requested = process.env.BURNRATE_VERSION?.trim();
+    if (requested) {
+        const tag = requested.startsWith('v') ? requested : `v${requested}`;
+        return {
+            label: tag,
+            url: `https://github.com/${REPO_SLUG}/archive/refs/tags/${tag}.tar.gz`,
+        };
+    }
+    try {
+        const res = await fetch(`https://api.github.com/repos/${REPO_SLUG}/releases/latest`, {
+            headers: { 'User-Agent': 'ai-burnrate-cli' },
+            signal: AbortSignal.timeout(4000),
+        });
+        if (res.ok) {
+            const data = (await res.json());
+            if (data.tag_name) {
+                return {
+                    label: data.tag_name,
+                    url: `https://github.com/${REPO_SLUG}/archive/refs/tags/${data.tag_name}.tar.gz`,
+                };
+            }
+        }
+    }
+    catch {
+        // Fallback to main branch if no GitHub Release exists yet or offline
+    }
+    return {
+        label: 'main',
+        url: `https://github.com/${REPO_SLUG}/archive/refs/heads/main.tar.gz`,
+    };
+}
 const program = new Command();
 program
     .name('burnrate')
     .description('Real-time local token & API equivalent cost tracker for Antigravity CLI and Claude Code')
-    .version('1.0.0')
+    .version(getPackageVersion())
     .option('--cli', 'Print the usage report in ANSI tables in the terminal and exit immediately', false)
     .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
     .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
-    .option('--update', 'Update ai-burnrate to the latest version from GitHub', false)
+    .option('--update', 'Update ai-burnrate to the latest release from GitHub', false)
     .option('--uninstall', 'Uninstall ai-burnrate globally from your system', false);
 program.parse(process.argv);
 const opts = program.opts();
 async function main() {
     if (opts.update) {
-        console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold('ai-burnrate')} to the latest version from GitHub...`);
+        const target = await resolveUpdateTarget();
+        console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold('ai-burnrate')} (${pc.cyan(target.label)}) from GitHub...`);
         try {
-            execSync('npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz', {
+            execSync(`npm install -g ${target.url}`, {
                 stdio: 'inherit',
             });
-            console.log(`  ${pc.green('✓')} ${pc.bold('ai-burnrate')} updated successfully to the latest version!\n`);
+            console.log(`  ${pc.green('✓')} ${pc.bold('ai-burnrate')} updated successfully to ${pc.bold(target.label)}!\n`);
             process.exit(0);
         }
         catch {
-            console.error(`  ${pc.red('✗')} Failed to update automatically. Try running:\n  ${pc.cyan('npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz')}\n`);
+            console.error(`  ${pc.red('✗')} Failed to update automatically. Try running:\n  ${pc.cyan(`npm install -g ${target.url}`)}\n`);
             process.exit(1);
         }
     }
     if (opts.uninstall) {
         console.log(`\n  ${pc.yellow('●')} Uninstalling ${pc.bold('ai-burnrate')} globally...`);
         try {
-            execSync('npm uninstall -g ai-burnrate', { stdio: 'inherit' });
+            execSync('npm uninstall -g ai-burnrate-tool', { stdio: 'inherit' });
             console.log(`  ${pc.green('✓')} ${pc.bold('ai-burnrate')} has been completely removed from your system.\n`);
             process.exit(0);
         }
         catch {
-            console.error(`  ${pc.red('✗')} Failed to uninstall automatically. Run: ${pc.cyan('npm uninstall -g ai-burnrate')}`);
+            console.error(`  ${pc.red('✗')} Failed to uninstall automatically. Run: ${pc.cyan('npm uninstall -g ai-burnrate-tool')}`);
             process.exit(1);
         }
     }

@@ -26,9 +26,9 @@ Track in real time how many tokens you are consuming across **Antigravity CLI** 
 
 ---
 
-## 🚀 Quick Install (No Clone Required)
+## 🚀 Quick Install (Latest Version)
 
-You don't need to manually download or clone the repository—simply paste **one command** into your terminal from any directory.
+You don't need to manually download or clone the repository—simply paste **one command** into your terminal from any directory. The installer automatically resolves the latest GitHub Release (falling back to `main` if none exist yet).
 
 > ⚠️ **Prerequisite:** Make sure you have [Node.js (>= 18)](https://nodejs.org/) and `npm` installed.
 
@@ -54,6 +54,24 @@ npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz
 ```
 
 *(Want to run it once without installing? Use `npx https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz`)*
+
+### 🏷️ Install a Specific Release Version
+To pin a specific release tag (e.g., `v1.0.1`), use the release tarball directly or pass `BURNRATE_VERSION` to the installer:
+
+```bash
+# Universal (recommended for GitHub Release notes)
+npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/refs/tags/vX.Y.Z.tar.gz
+```
+
+```powershell
+# Windows PowerShell
+$env:BURNRATE_VERSION="vX.Y.Z"; irm https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/install.ps1 | iex
+```
+
+```bash
+# macOS / Linux
+BURNRATE_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/install.sh | bash
+```
 
 ---
 
@@ -106,7 +124,7 @@ burnrate --uninstall
 
 ### 2️⃣ Via `npm`
 ```bash
-npm uninstall -g ai-burnrate
+npm uninstall -g ai-burnrate-tool
 ```
 
 ### 3️⃣ Via One-Liner Script

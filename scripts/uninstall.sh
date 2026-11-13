@@ -10,7 +10,7 @@ echo -e "\033[1;33m  🗑️  AI-BURNRATE UNINSTALLER\033[0m"
 echo -e "\033[90m  ──────────────────────────────────────────────────\033[0m"
 
 if command -v npm >/dev/null 2>&1; then
-  npm uninstall -g ai-burnrate
+  npm uninstall -g ai-burnrate-tool
   echo -e "\033[1;32m  ✓ ai-burnrate has been completely removed.\033[0m"
 else
   echo -e "\033[1;31m  ✗ npm not found in PATH.\033[0m"

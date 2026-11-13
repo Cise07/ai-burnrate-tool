@@ -1,11 +1,12 @@
 {
-  "name": "ai-burnrate",
+  "name": "ai-burnrate-tool",
   "version": "1.0.0",
   "description": "Real-time local token & API equivalent cost tracker for Antigravity CLI and Claude Code",
   "type": "module",
   "bin": {
-    "burnrate": "./dist/cli/index.js",
-    "ai-burnrate": "./dist/cli/index.js"
+    "burnrate": "dist/cli/index.js",
+    "ai-burnrate": "dist/cli/index.js",
+    "ai-burnrate-tool": "dist/cli/index.js"
   },
   "files": [
     "dist",
@@ -15,7 +16,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Cise07/ai-burnrate-tool.git"
+    "url": "git+https://github.com/Cise07/ai-burnrate-tool.git"
   },
   "scripts": {
     "dev:web": "vite",
@@ -23,7 +24,7 @@
     "build:cli": "tsc -p tsconfig.cli.json",
     "build": "npm run build:web && npm run build:cli",
     "setup": "npm install && npm run build && npm install -g .",
-    "remove": "npm uninstall -g ai-burnrate",
+    "remove": "npm uninstall -g ai-burnrate-tool",
     "start": "node ./dist/cli/index.js"
   },
   "keywords": [
