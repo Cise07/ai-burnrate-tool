@@ -42,10 +42,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git checkout main
+          PRE_BUMP_SHA="$(git rev-parse HEAD)"
           VERSION="${GITHUB_REF_NAME#v}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
           git add package.json package-lock.json
           if ! git diff --cached --quiet; then
             git commit -m "chore(release): bump version to $VERSION"
             git push origin main
+            if [ "$PRE_BUMP_SHA" = "${{ github.sha }}" ]; then
+              git tag -f "$GITHUB_REF_NAME" HEAD
+              git push --force origin "refs/tags/$GITHUB_REF_NAME"
+            fi
           fi
