@@ -26,69 +26,23 @@ Track in real time how many tokens you are consuming across **Antigravity CLI** 
 
 ---
 
-## 🚀 Quick Install (Latest Version)
+## 🚀 Quick Install (Windows / macOS / Linux)
 
-You don't need to manually download or clone the repository—simply paste **one command** into your terminal from any directory. The installer automatically resolves the latest GitHub Release (falling back to `main` if none exist yet).
+Install globally from npm using **one command** from any terminal:
 
 > ⚠️ **Prerequisite:** Make sure you have [Node.js (>= 18)](https://nodejs.org/) and `npm` installed.
 
-### 🪟 Windows (PowerShell)
-Open PowerShell and run:
-```powershell
-irm https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/install.ps1 | iex
-```
-> 💡 **Note on Windows permissions:** If PowerShell blocks the script with an `ExecutionPolicy` or permission error, enable script execution for your user by running:
-> ```powershell
-> Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-> ```
-
-### 🍎 macOS / 🐧 Linux (Bash / Zsh)
-Open your terminal and run:
+### Latest Version
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/install.sh | bash
+npm install -g ai-burnrate-tool
 ```
 
-### 📦 Universal Alternative via `npm` (Cross-Platform)
+*(Want to run it once without installing? Use `npx ai-burnrate-tool`)*
+
+### 🏷️ Install a Specific Version
+To install a specific release (e.g., `1.0.0`), specify the version tag:
 ```bash
-npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz
-```
-
-*(Want to run it once without installing? Use `npx https://github.com/Cise07/ai-burnrate-tool/archive/main.tar.gz`)*
-
-### 🏷️ Install a Specific Release Version
-To pin a specific release tag (e.g., `v1.0.1`), use the release tarball directly or pass `BURNRATE_VERSION` to the installer:
-
-```bash
-# Universal (recommended for GitHub Release notes)
-npm install -g https://github.com/Cise07/ai-burnrate-tool/archive/refs/tags/vX.Y.Z.tar.gz
-```
-
-```powershell
-# Windows PowerShell
-$env:BURNRATE_VERSION="vX.Y.Z"; irm https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/install.ps1 | iex
-```
-
-```bash
-# macOS / Linux
-BURNRATE_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/install.sh | bash
-```
-
----
-
-## 🛠️ Install from Local Clone (For Developers)
-
-If you clone the repository locally, the installer script automatically detects `package.json`, installs dependencies, compiles both the React frontend (`dist/public`) and CLI (`dist/cli`), and registers the global `burnrate` binary:
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/Cise07/ai-burnrate-tool.git
-cd ai-burnrate-tool
-
-# 2. Build and install globally
-.\scripts\install.ps1   # Windows PowerShell
-./scripts/install.sh    # macOS / Linux
-# Or via npm script:
-npm run setup
+npm install -g ai-burnrate-tool@X.Y.Z
 ```
 
 ---
@@ -126,16 +80,6 @@ burnrate --uninstall
 ```bash
 npm uninstall -g ai-burnrate-tool
 ```
-
-### 3️⃣ Via One-Liner Script
-- **Windows (PowerShell):**
-  ```powershell
-  irm https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/uninstall.ps1 | iex
-  ```
-- **macOS / Linux:**
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/scripts/uninstall.sh | bash
-  ```
 
 ---
 
