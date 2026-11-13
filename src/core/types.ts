@@ -57,6 +57,7 @@ export interface UsageTurn {
 
 export interface SessionStats {
   sessionId: string;
+  sessionTitle: string;
   source: ToolSource;
   workspace: string;
   workspaceName: string;

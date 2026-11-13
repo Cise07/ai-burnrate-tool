@@ -3,8 +3,68 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     @apply bg-zinc-950 text-zinc-100 font-sans;
+  }
+}
+
+@keyframes burnHeader {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes burnFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes burnExpand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-burn-header {
+  animation: burnHeader 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-burn-fade-up {
+  animation: burnFadeUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-burn-expand {
+  animation: burnExpand 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-burn-header,
+  .animate-burn-fade-up,
+  .animate-burn-expand {
+    animation: none !important;
   }
 }
 

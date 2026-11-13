@@ -1,13 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
-  ChevronDown,
   ChevronRight,
   Cpu,
   Database,
   DollarSign,
   FolderGit2,
   Layers,
+  MessageSquare,
   RefreshCw,
   Search,
   Sparkles,
@@ -27,7 +27,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { BurnrateSnapshot, ModelRate, SessionStats, ToolSource } from '../core/types';
+import type { BurnrateSnapshot, ModelRate, SessionStats, ToolSource, UsageTurn } from '../core/types';
 
 type ToolFilter = 'all' | ToolSource;
 type TimeRange = '24h' | '7d' | '30d' | 'all';
@@ -97,6 +97,178 @@ function getSessionModelBreakdown(turnHistory: UsageTurn[]): SessionModelItem[] 
   return Array.from(map.values()).sort((a, b) => b.costUSD - a.costUSD);
 }
 
+interface WorkspaceGroup {
+  workspaceKey: string;
+  workspace: string;
+  workspaceName: string;
+  sources: ToolSource[];
+  chats: SessionStats[];
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  cacheSavingsUSD: number;
+  startedAt: string;
+  lastActiveAt: string;
+  primaryModelLabel: string;
+  distinctModels: string[];
+}
+
+function normalizeWorkspaceKey(workspacePath: string): string {
+  const cleaned = (workspacePath || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  return cleaned ? cleaned.toLowerCase() : 'global / cli';
+}
+
+function buildWorkspaceGroups(sessions: SessionStats[]): WorkspaceGroup[] {
+  const map = new Map<
+    string,
+    {
+      workspaceKey: string;
+      workspace: string;
+      workspaceName: string;
+      sourceSet: Set<ToolSource>;
+      chats: SessionStats[];
+      turns: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+      totalTokens: number;
+      costUSD: number;
+      cacheSavingsUSD: number;
+      startedAt: string;
+      lastActiveAt: string;
+      modelStats: Map<string, { turns: number; costUSD: number }>;
+    }
+  >();
+
+  for (const s of sessions) {
+    const key = normalizeWorkspaceKey(s.workspace);
+    let entry = map.get(key);
+    if (!entry) {
+      entry = {
+        workspaceKey: key,
+        workspace: s.workspace,
+        workspaceName: s.workspaceName,
+        sourceSet: new Set<ToolSource>(),
+        chats: [],
+        turns: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 0,
+        costUSD: 0,
+        cacheSavingsUSD: 0,
+        startedAt: s.startedAt,
+        lastActiveAt: s.lastActiveAt,
+        modelStats: new Map(),
+      };
+      map.set(key, entry);
+    }
+
+    entry.sourceSet.add(s.source);
+    entry.chats.push(s);
+    entry.turns += s.turns;
+    entry.inputTokens += s.inputTokens;
+    entry.outputTokens += s.outputTokens;
+    entry.cacheReadTokens += s.cacheReadTokens;
+    entry.cacheWriteTokens += s.cacheWriteTokens;
+    entry.totalTokens += s.totalTokens;
+    entry.costUSD += s.costUSD;
+    entry.cacheSavingsUSD += s.cacheSavingsUSD;
+
+    if (s.startedAt && (!entry.startedAt || s.startedAt < entry.startedAt)) {
+      entry.startedAt = s.startedAt;
+    }
+    if (s.lastActiveAt && (!entry.lastActiveAt || s.lastActiveAt > entry.lastActiveAt)) {
+      entry.lastActiveAt = s.lastActiveAt;
+    }
+
+    for (const t of s.turnHistory) {
+      const label = t.modelLabel || t.normalizedModel || 'Unknown';
+      const prev = entry.modelStats.get(label) || { turns: 0, costUSD: 0 };
+      prev.turns += 1;
+      prev.costUSD += t.costUSD;
+      entry.modelStats.set(label, prev);
+    }
+  }
+
+  const groups: WorkspaceGroup[] = [];
+  for (const entry of map.values()) {
+    entry.chats.sort((a, b) => (b.lastActiveAt > a.lastActiveAt ? 1 : -1));
+    const orderedModels = Array.from(entry.modelStats.entries()).sort(
+      (a, b) => b[1].costUSD - a[1].costUSD || b[1].turns - a[1].turns
+    );
+    const topByTurns = Array.from(entry.modelStats.entries()).sort(
+      (a, b) => b[1].turns - a[1].turns || b[1].costUSD - a[1].costUSD
+    );
+
+    const sources: ToolSource[] = [];
+    if (entry.sourceSet.has('antigravity')) sources.push('antigravity');
+    if (entry.sourceSet.has('claude')) sources.push('claude');
+
+    groups.push({
+      workspaceKey: entry.workspaceKey,
+      workspace: entry.workspace,
+      workspaceName: entry.workspaceName,
+      sources,
+      chats: entry.chats,
+      turns: entry.turns,
+      inputTokens: entry.inputTokens,
+      outputTokens: entry.outputTokens,
+      cacheReadTokens: entry.cacheReadTokens,
+      cacheWriteTokens: entry.cacheWriteTokens,
+      totalTokens: entry.totalTokens,
+      costUSD: entry.costUSD,
+      cacheSavingsUSD: entry.cacheSavingsUSD,
+      startedAt: entry.startedAt,
+      lastActiveAt: entry.lastActiveAt,
+      primaryModelLabel: topByTurns[0]?.[0] || entry.chats[0]?.primaryModelLabel || 'Unknown',
+      distinctModels: orderedModels.map(([label]) => label),
+    });
+  }
+
+  return groups.sort((a, b) => (b.lastActiveAt > a.lastActiveAt ? 1 : -1));
+}
+
+function findModelRate(
+  normalizedModel: string | undefined,
+  modelLabel: string,
+  pricing: BurnrateSnapshot['pricing'] | undefined
+): ModelRate | undefined {
+  if (!pricing?.models) return undefined;
+  return (
+    (normalizedModel ? pricing.models[normalizedModel] : undefined) ||
+    Object.values(pricing.models).find((r) => r.label === modelLabel)
+  );
+}
+
+function ToolBadge({ source, compact = false }: { source: ToolSource; compact?: boolean }) {
+  const pad = compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[10.5px]';
+  if (source === 'antigravity') {
+    return (
+      <span
+        className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25 whitespace-nowrap`}
+      >
+        <Terminal className="w-3 h-3 shrink-0" />
+        Antigravity
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25 whitespace-nowrap`}
+    >
+      <Sparkles className="w-3 h-3 shrink-0" />
+      Claude Code
+    </span>
+  );
+}
+
 function formatRelativeTime(iso: string): string {
   if (!iso) return '—';
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -150,10 +322,25 @@ export default function App() {
     return (localStorage.getItem('burnrate_currency') as Currency) === 'EUR' ? 'EUR' : 'USD';
   });
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
+  const [expandedChats, setExpandedChats] = useState<Set<string>>(new Set());
+  const [isModelUsageExpanded, setIsModelUsageExpanded] = useState<boolean>(() => {
+    return localStorage.getItem('burnrate_models_expanded') === 'true';
+  });
 
-  const toggleExpandSession = (key: string) => {
-    setExpandedSessions((prev) => {
+  const toggleModelUsageExpanded = () => {
+    setIsModelUsageExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem('burnrate_models_expanded', String(next));
+      return next;
+    });
+  };
+
+  const toggleSetKey = (
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+    key: string
+  ) => {
+    setter((prev) => {
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
@@ -170,6 +357,33 @@ export default function App() {
   };
   const currencySymbol = currency === 'EUR' ? '€' : '$';
   const rateMultiplier = currency === 'EUR' ? EUR_RATE : 1;
+
+  const toolGroupRef = useRef<HTMLDivElement | null>(null);
+  const toolBtnRefs = useRef<Record<ToolFilter, HTMLButtonElement | null>>({
+    all: null,
+    antigravity: null,
+    claude: null,
+  });
+  const [toolPill, setToolPill] = useState<{ left: number; width: number; ready: boolean }>({
+    left: 0,
+    width: 0,
+    ready: false,
+  });
+
+  useLayoutEffect(() => {
+    const updatePill = () => {
+      const btn = toolBtnRefs.current[toolFilter];
+      if (!btn) return;
+      setToolPill({ left: btn.offsetLeft, width: btn.offsetWidth, ready: true });
+    };
+    updatePill();
+
+    const groupEl = toolGroupRef.current;
+    if (!groupEl || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(updatePill);
+    ro.observe(groupEl);
+    return () => ro.disconnect();
+  }, [toolFilter, snapshot !== null]);
 
   useEffect(() => {
     // Initial fetch fallback
@@ -364,10 +578,14 @@ export default function App() {
       totalCacheWriteTokens += sCacheWrite;
       totalTokens += sTotal;
       totalTurns += validTurns.length;
-      workspaceSet.add(session.workspaceName);
+      workspaceSet.add(normalizeWorkspaceKey(session.workspace));
+
+      const chatPrimaryModel =
+        getSessionModelBreakdown(validTurns)[0]?.modelLabel || session.primaryModelLabel;
 
       filteredSessions.push({
         ...session,
+        primaryModelLabel: chatPrimaryModel,
         turns: validTurns.length,
         inputTokens: sInput,
         outputTokens: sOutput,
@@ -403,11 +621,20 @@ export default function App() {
       return (
         s.workspaceName.toLowerCase().includes(q) ||
         s.workspace.toLowerCase().includes(q) ||
+        (s.sessionTitle || '').toLowerCase().includes(q) ||
         s.primaryModelLabel.toLowerCase().includes(q) ||
         s.sessionId.toLowerCase().includes(q) ||
-        s.source.toLowerCase().includes(q)
+        s.source.toLowerCase().includes(q) ||
+        s.turnHistory.some(
+          (t) =>
+            t.modelLabel.toLowerCase().includes(q) ||
+            t.normalizedModel.toLowerCase().includes(q) ||
+            t.model.toLowerCase().includes(q)
+        )
       );
     });
+
+    const workspaceGroups = buildWorkspaceGroups(searchedSessions);
 
     const promptPool = totalInputTokens + totalCacheReadTokens;
     const cacheHitRate = promptPool > 0 ? (totalCacheReadTokens / promptPool) * 100 : 0;
@@ -435,7 +662,8 @@ export default function App() {
       workspacesCount: workspaceSet.size,
       timelineData,
       modelData,
-      sessions: searchedSessions,
+      workspaces: workspaceGroups,
+      filteredChatsCount: searchedSessions.length,
       totalSessionsCount: filteredSessions.length,
     };
   }, [snapshot, toolFilter, timeRange, searchQuery]);
@@ -456,23 +684,206 @@ export default function App() {
   const subMultiplier =
     analytics.referenceSubUSD > 0 ? (analytics.totalCostUSD / analytics.referenceSubUSD).toFixed(1) : '0.0';
 
+  const sortedModels = [...analytics.modelData].sort((a, b) => b.tokens - a.tokens);
+  const canCollapseModels = sortedModels.length > 2;
+  const topModels = canCollapseModels ? sortedModels.slice(0, 2) : sortedModels;
+  const extraModels = canCollapseModels ? sortedModels.slice(2) : [];
+
+  const renderModelCard = (m: (typeof analytics.modelData)[number], idx: number) => {
+    const sharePct = analytics.totalTokens > 0 ? (m.tokens / analytics.totalTokens) * 100 : 0;
+    const barColor = MODEL_COLORS[idx % MODEL_COLORS.length];
+    const promoActive = Boolean(m.rate && isPromoActive(m.rate));
+    const curInput = m.rate ? (promoActive ? m.rate.input : (m.rate.standardInput ?? m.rate.input)) : 0;
+    const curCache = m.rate
+      ? promoActive
+        ? m.rate.cacheRead
+        : (m.rate.standardCacheRead ?? m.rate.cacheRead)
+      : 0;
+    const curOutput = m.rate ? (promoActive ? m.rate.output : (m.rate.standardOutput ?? m.rate.output)) : 0;
+
+    return (
+      <div
+        key={m.model}
+        className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 p-4 flex flex-col justify-between gap-3"
+      >
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-zinc-100 truncate" title={m.model}>
+              {m.model}
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {promoActive && (
+                <span
+                  className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
+                  title={m.rate?.promoNote || 'Tariffa promozionale attiva'}
+                >
+                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                  PROMO
+                </span>
+              )}
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                  m.source === 'antigravity'
+                    ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
+                    : 'bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20'
+                }`}
+              >
+                {m.source === 'antigravity' ? 'AGY' : 'Claude'}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-2 flex items-baseline justify-between">
+            <div>
+              <span className="text-2xl font-bold font-mono text-white">
+                {formatTokens(m.tokens)}
+              </span>
+              <span className="text-[11px] text-zinc-500 font-mono ml-1">tokens</span>
+            </div>
+            <span className="text-xs font-mono text-zinc-400">{sharePct.toFixed(1)}%</span>
+          </div>
+
+          <div className="mt-1.5 flex items-center justify-between text-xs font-mono">
+            <span className="text-zinc-400">Total Spend:</span>
+            <span className="font-semibold text-emerald-400">
+              {formatMoney(m.costUSD, currency)}
+            </span>
+          </div>
+
+          <div className="mt-2 h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.max(4, sharePct)}%`,
+                backgroundColor: barColor,
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-zinc-800/70 text-[11px] font-mono">
+          <div>
+            <span className="text-zinc-500 block">Input</span>
+            <span className="text-zinc-200">{formatTokens(m.inputTokens)}</span>
+          </div>
+          <div>
+            <span className="text-zinc-500 block">Cached</span>
+            <span className="text-cyan-400">{formatTokens(m.cacheReadTokens)}</span>
+          </div>
+          <div>
+            <span className="text-zinc-500 block">Output</span>
+            <span className="text-amber-300">{formatTokens(m.outputTokens)}</span>
+          </div>
+        </div>
+
+        {m.rate && (
+          <div className="pt-2.5 border-t border-zinc-800/70 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-zinc-400">Tariffa per 1M tok:</span>
+              {promoActive && (
+                <span className="text-[10px] font-semibold text-amber-400 flex items-center gap-1">
+                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                  In Promozione
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5 bg-zinc-900/90 p-2 rounded border border-zinc-800/80 text-[10px] font-mono">
+              <div>
+                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Input</span>
+                <div className="flex items-baseline gap-1">
+                  {promoActive && m.rate.standardInput && (
+                    <span className="line-through text-zinc-600 text-[9px]">
+                      {formatRateMoney(m.rate.standardInput, currency)}
+                    </span>
+                  )}
+                  <span className="text-zinc-200 font-semibold">
+                    {formatRateMoney(curInput, currency)}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Cached</span>
+                <span className="text-cyan-400 font-semibold">
+                  {formatRateMoney(curCache, currency)}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Output</span>
+                <div className="flex items-baseline gap-1">
+                  {promoActive && m.rate.standardOutput && (
+                    <span className="line-through text-zinc-600 text-[9px]">
+                      {formatRateMoney(m.rate.standardOutput, currency)}
+                    </span>
+                  )}
+                  <span className="text-amber-300 font-semibold">
+                    {formatRateMoney(curOutput, currency)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {promoActive && m.rate.promoNote && (
+              <div className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
+                <span className="text-amber-400">●</span>
+                <span className="truncate" title={m.rate.promoNote}>
+                  {m.rate.promoNote}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const modelUsageHeaderContent = (
+    <>
+      <div className="flex items-start gap-2.5">
+        {canCollapseModels && (
+          <span className="mt-0.5 p-1 rounded group-hover:bg-zinc-800 text-zinc-500 group-hover:text-zinc-200 transition shrink-0">
+            <ChevronRight
+              className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
+                isModelUsageExpanded ? 'rotate-90 text-emerald-400' : ''
+              }`}
+            />
+          </span>
+        )}
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-emerald-400" />
+            Total Token Usage by Model
+          </h2>
+          <p className="text-xs text-zinc-400 mt-0.5">
+            Complete token consumption breakdown (Input, Cache Read & Output) per AI model
+          </p>
+        </div>
+      </div>
+      <div className={`text-xs font-mono text-zinc-400 ${canCollapseModels ? 'pl-7 sm:pl-0' : ''}`}>
+        Total: <span className="text-zinc-100 font-semibold">{formatTokens(analytics.totalTokens)}</span> tokens
+      </div>
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       {/* Subtle top glow */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-64 bg-gradient-to-b from-emerald-500/[0.05] via-cyan-500/[0.02] to-transparent" />
 
       {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md animate-burn-header">
         <div className="max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3 overflow-x-auto whitespace-nowrap">
           {/* Brand & Live Status */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shadow-inner shrink-0">
-              <Zap className="w-4 h-4 text-emerald-400" />
+          <div className="flex items-center gap-2.5 shrink-0 group">
+            <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shadow-inner shrink-0 transition-all duration-200 group-hover:border-emerald-500/40 group-hover:shadow-[0_0_16px_-4px_rgba(16,185,129,0.45)]">
+              <Zap className="w-4 h-4 text-emerald-400 transition-transform duration-200 group-hover:scale-110" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold tracking-tight text-zinc-100 text-sm sm:text-base">ai-burnrate</span>
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
+                <span className="font-bold tracking-tight text-zinc-100 text-sm sm:text-base transition-colors duration-200 group-hover:text-white">ai-burnrate</span>
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 transition-colors duration-200">
                   <span className="relative flex h-2 w-2">
                     <span
                       className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
@@ -488,7 +899,7 @@ export default function App() {
                   {sseConnected ? 'LIVE' : 'SYNC'}
                 </span>
               </div>
-              <p className="text-[11px] text-zinc-500 font-mono hidden xl:block">
+              <p className="text-[11px] text-zinc-500 font-mono hidden xl:block transition-colors duration-200">
                 Watching ~/.gemini & ~/.claude {lastSyncTime && `• Synced ${lastSyncTime}`}
               </p>
             </div>
@@ -496,35 +907,60 @@ export default function App() {
 
           {/* Controls: Tool Filter, Time Selector, Currency, Rescan */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-            {/* Tool Filter */}
-            <div className="inline-flex rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs shrink-0">
+            {/* Tool Filter (with smooth sliding indicator) */}
+            <div
+              ref={toolGroupRef}
+              className="relative inline-flex items-center gap-0.5 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs shrink-0 select-none"
+            >
+              {toolPill.ready && (
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute top-1 bottom-1 left-0 rounded-md border transition-[transform,width,background-color,border-color] duration-200 ease-out motion-reduce:transition-none ${
+                    toolFilter === 'antigravity'
+                      ? 'bg-cyan-500/20 border-cyan-500/30'
+                      : toolFilter === 'claude'
+                        ? 'bg-fuchsia-500/20 border-fuchsia-500/30'
+                        : 'bg-zinc-800 border-zinc-700/70 shadow-sm'
+                  }`}
+                  style={{
+                    width: `${toolPill.width}px`,
+                    transform: `translateX(${toolPill.left}px)`,
+                  }}
+                />
+              )}
               <button
+                ref={(el) => {
+                  toolBtnRefs.current.all = el;
+                }}
+                type="button"
                 onClick={() => setToolFilter('all')}
-                className={`px-2 sm:px-2.5 py-1 rounded-md font-medium transition ${
-                  toolFilter === 'all'
-                    ? 'bg-zinc-800 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
+                  toolFilter === 'all' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 All
               </button>
               <button
+                ref={(el) => {
+                  toolBtnRefs.current.antigravity = el;
+                }}
+                type="button"
                 onClick={() => setToolFilter('antigravity')}
-                className={`px-2 sm:px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
-                  toolFilter === 'antigravity'
-                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50 flex items-center gap-1.5 ${
+                  toolFilter === 'antigravity' ? 'text-cyan-300' : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
                 <span>Antigravity</span>
               </button>
               <button
+                ref={(el) => {
+                  toolBtnRefs.current.claude = el;
+                }}
+                type="button"
                 onClick={() => setToolFilter('claude')}
-                className={`px-2 sm:px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
-                  toolFilter === 'claude'
-                    ? 'bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-fuchsia-500/50 flex items-center gap-1.5 ${
+                  toolFilter === 'claude' ? 'text-fuchsia-300' : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-fuchsia-400 shrink-0" />
@@ -532,15 +968,23 @@ export default function App() {
               </button>
             </div>
 
-            {/* Time Range Selector */}
-            <div className="inline-flex rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs font-mono shrink-0">
+            {/* Time Range Selector (with smooth sliding indicator) */}
+            <div className="relative inline-grid grid-cols-4 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs font-mono shrink-0 select-none">
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/4)] rounded-md bg-emerald-500/20 border border-emerald-500/30 transition-transform duration-200 ease-out motion-reduce:transition-none"
+                style={{
+                  transform: `translateX(${(['24h', '7d', '30d', 'all'] as TimeRange[]).indexOf(timeRange) * 100}%)`,
+                }}
+              />
               {(['24h', '7d', '30d', 'all'] as TimeRange[]).map((range) => (
                 <button
+                  type="button"
                   key={range}
                   onClick={() => setTimeRange(range)}
-                  className={`px-2 sm:px-2.5 py-1 rounded-md uppercase transition ${
+                  className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md uppercase font-medium text-center transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
                     timeRange === range
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold'
+                      ? 'text-emerald-300'
                       : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
@@ -549,23 +993,31 @@ export default function App() {
               ))}
             </div>
 
-            {/* Currency Toggle ($ USD / € EUR) */}
-            <div className="inline-flex rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs font-mono shrink-0">
+            {/* Currency Toggle ($ USD / € EUR with smooth sliding indicator) */}
+            <div className="relative inline-grid grid-cols-2 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs font-mono shrink-0 select-none">
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/2)] rounded-md bg-emerald-500/20 border border-emerald-500/30 transition-transform duration-200 ease-out motion-reduce:transition-none ${
+                  currency === 'EUR' ? 'translate-x-full' : 'translate-x-0'
+                }`}
+              />
               <button
+                type="button"
                 onClick={() => toggleCurrency('USD')}
-                className={`px-2 py-1 rounded-md transition ${
+                className={`relative z-10 px-2 py-1 min-w-[56px] text-center rounded-md font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
                   currency === 'USD'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold'
+                    ? 'text-emerald-300'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 $ USD
               </button>
               <button
+                type="button"
                 onClick={() => toggleCurrency('EUR')}
-                className={`px-2 py-1 rounded-md transition ${
+                className={`relative z-10 px-2 py-1 min-w-[56px] text-center rounded-md font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
                   currency === 'EUR'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold'
+                    ? 'text-emerald-300'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
@@ -575,11 +1027,18 @@ export default function App() {
 
             {/* Manual Rescan */}
             <button
+              type="button"
               onClick={triggerManualRescan}
               title="Force Rescan Logs"
-              className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 transition shrink-0"
+              className="group p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-300 hover:text-emerald-300 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 select-none shrink-0"
             >
-              <RefreshCw className={`w-4 h-4 ${isRescanning ? 'animate-spin text-emerald-400' : ''}`} />
+              <RefreshCw
+                className={`w-4 h-4 ${
+                  isRescanning
+                    ? 'animate-spin text-emerald-400'
+                    : 'transition-transform duration-300 group-hover:rotate-90 motion-reduce:transition-none'
+                }`}
+              />
             </button>
           </div>
         </div>
@@ -589,13 +1048,13 @@ export default function App() {
       <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
         {/* Live Event Banner if a file just updated */}
         {lastChangedFile && (
-          <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300">
+          <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300 animate-burn-expand">
             <span className="truncate">
               ● Live update received from: <span className="text-emerald-200">{lastChangedFile}</span>
             </span>
             <button
               onClick={() => setLastChangedFile(null)}
-              className="text-emerald-400/70 hover:text-emerald-300 ml-4"
+              className="text-emerald-400/70 hover:text-emerald-300 ml-4 transition-colors"
             >
               Dismiss
             </button>
@@ -603,9 +1062,9 @@ export default function App() {
         )}
 
         {/* 4 KPI Cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-burn-fade-up">
           {/* Card 1: Estimated API Spend & Subscription Comparison */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between relative overflow-hidden">
+          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between relative overflow-hidden transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                 API Equivalent Spend
@@ -647,7 +1106,7 @@ export default function App() {
           </div>
 
           {/* Card 2: Total Tokens */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between">
+          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                 Total Tokens
@@ -683,7 +1142,7 @@ export default function App() {
           </div>
 
           {/* Card 3: Prompt Cache Savings */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between">
+          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                 Cache Savings
@@ -719,7 +1178,7 @@ export default function App() {
           </div>
 
           {/* Card 4: Active Sessions & Workspaces */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between">
+          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                 Sessions & Projects
@@ -753,9 +1212,9 @@ export default function App() {
         </section>
 
         {/* Charts Row */}
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-burn-fade-up" style={{ animationDelay: '50ms' }}>
           {/* Daily Burn Rate Timeline (2 cols) */}
-          <div className="lg:col-span-2 rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col">
+          <div className="lg:col-span-2 rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col transition-colors duration-200 hover:border-zinc-700/80">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
@@ -816,7 +1275,9 @@ export default function App() {
                         borderRadius: '0.5rem',
                         fontSize: '12px',
                         fontFamily: 'JetBrains Mono, monospace',
+                        color: '#f4f4f5',
                       }}
+                      labelStyle={{ color: '#e4e4e7', fontWeight: 600, marginBottom: '2px' }}
                       formatter={(val: number, name: string) => [
                         formatMoney(Number(val), currency),
                         name === 'antigravityUSD' ? 'Antigravity CLI' : 'Claude Code',
@@ -847,7 +1308,7 @@ export default function App() {
           </div>
 
           {/* Model Spend Breakdown (1 col) */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col">
+          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col transition-colors duration-200 hover:border-zinc-700/80">
             <div className="mb-4">
               <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
                 <Database className="w-4 h-4 text-cyan-400" />
@@ -896,7 +1357,10 @@ export default function App() {
                         borderRadius: '0.5rem',
                         fontSize: '12px',
                         fontFamily: 'JetBrains Mono, monospace',
+                        color: '#f4f4f5',
                       }}
+                      labelStyle={{ color: '#f4f4f5', fontWeight: 600, marginBottom: '2px' }}
+                      itemStyle={{ color: '#34d399' }}
                       formatter={(val: number) => [formatMoney(Number(val), currency), 'API Spend']}
                     />
                     <Bar dataKey="costUSD" radius={[0, 6, 6, 0]} barSize={20}>
@@ -912,186 +1376,86 @@ export default function App() {
         </section>
 
         {/* Central Widget: Total Token Usage per Model */}
-        <section className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <div>
-              <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-emerald-400" />
-                Total Token Usage by Model
-              </h2>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Complete token consumption breakdown (Input, Cache Read & Output) per AI model
-              </p>
-            </div>
-            <div className="text-xs font-mono text-zinc-400">
-              Total: <span className="text-zinc-100 font-semibold">{formatTokens(analytics.totalTokens)}</span> tokens
-            </div>
-          </div>
-
-          {analytics.modelData.length === 0 ? (
-            <div className="py-8 text-center text-xs text-zinc-500 font-mono">
-              No model token data available.
-            </div>
+        <section
+          className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 overflow-hidden animate-burn-fade-up transition-colors duration-200 hover:border-zinc-700/80"
+          style={{ animationDelay: '90ms' }}
+        >
+          {canCollapseModels ? (
+            <button
+              type="button"
+              onClick={toggleModelUsageExpanded}
+              aria-expanded={isModelUsageExpanded}
+              title={isModelUsageExpanded ? 'Collapse extra models' : `Show all ${sortedModels.length} models`}
+              className={`w-full px-5 py-4 flex flex-wrap items-center justify-between gap-3 text-left hover:bg-zinc-800/30 transition-colors cursor-pointer select-none group ${
+                isModelUsageExpanded ? 'bg-zinc-900/40' : ''
+              }`}
+            >
+              {modelUsageHeaderContent}
+            </button>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[...analytics.modelData]
-                .sort((a, b) => b.tokens - a.tokens)
-                .map((m, idx) => {
-                  const sharePct =
-                    analytics.totalTokens > 0 ? (m.tokens / analytics.totalTokens) * 100 : 0;
-                  const barColor = MODEL_COLORS[idx % MODEL_COLORS.length];
-                  return (
-                    <div
-                      key={m.model}
-                      className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 p-4 flex flex-col justify-between gap-3"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-zinc-100 truncate" title={m.model}>
-                            {m.model}
-                          </span>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {isPromoActive(m.rate) && (
-                              <span
-                                className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
-                                title={m.rate?.promoNote || 'Tariffa promozionale attiva'}
-                              >
-                                <Sparkles className="w-2.5 h-2.5 text-amber-400" />
-                                PROMO
-                              </span>
-                            )}
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                                m.source === 'antigravity'
-                                  ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
-                                  : 'bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20'
-                              }`}
-                            >
-                              {m.source === 'antigravity' ? 'AGY' : 'Claude'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="mt-2 flex items-baseline justify-between">
-                          <div>
-                            <span className="text-2xl font-bold font-mono text-white">
-                              {formatTokens(m.tokens)}
-                            </span>
-                            <span className="text-[11px] text-zinc-500 font-mono ml-1">tokens</span>
-                          </div>
-                          <span className="text-xs font-mono text-zinc-400">
-                            {sharePct.toFixed(1)}%
-                          </span>
-                        </div>
-
-                        <div className="mt-1.5 flex items-center justify-between text-xs font-mono">
-                          <span className="text-zinc-400">Total Spend:</span>
-                          <span className="font-semibold text-emerald-400">
-                            {formatMoney(m.costUSD, currency)}
-                          </span>
-                        </div>
-
-                        <div className="mt-2 h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{
-                              width: `${Math.max(4, sharePct)}%`,
-                              backgroundColor: barColor,
-                            }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-zinc-800/70 text-[11px] font-mono">
-                        <div>
-                          <span className="text-zinc-500 block">Input</span>
-                          <span className="text-zinc-200">{formatTokens(m.inputTokens)}</span>
-                        </div>
-                        <div>
-                          <span className="text-zinc-500 block">Cached</span>
-                          <span className="text-cyan-400">{formatTokens(m.cacheReadTokens)}</span>
-                        </div>
-                        <div>
-                          <span className="text-zinc-500 block">Output</span>
-                          <span className="text-amber-300">{formatTokens(m.outputTokens)}</span>
-                        </div>
-                      </div>
-
-                      {m.rate && (() => {
-                        const promoActive = isPromoActive(m.rate);
-                        const curInput = promoActive ? m.rate.input : (m.rate.standardInput ?? m.rate.input);
-                        const curCache = promoActive ? m.rate.cacheRead : (m.rate.standardCacheRead ?? m.rate.cacheRead);
-                        const curOutput = promoActive ? m.rate.output : (m.rate.standardOutput ?? m.rate.output);
-
-                        return (
-                          <div className="pt-2.5 border-t border-zinc-800/70 flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between text-[11px] font-mono">
-                              <span className="text-zinc-400">Tariffa per 1M tok:</span>
-                              {promoActive && (
-                                <span className="text-[10px] font-semibold text-amber-400 flex items-center gap-1">
-                                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
-                                  In Promozione
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-1.5 bg-zinc-900/90 p-2 rounded border border-zinc-800/80 text-[10px] font-mono">
-                              <div>
-                                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Input</span>
-                                <div className="flex items-baseline gap-1">
-                                  {promoActive && m.rate.standardInput && (
-                                    <span className="line-through text-zinc-600 text-[9px]">
-                                      {formatRateMoney(m.rate.standardInput, currency)}
-                                    </span>
-                                  )}
-                                  <span className="text-zinc-200 font-semibold">
-                                    {formatRateMoney(curInput, currency)}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div>
-                                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Cached</span>
-                                <span className="text-cyan-400 font-semibold">
-                                  {formatRateMoney(curCache, currency)}
-                                </span>
-                              </div>
-
-                              <div>
-                                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Output</span>
-                                <div className="flex items-baseline gap-1">
-                                  {promoActive && m.rate.standardOutput && (
-                                    <span className="line-through text-zinc-600 text-[9px]">
-                                      {formatRateMoney(m.rate.standardOutput, currency)}
-                                    </span>
-                                  )}
-                                  <span className="text-amber-300 font-semibold">
-                                    {formatRateMoney(curOutput, currency)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            {promoActive && m.rate.promoNote && (
-                              <div className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
-                                <span className="text-amber-400">●</span>
-                                <span className="truncate" title={m.rate.promoNote}>
-                                  {m.rate.promoNote}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  );
-                })}
+            <div className="px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+              {modelUsageHeaderContent}
             </div>
           )}
+
+          <div className="px-5 pb-5 pt-4 border-t border-zinc-800/70">
+            {sortedModels.length === 0 ? (
+              <div className="py-8 text-center text-xs text-zinc-500 font-mono">
+                No model token data available.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {topModels.map((m, idx) => renderModelCard(m, idx))}
+                </div>
+
+                {canCollapseModels && (
+                  <>
+                    <div
+                      aria-hidden={isModelUsageExpanded}
+                      className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+                        isModelUsageExpanded
+                          ? 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                          : 'grid-rows-[1fr] opacity-100'
+                      }`}
+                    >
+                      <div className="overflow-hidden min-h-0">
+                        <button
+                          type="button"
+                          onClick={toggleModelUsageExpanded}
+                          className="mt-3 w-full py-2 px-3 rounded-lg border border-dashed border-zinc-800 bg-zinc-950/40 hover:bg-zinc-800/40 hover:border-zinc-700 text-xs font-mono text-zinc-400 hover:text-zinc-200 flex items-center justify-center gap-2 transition-colors cursor-pointer select-none"
+                        >
+                          <span>
+                            +{extraModels.length} more {extraModels.length === 1 ? 'model' : 'models'} collapsed · Click to view all {sortedModels.length}
+                          </span>
+                          <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      aria-hidden={!isModelUsageExpanded}
+                      className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+                        isModelUsageExpanded
+                          ? 'grid-rows-[1fr] opacity-100'
+                          : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                      }`}
+                    >
+                      <div className="overflow-hidden min-h-0">
+                        <div className="pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {extraModels.map((m, idx) => renderModelCard(m, idx + 2))}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </section>
 
         {/* Live Sessions / Workspaces Table */}
-        <section className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 overflow-hidden">
+        <section className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 overflow-hidden animate-burn-fade-up" style={{ animationDelay: '130ms' }}>
           <div className="p-4 sm:p-5 border-b border-zinc-800/80 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
@@ -1099,7 +1463,7 @@ export default function App() {
                 Live Sessions & Workspaces
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Real-time telemetry streamed from local JSONL transcripts ({analytics.sessions.length} shown)
+                Real-time telemetry grouped by workspace ({analytics.workspaces.length} workspaces · {analytics.filteredChatsCount} chats)
               </p>
             </div>
 
@@ -1110,7 +1474,7 @@ export default function App() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Filter workspace, model, session..."
+                placeholder="Filter workspace, chat, model..."
                 className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono"
               />
             </div>
@@ -1122,7 +1486,7 @@ export default function App() {
                 <tr className="border-b border-zinc-800/80 text-[10px] xl:text-[11px] font-mono uppercase text-zinc-400 bg-zinc-950/40">
                   <th className="py-2.5 px-2 w-7 sm:w-8 text-center"></th>
                   <th className="py-2.5 px-2 xl:px-3">Tool</th>
-                  <th className="py-2.5 px-2 xl:px-3">Workspace / Session</th>
+                  <th className="py-2.5 px-2 xl:px-3">Workspace Folder</th>
                   <th className="py-2.5 px-2 xl:px-3">Primary Model</th>
                   <th className="py-2.5 px-2 xl:px-2.5 text-right">Turns</th>
                   <th className="py-2.5 px-2 xl:px-2.5 text-right">Input / Output</th>
@@ -1133,208 +1497,393 @@ export default function App() {
                   <th className="py-2.5 px-2 xl:px-3 text-right">Last Modified</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/60 text-xs">
-                {analytics.sessions.slice(0, 60).map((s) => {
-                  const rowKey = `${s.source}-${s.filePath}`;
-                  const isExpanded = expandedSessions.has(rowKey);
-                  const sessionModels = isExpanded ? getSessionModelBreakdown(s.turnHistory) : [];
+              {analytics.workspaces.slice(0, 60).map((ws) => {
+                const isExpanded = expandedWorkspaces.has(ws.workspaceKey);
 
-                  return (
-                    <React.Fragment key={rowKey}>
-                      <tr
-                        onClick={() => toggleExpandSession(rowKey)}
-                        className={`hover:bg-zinc-800/30 transition-colors group cursor-pointer ${
-                          isExpanded ? 'bg-zinc-900/40' : ''
-                        }`}
-                      >
-                        <td className="py-2 px-2 text-center">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleExpandSession(rowKey);
-                            }}
-                            className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition"
-                            title={isExpanded ? 'Collapse models' : 'Expand models involved'}
+                return (
+                  <tbody
+                    key={ws.workspaceKey}
+                    className="text-xs border-b border-zinc-800/60 last:border-b-0"
+                  >
+                    <tr
+                      onClick={() => toggleSetKey(setExpandedWorkspaces, ws.workspaceKey)}
+                      className={`hover:bg-zinc-800/30 transition-colors group cursor-pointer ${
+                        isExpanded ? 'bg-zinc-900/40' : ''
+                      }`}
+                    >
+                      <td className="py-2 px-2 text-center">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSetKey(setExpandedWorkspaces, ws.workspaceKey);
+                          }}
+                          className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition select-none"
+                          title={isExpanded ? 'Collapse workspace chats' : 'Expand workspace chats'}
+                        >
+                          <ChevronRight
+                            className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
+                              isExpanded ? 'rotate-90 text-emerald-400' : ''
+                            }`}
+                          />
+                        </button>
+                      </td>
+
+                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap">
+                        <div className="flex flex-wrap items-center gap-1">
+                          {ws.sources.map((src) => (
+                            <ToolBadge key={src} source={src} compact={ws.sources.length > 1} />
+                          ))}
+                        </div>
+                      </td>
+
+                      <td className="py-2 px-2 xl:px-3">
+                        <div className="flex items-center gap-1.5 font-medium text-zinc-200">
+                          <FolderGit2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                          <span
+                            className="truncate max-w-[120px] sm:max-w-[150px] lg:max-w-[180px] xl:max-w-[220px]"
+                            title={ws.workspace}
                           >
-                            {isExpanded ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-emerald-400" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        </td>
+                            {ws.workspaceName}
+                          </span>
+                        </div>
+                        <div className="text-[10.5px] text-zinc-400 font-mono flex items-center gap-1.5 mt-0.5">
+                          <span>
+                            {ws.chats.length} {ws.chats.length === 1 ? 'chat' : 'chats'}
+                          </span>
+                          <span className="text-zinc-600 hidden xl:inline truncate max-w-[160px]" title={ws.workspace}>
+                            · {ws.workspace}
+                          </span>
+                        </div>
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap">
-                          {s.source === 'antigravity' ? (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
-                              <Terminal className="w-3 h-3" />
-                              Antigravity
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25">
-                              <Sparkles className="w-3 h-3" />
-                              Claude Code
+                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap font-mono text-[11px] xl:text-xs text-zinc-300">
+                        <div className="inline-flex items-center gap-1.5">
+                          <span>{ws.primaryModelLabel}</span>
+                          {ws.distinctModels.length > 1 && (
+                            <span
+                              className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/80 text-[10px]"
+                              title={ws.distinctModels.join(', ')}
+                            >
+                              +{ws.distinctModels.length - 1}
                             </span>
                           )}
-                        </td>
+                        </div>
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-3">
-                          <div className="flex items-center gap-1.5 font-medium text-zinc-200">
-                            <FolderGit2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                            <span className="truncate max-w-[120px] sm:max-w-[150px] lg:max-w-[180px] xl:max-w-[220px]" title={s.workspace}>
-                              {s.workspaceName}
-                            </span>
-                          </div>
-                          <div className="text-[10.5px] text-zinc-500 font-mono truncate max-w-[120px] sm:max-w-[150px] lg:max-w-[180px] xl:max-w-[220px]" title={s.sessionId}>
-                            {s.sessionId}
-                          </div>
-                        </td>
+                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-300 text-[11px] xl:text-xs">
+                        {ws.turns}
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap font-mono text-[11px] xl:text-xs text-zinc-300">
-                          {s.primaryModelLabel}
-                        </td>
+                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-400 text-[11px] xl:text-xs">
+                        <span className="text-zinc-200">{formatTokens(ws.inputTokens)}</span>
+                        <span className="text-zinc-600 mx-0.5">/</span>
+                        <span className="text-zinc-300">{formatTokens(ws.outputTokens)}</span>
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-300 text-[11px] xl:text-xs">
-                          {s.turns}
-                        </td>
+                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-cyan-400 text-[11px] xl:text-xs">
+                        {formatTokens(ws.cacheReadTokens)}
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-400 text-[11px] xl:text-xs">
-                          <span className="text-zinc-200">{formatTokens(s.inputTokens)}</span>
-                          <span className="text-zinc-600 mx-0.5">/</span>
-                          <span className="text-zinc-300">{formatTokens(s.outputTokens)}</span>
-                        </td>
+                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-fuchsia-400 text-[11px] xl:text-xs">
+                        {formatMoney(ws.cacheSavingsUSD, currency)}
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-cyan-400 text-[11px] xl:text-xs">
-                          {formatTokens(s.cacheReadTokens)}
-                        </td>
+                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono font-semibold text-emerald-400 text-[11px] xl:text-xs">
+                        {formatMoney(ws.costUSD, currency)}
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-fuchsia-400 text-[11px] xl:text-xs">
-                          {formatMoney(s.cacheSavingsUSD, currency)}
-                        </td>
+                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
+                        <div className="text-zinc-200">{formatPreciseDateTime(ws.startedAt).date}</div>
+                        <div className="text-[10px] text-zinc-500">{formatPreciseDateTime(ws.startedAt).time}</div>
+                      </td>
 
-                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono font-semibold text-emerald-400 text-[11px] xl:text-xs">
-                          {formatMoney(s.costUSD, currency)}
-                        </td>
+                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
+                        <div className="text-zinc-200">{formatPreciseDateTime(ws.lastActiveAt).date}</div>
+                        <div
+                          className="text-[10px] text-emerald-400/90 flex items-center justify-end gap-1"
+                          title={formatRelativeTime(ws.lastActiveAt)}
+                        >
+                          <span>{formatPreciseDateTime(ws.lastActiveAt).time}</span>
+                          <span className="text-zinc-500 hidden xl:inline">
+                            ({formatRelativeTime(ws.lastActiveAt)})
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
 
-                        <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
-                          <div className="text-zinc-200">{formatPreciseDateTime(s.startedAt).date}</div>
-                          <div className="text-[10px] text-zinc-500">{formatPreciseDateTime(s.startedAt).time}</div>
-                        </td>
-
-                        <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
-                          <div className="text-zinc-200">{formatPreciseDateTime(s.lastActiveAt).date}</div>
-                          <div className="text-[10px] text-emerald-400/90 flex items-center justify-end gap-1" title={formatRelativeTime(s.lastActiveAt)}>
-                            <span>{formatPreciseDateTime(s.lastActiveAt).time}</span>
-                            <span className="text-zinc-500 hidden xl:inline">({formatRelativeTime(s.lastActiveAt)})</span>
-                          </div>
-                        </td>
-                      </tr>
-
-                      {isExpanded && (
-                        <tr className="bg-zinc-950/80 border-b border-zinc-800/80">
-                          <td colSpan={11} className="px-3 py-3 sm:px-4 sm:py-3.5">
+                    <tr
+                      aria-hidden={!isExpanded}
+                      className={
+                        isExpanded
+                          ? 'bg-zinc-950/80 border-t border-zinc-800/60'
+                          : 'pointer-events-none'
+                      }
+                    >
+                      <td
+                        colSpan={11}
+                        className={`transition-[padding] duration-200 ease-out motion-reduce:transition-none ${
+                          isExpanded ? 'px-3 py-3 sm:px-4 sm:py-3.5' : 'p-0 text-[0px] leading-[0]'
+                        }`}
+                      >
+                        <div
+                          className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+                            isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                          }`}
+                        >
+                          <div className="overflow-hidden min-h-0 text-xs leading-normal">
                             <div className="rounded-lg bg-zinc-900/60 border border-zinc-800/90 p-3 sm:p-4 space-y-3">
                               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                <span className="font-semibold text-zinc-200 flex items-center gap-2">
-                                  <Cpu className="w-4 h-4 text-emerald-400" />
-                                  Models Involved in this Project ({sessionModels.length})
-                                </span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-semibold text-zinc-200 flex items-center gap-2">
+                                    <MessageSquare className="w-4 h-4 text-emerald-400" />
+                                    Workspace Chats ({ws.chats.length})
+                                  </span>
+                                  <span className="text-[11px] font-mono text-zinc-500">{ws.workspace}</span>
+                                </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-zinc-400">
                                   <span>
-                                    Creato: <span className="text-zinc-200">{formatPreciseDateTime(s.startedAt).date} {formatPreciseDateTime(s.startedAt).time}</span>
+                                    Creato:{' '}
+                                    <span className="text-zinc-200">
+                                      {formatPreciseDateTime(ws.startedAt).date}{' '}
+                                      {formatPreciseDateTime(ws.startedAt).time}
+                                    </span>
                                   </span>
                                   <span>•</span>
                                   <span>
-                                    Ultima modifica: <span className="text-emerald-400">{formatPreciseDateTime(s.lastActiveAt).date} {formatPreciseDateTime(s.lastActiveAt).time}</span>
+                                    Ultima modifica:{' '}
+                                    <span className="text-emerald-400">
+                                      {formatPreciseDateTime(ws.lastActiveAt).date}{' '}
+                                      {formatPreciseDateTime(ws.lastActiveAt).time}
+                                    </span>
                                   </span>
                                 </div>
                               </div>
 
-                              <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
-                                  <thead>
-                                    <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
-                                      <th className="py-2 px-2.5">Model</th>
-                                      <th className="py-2 px-2 text-right">Turns</th>
-                                      <th className="py-2 px-2 text-right">Input</th>
-                                      <th className="py-2 px-2 text-right">Cache Read</th>
-                                      <th className="py-2 px-2 text-right">Output</th>
-                                      <th className="py-2 px-2 text-right">Total Tokens</th>
-                                      <th className="py-2 px-2 text-right">Cache Saved</th>
-                                      <th className="py-2 px-2.5 text-right">API Cost</th>
-                                      <th className="py-2 px-2 text-right">Cost Share</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-zinc-800/50">
-                                    {sessionModels.map((m) => {
-                                      const costShare =
-                                        s.costUSD > 0 ? (m.costUSD / s.costUSD) * 100 : 0;
-                                      const modelRate =
-                                        (m.normalizedModel ? snapshot?.pricing?.models?.[m.normalizedModel] : undefined) ||
-                                        Object.values(snapshot?.pricing?.models || {}).find(
-                                          (r) => r.label === m.modelLabel
-                                        );
-                                      return (
-                                        <tr key={m.modelLabel} className="hover:bg-zinc-800/20">
-                                          <td className="py-2 px-2.5 font-mono font-medium text-zinc-200 flex items-center gap-1.5 whitespace-nowrap">
-                                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
-                                            <span>{m.modelLabel}</span>
-                                            {isPromoActive(modelRate) && (
+                              <div className="space-y-2.5">
+                                {ws.chats.map((chat) => {
+                                  const chatKey = `${chat.source}-${chat.filePath}`;
+                                  const isChatExpanded = expandedChats.has(chatKey);
+                                  const chatModels = getSessionModelBreakdown(chat.turnHistory);
+                                  const created = formatPreciseDateTime(chat.startedAt);
+                                  const modified = formatPreciseDateTime(chat.lastActiveAt);
+
+                                  return (
+                                    <div
+                                      key={chatKey}
+                                      className="rounded-lg bg-zinc-950/75 border border-zinc-800/80 overflow-hidden transition-colors duration-150 hover:border-zinc-700/80"
+                                    >
+                                      <div
+                                        onClick={() => toggleSetKey(setExpandedChats, chatKey)}
+                                        className="p-3 hover:bg-zinc-900/50 transition-colors cursor-pointer space-y-2"
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                          <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleSetKey(setExpandedChats, chatKey);
+                                              }}
+                                              className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition shrink-0 select-none"
+                                              title={
+                                                isChatExpanded
+                                                  ? 'Hide detailed model metrics'
+                                                  : 'Show detailed model metrics'
+                                              }
+                                            >
+                                              <ChevronRight
+                                                className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
+                                                  isChatExpanded ? 'rotate-90 text-emerald-400' : ''
+                                                }`}
+                                              />
+                                            </button>
+
+                                            <ToolBadge source={chat.source} compact />
+
+                                            <span
+                                              className="text-xs font-medium text-zinc-100 truncate max-w-[240px] sm:max-w-[380px] lg:max-w-[480px]"
+                                              title={`${chat.sessionTitle || chat.sessionId} (${chat.sessionId})`}
+                                            >
+                                              {chat.sessionTitle || chat.sessionId}
+                                            </span>
+
+                                            <span className="text-[10.5px] font-mono text-zinc-500">
+                                              {created.date} {created.time} →{' '}
+                                              <span className="text-emerald-400/90">
+                                                {modified.date} {modified.time}
+                                              </span>{' '}
+                                              <span>({formatRelativeTime(chat.lastActiveAt)})</span>
+                                            </span>
+                                          </div>
+
+                                          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono">
+                                            <span className="text-zinc-400">
+                                              Turns <strong className="text-zinc-200">{chat.turns}</strong>
+                                            </span>
+                                            <span className="text-zinc-400">
+                                              In/Out{' '}
+                                              <span className="text-zinc-200">{formatTokens(chat.inputTokens)}</span>
+                                              <span className="text-zinc-600 mx-0.5">/</span>
+                                              <span className="text-zinc-300">{formatTokens(chat.outputTokens)}</span>
+                                            </span>
+                                            <span className="text-cyan-400">
+                                              Cache {formatTokens(chat.cacheReadTokens)}
+                                            </span>
+                                            <span className="text-fuchsia-400">
+                                              Saved {formatMoney(chat.cacheSavingsUSD, currency)}
+                                            </span>
+                                            <span className="text-emerald-400 font-semibold">
+                                              {formatMoney(chat.costUSD, currency)}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Models used in this chat (always visible per chat) */}
+                                        <div className="flex flex-wrap items-center gap-1.5 pl-6">
+                                          <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-zinc-400 mr-1">
+                                            <Cpu className="w-3 h-3 text-emerald-400" />
+                                            Models ({chatModels.length}):
+                                          </span>
+                                          {chatModels.map((m) => {
+                                            const costShare =
+                                              chat.costUSD > 0 ? (m.costUSD / chat.costUSD) * 100 : 0;
+                                            const modelRate = findModelRate(
+                                              m.normalizedModel,
+                                              m.modelLabel,
+                                              snapshot?.pricing
+                                            );
+                                            return (
                                               <span
-                                                className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                                                title={modelRate?.promoNote || 'Tariffa promozionale attiva'}
+                                                key={m.modelLabel}
+                                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-[10.5px] font-mono text-zinc-300"
+                                                title={`Input: ${formatTokens(m.inputTokens)} · Cache Read: ${formatTokens(m.cacheReadTokens)} · Output: ${formatTokens(m.outputTokens)} · Saved: ${formatMoney(m.cacheSavingsUSD, currency)}`}
                                               >
-                                                PROMO
+                                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                                <span className="text-zinc-200 font-medium">{m.modelLabel}</span>
+                                                {isPromoActive(modelRate) && (
+                                                  <span
+                                                    className="px-1 py-0 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                                    title={modelRate?.promoNote || 'Tariffa promozionale attiva'}
+                                                  >
+                                                    PROMO
+                                                  </span>
+                                                )}
+                                                <span className="text-zinc-500">· {m.turns}t</span>
+                                                <span className="text-zinc-400">· {formatTokens(m.totalTokens)}</span>
+                                                <span className="text-emerald-400 font-semibold">
+                                                  · {formatMoney(m.costUSD, currency)}
+                                                </span>
+                                                <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
                                               </span>
-                                            )}
-                                          </td>
-                                          <td className="py-2 px-2 text-right font-mono text-zinc-300 text-[11px]">
-                                            {m.turns}
-                                          </td>
-                                          <td className="py-2 px-2 text-right font-mono text-zinc-400 text-[11px]">
-                                            {formatTokens(m.inputTokens)}
-                                          </td>
-                                          <td className="py-2 px-2 text-right font-mono text-cyan-400 text-[11px]">
-                                            {formatTokens(m.cacheReadTokens)}
-                                          </td>
-                                          <td className="py-2 px-2 text-right font-mono text-zinc-300 text-[11px]">
-                                            {formatTokens(m.outputTokens)}
-                                          </td>
-                                          <td className="py-2 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
-                                            {formatTokens(m.totalTokens)}
-                                          </td>
-                                          <td className="py-2 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
-                                            {formatMoney(m.cacheSavingsUSD, currency)}
-                                          </td>
-                                          <td className="py-2 px-2.5 text-right font-mono font-semibold text-emerald-400 text-[11px]">
-                                            {formatMoney(m.costUSD, currency)}
-                                          </td>
-                                          <td className="py-2 px-2 text-right font-mono text-zinc-400 text-[11px]">
-                                            {costShare.toFixed(1)}%
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+
+                                      <div
+                                        aria-hidden={!isChatExpanded}
+                                        className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+                                          isChatExpanded
+                                            ? 'grid-rows-[1fr] opacity-100'
+                                            : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                                        }`}
+                                      >
+                                        <div className="overflow-hidden min-h-0">
+                                          <div className="border-t border-zinc-800/80 bg-zinc-900/40 px-3 py-2.5 overflow-x-auto">
+                                            <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
+                                              <thead>
+                                                <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
+                                                  <th className="py-1.5 px-2">Model</th>
+                                                  <th className="py-1.5 px-2 text-right">Turns</th>
+                                                  <th className="py-1.5 px-2 text-right">Input</th>
+                                                  <th className="py-1.5 px-2 text-right">Cache Read</th>
+                                                  <th className="py-1.5 px-2 text-right">Output</th>
+                                                  <th className="py-1.5 px-2 text-right">Total Tokens</th>
+                                                  <th className="py-1.5 px-2 text-right">Cache Saved</th>
+                                                  <th className="py-1.5 px-2 text-right">API Cost</th>
+                                                  <th className="py-1.5 px-2 text-right">Cost Share</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-zinc-800/50">
+                                                {chatModels.map((m) => {
+                                                  const costShare =
+                                                    chat.costUSD > 0 ? (m.costUSD / chat.costUSD) * 100 : 0;
+                                                  const modelRate = findModelRate(
+                                                    m.normalizedModel,
+                                                    m.modelLabel,
+                                                    snapshot?.pricing
+                                                  );
+                                                  return (
+                                                    <tr key={m.modelLabel} className="hover:bg-zinc-800/20">
+                                                      <td className="py-1.5 px-2 font-mono font-medium text-zinc-200 flex items-center gap-1.5 whitespace-nowrap">
+                                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                                        <span>{m.modelLabel}</span>
+                                                        {isPromoActive(modelRate) && (
+                                                          <span
+                                                            className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                                            title={
+                                                              modelRate?.promoNote || 'Tariffa promozionale attiva'
+                                                            }
+                                                          >
+                                                            PROMO
+                                                          </span>
+                                                        )}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                        {m.turns}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                        {formatTokens(m.inputTokens)}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                        {formatTokens(m.cacheReadTokens)}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                        {formatTokens(m.outputTokens)}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
+                                                        {formatTokens(m.totalTokens)}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                        {formatMoney(m.cacheSavingsUSD, currency)}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                        {formatMoney(m.costUSD, currency)}
+                                                      </td>
+                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                        {costShare.toFixed(1)}%
+                                                      </td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                );
+              })}
 
-                {analytics.sessions.length === 0 && (
+              {analytics.workspaces.length === 0 && (
+                <tbody className="text-xs">
                   <tr>
                     <td colSpan={11} className="py-10 text-center text-zinc-500 font-mono">
-                      No matching sessions found.
+                      No matching workspaces or chats found.
                     </td>
                   </tr>
-                )}
-              </tbody>
+                </tbody>
+              )}
             </table>
           </div>
         </section>

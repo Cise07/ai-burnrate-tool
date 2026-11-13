@@ -1,8 +1,88 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { calculateTurnCost, loadPricing } from './pricing.js';
 import type { BurnrateSnapshot, PricingConfig, SessionStats, ToolSource, UsageTurn } from './types.js';
+
+const require = createRequire(import.meta.url);
+
+function loadAntigravityTitles(geminiDir: string): Map<string, string> {
+  const titles = new Map<string, string>();
+  let DatabaseSync: any;
+  try {
+    ({ DatabaseSync } = require('node:sqlite'));
+  } catch {
+    return titles;
+  }
+
+  const dbCandidates = [
+    path.join(geminiDir, 'antigravity-cli', 'conversation_summaries.db'),
+    path.join(geminiDir, 'antigravity', 'conversation_summaries.db'),
+    path.join(geminiDir, 'conversation_summaries.db'),
+  ];
+
+  for (const dbPath of dbCandidates) {
+    if (!fs.existsSync(dbPath)) continue;
+    let db: any = null;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+      const rows = db
+        .prepare("SELECT conversation_id, title FROM conversation_summaries WHERE title != ''")
+        .all() as Array<{ conversation_id?: string; title?: string }>;
+      for (const row of rows) {
+        if (row.conversation_id && row.title && !titles.has(row.conversation_id)) {
+          titles.set(row.conversation_id, row.title.trim());
+        }
+      }
+    } catch {
+      // Ignore locked or incompatible SQLite DB
+    } finally {
+      try {
+        db?.close?.();
+      } catch {
+        // ignore close error
+      }
+    }
+  }
+
+  return titles;
+}
+
+function cleanChatTitle(raw: string, maxLen = 72): string {
+  const userReqMatch = raw.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
+  const base = userReqMatch ? userReqMatch[1] : raw;
+  const cleaned = base
+    .replace(/<local-command-[^>]*>[\s\S]*?<\/local-command-[^>]*>/gi, ' ')
+    .replace(/<command-[^>]*>[\s\S]*?<\/command-[^>]*>/gi, ' ')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/^#+\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return '';
+  return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1).trimEnd()}…` : cleaned;
+}
+
+function extractClaudeUserText(msgContent: unknown): string {
+  if (typeof msgContent === 'string') return msgContent;
+  if (Array.isArray(msgContent)) {
+    return msgContent
+      .filter((part) => part && part.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join(' ');
+  }
+  return '';
+}
+
+function formatSlugTitle(slug: string): string {
+  return slug
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 interface CachedFileEntry {
   mtimeMs: number;
@@ -134,7 +214,12 @@ function extractAntigravitySessionId(filePath: string): string {
   return path.basename(filePath, '.jsonl');
 }
 
-function parseAntigravityFile(filePath: string, stat: fs.Stats, pricing: PricingConfig): SessionStats | null {
+function parseAntigravityFile(
+  filePath: string,
+  stat: fs.Stats,
+  pricing: PricingConfig,
+  antigravityTitles?: Map<string, string>
+): SessionStats | null {
   let content: string;
   try {
     content = fs.readFileSync(filePath, 'utf-8');
@@ -147,6 +232,7 @@ function parseAntigravityFile(filePath: string, stat: fs.Stats, pricing: Pricing
   let currentModel = 'Gemini 4 Argon';
   let workspace: string | null = null;
   let lastUserPromptChars = 0;
+  let firstUserTitle = '';
 
   const turnHistory: UsageTurn[] = [];
   let startedAt = '';
@@ -175,6 +261,10 @@ function parseAntigravityFile(filePath: string, stat: fs.Stats, pricing: Pricing
 
     if (obj.type === 'USER_INPUT' && typeof obj.content === 'string') {
       lastUserPromptChars = obj.content.length;
+      if (!firstUserTitle) {
+        const candidateTitle = cleanChatTitle(obj.content);
+        if (candidateTitle) firstUserTitle = candidateTitle;
+      }
       const modelMatch = obj.content.match(/Model Selection`?\s+from\s+[^\r\n]+?\s+to\s+([^\r\n]+?)\.(?:\s|$)/i);
       if (modelMatch && modelMatch[1]) {
         currentModel = modelMatch[1].trim();
@@ -273,8 +363,11 @@ function parseAntigravityFile(filePath: string, stat: fs.Stats, pricing: Pricing
 
   if (turnHistory.length === 0) return null;
 
+  const sessionTitle = antigravityTitles?.get(sessionId) || firstUserTitle || sessionId;
+
   return summarizeSession({
     sessionId,
+    sessionTitle,
     source: 'antigravity',
     workspace: toRelativeHomePath(workspace || 'Global / CLI'),
     filePath: toRelativeHomePath(filePath),
@@ -298,6 +391,11 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
   let startedAt = '';
   let lastActiveAt = '';
   let lastUserPromptChars = 0;
+  let customTitle = '';
+  let summaryTitle = '';
+  let slugTitle = '';
+  let firstUserTitle = '';
+  let fallbackSlashTitle = '';
 
   const turnMap = new Map<string, UsageTurn>();
   let fallbackCounter = 0;
@@ -317,6 +415,16 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
       sessionId = obj.sessionId;
     } else if (typeof obj.session_id === 'string' && obj.session_id) {
       sessionId = obj.session_id;
+    }
+
+    if (typeof obj.customTitle === 'string' && obj.customTitle.trim()) {
+      customTitle = cleanChatTitle(obj.customTitle);
+    }
+    if (obj.type === 'summary' && typeof obj.summary === 'string' && obj.summary.trim()) {
+      summaryTitle = cleanChatTitle(obj.summary);
+    }
+    if (!slugTitle && typeof obj.slug === 'string' && obj.slug.trim()) {
+      slugTitle = obj.slug.trim();
     }
 
     if (typeof obj.cwd === 'string' && obj.cwd.trim()) {
@@ -339,6 +447,17 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
       const msgContent = obj.message?.content ?? obj.content;
       const text = typeof msgContent === 'string' ? msgContent : JSON.stringify(msgContent ?? '');
       lastUserPromptChars = text.length;
+      if (!firstUserTitle) {
+        const userText = extractClaudeUserText(msgContent);
+        const candidate = cleanChatTitle(userText);
+        if (candidate && candidate !== '[Request interrupted by user]') {
+          if (candidate.startsWith('/')) {
+            if (!fallbackSlashTitle) fallbackSlashTitle = candidate;
+          } else {
+            firstUserTitle = candidate;
+          }
+        }
+      }
       continue;
     }
 
@@ -419,9 +538,17 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
   if (turnHistory.length === 0) return null;
 
   const resolvedWs = workspace || decodeClaudeProjectFolder(filePath);
+  const sessionTitle =
+    customTitle ||
+    summaryTitle ||
+    firstUserTitle ||
+    (slugTitle ? formatSlugTitle(slugTitle) : '') ||
+    fallbackSlashTitle ||
+    sessionId;
 
   return summarizeSession({
     sessionId,
+    sessionTitle,
     source: 'claude',
     workspace: toRelativeHomePath(resolvedWs),
     filePath: toRelativeHomePath(filePath),
@@ -433,6 +560,7 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
 
 function summarizeSession(params: {
   sessionId: string;
+  sessionTitle: string;
   source: ToolSource;
   workspace: string;
   filePath: string;
@@ -481,6 +609,7 @@ function summarizeSession(params: {
 
   return {
     sessionId: params.sessionId,
+    sessionTitle: params.sessionTitle,
     source: params.source,
     workspace: params.workspace,
     workspaceName: formatWorkspaceName(params.workspace),
@@ -502,7 +631,12 @@ function summarizeSession(params: {
   };
 }
 
-export function parseSingleFile(filePath: string, source: ToolSource, pricing: PricingConfig = loadPricing()): SessionStats | null {
+export function parseSingleFile(
+  filePath: string,
+  source: ToolSource,
+  pricing: PricingConfig = loadPricing(),
+  antigravityTitles?: Map<string, string>
+): SessionStats | null {
   if (shouldSkipJsonlFile(filePath, source)) return null;
 
   let stat: fs.Stats;
@@ -513,14 +647,21 @@ export function parseSingleFile(filePath: string, source: ToolSource, pricing: P
     return null;
   }
 
+  const resolvedTitles =
+    source === 'antigravity' ? antigravityTitles || loadAntigravityTitles(getWatchRoots().geminiDir) : undefined;
+
   const cached = fileCache.get(filePath);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    if (cached.session && resolvedTitles) {
+      const dbTitle = resolvedTitles.get(cached.session.sessionId);
+      if (dbTitle) cached.session.sessionTitle = dbTitle;
+    }
     return cached.session;
   }
 
   const session =
     source === 'antigravity'
-      ? parseAntigravityFile(filePath, stat, pricing)
+      ? parseAntigravityFile(filePath, stat, pricing, resolvedTitles)
       : parseClaudeFile(filePath, stat, pricing);
 
   fileCache.set(filePath, {
@@ -539,6 +680,7 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
 
   const pricing = loadPricing(forceClearCache);
   const { geminiDir, claudeDir } = getWatchRoots();
+  const antigravityTitles = loadAntigravityTitles(geminiDir);
 
   const geminiFiles = collectJsonlFiles(geminiDir, 'antigravity');
   const claudeFiles = collectJsonlFiles(claudeDir, 'claude');
@@ -546,7 +688,7 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
   const sessions: SessionStats[] = [];
 
   for (const file of geminiFiles) {
-    const session = parseSingleFile(file, 'antigravity', pricing);
+    const session = parseSingleFile(file, 'antigravity', pricing, antigravityTitles);
     if (session) sessions.push(session);
   }
 
