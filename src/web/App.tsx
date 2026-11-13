@@ -48,6 +48,16 @@ function formatMoney(usdAmount: number, currency: Currency): string {
   return `${sym}${val.toFixed(2)}`;
 }
 
+function formatRateMoney(usdAmount: number, currency: Currency): string {
+  const val = currency === 'EUR' ? usdAmount * EUR_RATE : usdAmount;
+  const sym = currency === 'EUR' ? '€' : '$';
+  if (val === 0) return `${sym}0.00`;
+  if (val < 1) {
+    return `${sym}${val.toFixed(4).replace(/(\.\d{2}\d*?)0+$/, '$1')}`;
+  }
+  return `${sym}${val.toFixed(2)}`;
+}
+
 interface SessionModelItem {
   modelLabel: string;
   normalizedModel: string;
@@ -1031,11 +1041,11 @@ export default function App() {
                                 <div className="flex items-baseline gap-1">
                                   {promoActive && m.rate.standardInput && (
                                     <span className="line-through text-zinc-600 text-[9px]">
-                                      {formatMoney(m.rate.standardInput, currency)}
+                                      {formatRateMoney(m.rate.standardInput, currency)}
                                     </span>
                                   )}
                                   <span className="text-zinc-200 font-semibold">
-                                    {formatMoney(curInput, currency)}
+                                    {formatRateMoney(curInput, currency)}
                                   </span>
                                 </div>
                               </div>
@@ -1043,7 +1053,7 @@ export default function App() {
                               <div>
                                 <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Cached</span>
                                 <span className="text-cyan-400 font-semibold">
-                                  {formatMoney(curCache, currency)}
+                                  {formatRateMoney(curCache, currency)}
                                 </span>
                               </div>
 
@@ -1052,11 +1062,11 @@ export default function App() {
                                 <div className="flex items-baseline gap-1">
                                   {promoActive && m.rate.standardOutput && (
                                     <span className="line-through text-zinc-600 text-[9px]">
-                                      {formatMoney(m.rate.standardOutput, currency)}
+                                      {formatRateMoney(m.rate.standardOutput, currency)}
                                     </span>
                                   )}
                                   <span className="text-amber-300 font-semibold">
-                                    {formatMoney(curOutput, currency)}
+                                    {formatRateMoney(curOutput, currency)}
                                   </span>
                                 </div>
                               </div>

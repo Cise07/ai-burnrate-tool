@@ -54,6 +54,7 @@ export function printCliReport(snapshot) {
         for (const t of s.turnHistory) {
             const m = byModel.get(t.modelLabel) || {
                 label: t.modelLabel,
+                normalizedModel: t.normalizedModel,
                 turns: 0,
                 input: 0,
                 cache: 0,
@@ -103,12 +104,13 @@ export function printCliReport(snapshot) {
         const sortedModels = Array.from(byModel.values()).sort((a, b) => b.cost - a.cost);
         let hasPromo = false;
         for (const m of sortedModels) {
-            const rate = Object.values(snapshot.pricing.models).find((r) => r.label === m.label || m.label.startsWith(r.label));
+            const rate = snapshot.pricing.models[m.normalizedModel] ||
+                Object.values(snapshot.pricing.models).find((r) => r.label === m.label || m.label.startsWith(r.label));
             const isPromo = isPromoActive(rate);
             if (isPromo)
                 hasPromo = true;
             const displayLabel = isPromo ? `${m.label} ${pc.yellow('★PROMO')}` : m.label;
-            console.log(`  ${padRight(displayLabel, 30)} ${padLeft(String(m.turns), 7)} ${padLeft(fmtTokens(m.input), 10)} ${padLeft(pc.cyan(fmtTokens(m.cache)), 12)} ${padLeft(pc.yellow(fmtTokens(m.output)), 10)} ${padLeft(fmtTokens(m.tokens), 11)} ${padLeft(pc.cyan(fmtUSD(m.savings)), 12)} ${padLeft(pc.green(fmtUSD(m.cost)), 10)}`);
+            console.log(`  ${padRight(displayLabel, 32)} ${padLeft(String(m.turns), 7)} ${padLeft(fmtTokens(m.input), 10)} ${padLeft(pc.cyan(fmtTokens(m.cache)), 12)} ${padLeft(pc.yellow(fmtTokens(m.output)), 10)} ${padLeft(fmtTokens(m.tokens), 11)} ${padLeft(pc.cyan(fmtUSD(m.savings)), 12)} ${padLeft(pc.green(fmtUSD(m.cost)), 10)}`);
         }
         if (hasPromo) {
             console.log(`  ${pc.yellow('★')} ${pc.dim('Modelli con tariffe promozionali Google AI Studio attive.')}`);

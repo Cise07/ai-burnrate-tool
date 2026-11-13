@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-11-12",
+  "updatedAt": "2026-11-13",
   "currency": "USD",
   "unit": "per_1m_tokens",
   "subscriptions": {
@@ -85,6 +85,63 @@
       "standardOutput": 20.0,
       "standardCacheRead": 0.2,
       "standardCacheWrite": 4.0
+    },
+    "gemini-4-carbon": {
+      "label": "Gemini 4 Carbon",
+      "provider": "google",
+      "input": 2.0,
+      "output": 10.0,
+      "cacheRead": 0.1,
+      "cacheWrite": 2.0,
+      "isPromo": true,
+      "promoStart": "2026-10-21T00:00:00.000Z",
+      "promoEnd": "2026-11-30T23:59:59.999Z",
+      "promoNote": "Promo Google AI Launch (-50% dal 21/10/2026 al 30/11/2026)",
+      "standardInput": 4.0,
+      "standardOutput": 20.0,
+      "standardCacheRead": 0.2,
+      "standardCacheWrite": 4.0
+    },
+    "gemini-4-hydrogen": {
+      "label": "Gemini 4 Hydrogen",
+      "provider": "google",
+      "input": 1.5,
+      "output": 7.5,
+      "cacheRead": 0.075,
+      "cacheWrite": 1.5,
+      "isPromo": false
+    },
+    "orchestrator-carbon": {
+      "label": "Orchestrator (Carbon)",
+      "provider": "google",
+      "input": 1.65,
+      "output": 8.25,
+      "cacheRead": 0.0825,
+      "cacheWrite": 1.65,
+      "isPromo": true,
+      "promoStart": "2026-10-21T00:00:00.000Z",
+      "promoEnd": "2026-11-30T23:59:59.999Z",
+      "promoNote": "Promo Google AI Launch su Planner Carbon (-50% fino al 30/11/2026) + Hydrogen",
+      "standardInput": 2.25,
+      "standardOutput": 11.25,
+      "standardCacheRead": 0.1125,
+      "standardCacheWrite": 2.25
+    },
+    "orchestrator-argon": {
+      "label": "Orchestrator (Argon)",
+      "provider": "google",
+      "input": 1.65,
+      "output": 8.25,
+      "cacheRead": 0.0825,
+      "cacheWrite": 1.65,
+      "isPromo": true,
+      "promoStart": "2026-10-21T00:00:00.000Z",
+      "promoEnd": "2026-11-30T23:59:59.999Z",
+      "promoNote": "Promo Google AI Launch su Planner Argon (-50% fino al 30/11/2026) + Hydrogen",
+      "standardInput": 2.25,
+      "standardOutput": 11.25,
+      "standardCacheRead": 0.1125,
+      "standardCacheWrite": 2.25
     },
     "gemini-2.5-pro": {
       "label": "Gemini Pro",

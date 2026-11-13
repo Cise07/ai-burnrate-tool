@@ -60,14 +60,24 @@ export function loadPricing(forceReload = false) {
     if (fs.existsSync(ledgerPath)) {
         try {
             const ledger = ensureHistoryInitialized(JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')));
-            // Ensure any newly added models in bundled config exist in baseline
+            // Ensure any newly added models in bundled config exist in ledger and all historical snapshots
+            let migrated = false;
             for (const [k, v] of Object.entries(bundled.models)) {
                 if (!ledger.models[k]) {
-                    ledger.models[k] = v;
+                    ledger.models[k] = structuredClone(v);
+                    migrated = true;
                 }
-                if (ledger.history && ledger.history.length > 0 && !ledger.history[0].models[k]) {
-                    ledger.history[0].models[k] = v;
+                if (ledger.history) {
+                    for (const snap of ledger.history) {
+                        if (!snap.models[k]) {
+                            snap.models[k] = structuredClone(v);
+                            migrated = true;
+                        }
+                    }
                 }
+            }
+            if (migrated) {
+                saveUserLedger(ledger);
             }
             cachedPricing = ledger;
             return cachedPricing;
@@ -91,11 +101,125 @@ function ratesDiffer(a, b) {
             Math.abs(ma.output - mb.output) > 1e-6 ||
             Math.abs(ma.cacheRead - mb.cacheRead) > 1e-6 ||
             Math.abs(ma.cacheWrite - mb.cacheWrite) > 1e-6 ||
-            Boolean(ma.isPromo) !== Boolean(mb.isPromo)) {
+            Boolean(ma.isPromo) !== Boolean(mb.isPromo) ||
+            (ma.promoEnd || '') !== (mb.promoEnd || '')) {
             return true;
         }
     }
     return false;
+}
+const round4 = (n) => Number(n.toFixed(4));
+function stripPromoMetadata(rate) {
+    const { promoStart: _ps, promoEnd: _pe, promoNote: _pn, standardInput: _si, standardOutput: _so, standardCacheRead: _scr, standardCacheWrite: _scw, ...clean } = rate;
+    return { ...clean, isPromo: false };
+}
+function buildGooglePromoRate(ourKey, existing, inputPer1M, outputPer1M, cacheReadPer1M, cacheWritePer1M) {
+    const base = {
+        ...existing,
+        input: inputPer1M,
+        output: outputPer1M,
+        cacheRead: cacheReadPer1M,
+        cacheWrite: cacheWritePer1M,
+    };
+    if (ourKey === 'gemini-4-hydrogen') {
+        // Standard tier Hydrogen launch pricing ($1.50 / $7.50 / $0.075) has no introductory promo
+        if (inputPer1M >= 1.5)
+            return stripPromoMetadata(base);
+        return {
+            ...base,
+            isPromo: true,
+            standardInput: existing.standardInput || 1.5,
+            standardOutput: existing.standardOutput || 7.5,
+            standardCacheRead: existing.standardCacheRead || 0.075,
+            standardCacheWrite: existing.standardCacheWrite || 1.5,
+        };
+    }
+    if (ourKey === 'gemini-4-argon' || ourKey === 'gemini-4-carbon') {
+        if (inputPer1M > 2.0)
+            return stripPromoMetadata(base);
+        return {
+            ...base,
+            isPromo: true,
+            promoStart: existing.promoStart || '2026-10-21T00:00:00.000Z',
+            promoEnd: existing.promoEnd || '2026-11-30T23:59:59.999Z',
+            promoNote: 'Promo Google AI Launch (-50% dal 21/10/2026 al 30/11/2026)',
+            standardInput: 4.0,
+            standardOutput: 20.0,
+            standardCacheRead: 0.2,
+            standardCacheWrite: 4.0,
+        };
+    }
+    if (ourKey === 'gemini-3.8-flash') {
+        if (inputPer1M > 0.75)
+            return stripPromoMetadata(base);
+        return {
+            ...base,
+            isPromo: true,
+            promoStart: existing.promoStart || '2026-09-15T00:00:00.000Z',
+            promoEnd: existing.promoEnd || '2026-12-31T23:59:59.999Z',
+            promoNote: 'Promo Google AI (-50% dal 15/09/2026 al 31/12/2026)',
+            standardInput: existing.standardInput || 1.5,
+            standardOutput: existing.standardOutput || 7.5,
+            standardCacheRead: existing.standardCacheRead || 0.15,
+            standardCacheWrite: existing.standardCacheWrite || 1.5,
+        };
+    }
+    if (ourKey.includes('flash')) {
+        const threshold = ourKey.includes('lite') ? 0.1 : 0.3;
+        if (inputPer1M > threshold)
+            return stripPromoMetadata(base);
+        return {
+            ...base,
+            isPromo: true,
+            promoStart: existing.promoStart || '2026-06-01T00:00:00.000Z',
+            promoEnd: existing.promoEnd || '2026-12-31T23:59:59.999Z',
+            promoNote: existing.promoNote || 'Promo Google AI Introductory',
+            standardInput: existing.standardInput || (ourKey.includes('lite') ? 0.15 : 0.5),
+            standardOutput: existing.standardOutput || (ourKey.includes('lite') ? 0.6 : 2.5),
+        };
+    }
+    if (ourKey.includes('pro')) {
+        if (inputPer1M > 1.25)
+            return stripPromoMetadata(base);
+        return {
+            ...base,
+            isPromo: true,
+            promoStart: existing.promoStart || '2026-06-01T00:00:00.000Z',
+            promoEnd: existing.promoEnd || '2026-12-31T23:59:59.999Z',
+            promoNote: existing.promoNote || 'Promo Google AI (<200k tokens)',
+            standardInput: existing.standardInput || 2.5,
+            standardOutput: existing.standardOutput || 12.5,
+        };
+    }
+    return base;
+}
+const ORCHESTRATOR_PLANNER_SHARE = 0.3;
+const ORCHESTRATOR_EXECUTOR_SHARE = 0.7;
+function deriveOrchestratorRate(plannerName, planner, executor, existing) {
+    const blend = (a, b) => round4(a * ORCHESTRATOR_PLANNER_SHARE + b * ORCHESTRATOR_EXECUTOR_SHARE);
+    const input = blend(planner.input, executor.input);
+    const output = blend(planner.output, executor.output);
+    const cacheRead = blend(planner.cacheRead, executor.cacheRead);
+    const cacheWrite = blend(planner.cacheWrite, executor.cacheWrite);
+    const hasPromo = Boolean(planner.isPromo || executor.isPromo);
+    if (!hasPromo) {
+        return stripPromoMetadata({ ...existing, input, output, cacheRead, cacheWrite });
+    }
+    return {
+        ...existing,
+        input,
+        output,
+        cacheRead,
+        cacheWrite,
+        isPromo: true,
+        promoStart: planner.promoStart || executor.promoStart,
+        promoEnd: planner.promoEnd || executor.promoEnd,
+        promoNote: `Promo Google AI Launch su Planner ${plannerName} (-50% fino al 30/11/2026) + Hydrogen`,
+        standardInput: blend(planner.standardInput ?? planner.input, executor.standardInput ?? executor.input),
+        standardOutput: blend(planner.standardOutput ?? planner.output, executor.standardOutput ?? executor.output),
+        standardCacheRead: blend(planner.standardCacheRead ?? planner.cacheRead, executor.standardCacheRead ?? executor.cacheRead),
+        standardCacheWrite: blend(planner.standardCacheWrite ?? planner.cacheWrite, executor.standardCacheWrite ?? executor.cacheWrite),
+    };
 }
 /**
  * Syncs latest official pricing without altering historical token calculations.
@@ -110,6 +234,8 @@ export async function syncOfficialPricing() {
     const candidateModels = structuredClone(latestSnapshot.models);
     // 1. Try syncing from official GitHub repository pricing.json
     let remoteUpdatedAt = null;
+    let repoApplied = false;
+    let litellmApplied = false;
     try {
         const res = await fetch(REPO_PRICING_URL, { signal: AbortSignal.timeout(3000) });
         if (res.ok) {
@@ -123,6 +249,7 @@ export async function syncOfficialPricing() {
                 for (const [k, rate] of Object.entries(remoteConfig.models)) {
                     if (rate && typeof rate.input === 'number' && typeof rate.output === 'number') {
                         candidateModels[k] = { ...candidateModels[k], ...rate };
+                        repoApplied = true;
                     }
                 }
             }
@@ -194,6 +321,18 @@ export async function syncOfficialPricing() {
                     ],
                 },
                 {
+                    ourKey: 'gemini-4-argon',
+                    litellmKeys: ['gemini/gemini-4-argon', 'vertex_ai/gemini-4-argon', 'gmi/google/gemini-4-argon'],
+                },
+                {
+                    ourKey: 'gemini-4-carbon',
+                    litellmKeys: ['gemini/gemini-4-carbon', 'vertex_ai/gemini-4-carbon', 'gmi/google/gemini-4-carbon'],
+                },
+                {
+                    ourKey: 'gemini-4-hydrogen',
+                    litellmKeys: ['gemini/gemini-4-hydrogen', 'vertex_ai/gemini-4-hydrogen'],
+                },
+                {
                     ourKey: 'gemini-2.5-pro',
                     litellmKeys: ['gemini/gemini-2.5-pro', 'gemini-2.5-pro'],
                 },
@@ -211,7 +350,7 @@ export async function syncOfficialPricing() {
                 },
                 {
                     ourKey: 'gemini-3.8-flash',
-                    litellmKeys: ['gemini/gemini-3.8-flash', 'gemini-3.8-flash'],
+                    litellmKeys: ['gemini/gemini-3.8-flash', 'vertex_ai/gemini-3.8-flash', 'gemini-3.8-flash'],
                 },
                 {
                     ourKey: 'gemini-flash-lite',
@@ -231,49 +370,27 @@ export async function syncOfficialPricing() {
                         const existing = candidateModels[ourKey];
                         if (!existing)
                             break;
-                        const inputPer1M = Number((entry.input_cost_per_token * 1_000_000).toFixed(4));
-                        const outputPer1M = Number((entry.output_cost_per_token * 1_000_000).toFixed(4));
+                        const inputPer1M = round4(entry.input_cost_per_token * 1_000_000);
+                        const outputPer1M = round4(entry.output_cost_per_token * 1_000_000);
                         const cacheReadPer1M = typeof entry.cache_read_input_token_cost === 'number'
-                            ? Number((entry.cache_read_input_token_cost * 1_000_000).toFixed(4))
-                            : Number((inputPer1M * (existing.provider === 'anthropic' ? 0.1 : 0.25)).toFixed(4));
+                            ? round4(entry.cache_read_input_token_cost * 1_000_000)
+                            : round4(inputPer1M * (existing.provider === 'anthropic' ? 0.1 : 0.25));
                         const cacheWritePer1M = typeof entry.cache_creation_input_token_cost === 'number' && entry.cache_creation_input_token_cost > 0
-                            ? Number((entry.cache_creation_input_token_cost * 1_000_000).toFixed(4))
-                            : existing.cacheWrite;
-                        let isPromo = existing.isPromo ?? false;
-                        let promoNote = existing.promoNote;
-                        let standardInput = existing.standardInput;
-                        let standardOutput = existing.standardOutput;
-                        if (existing.provider === 'google') {
-                            if (ourKey.includes('flash') && inputPer1M <= 0.75) {
-                                isPromo = true;
-                                promoNote = 'Promo Google AI (-50% fino al 31/12/2026)';
-                                standardInput = standardInput || 1.5;
-                                standardOutput = standardOutput || 7.5;
-                            }
-                            else if (ourKey.includes('pro') && inputPer1M <= 1.25) {
-                                isPromo = true;
-                                promoNote = 'Promo Google AI (<200k tokens)';
-                                standardInput = standardInput || 2.5;
-                                standardOutput = standardOutput || 12.5;
-                            }
-                            else if (ourKey.includes('argon')) {
-                                isPromo = true;
-                                promoNote = 'Promo Google AI Launch (-50% fino al 30/11/2026)';
-                                standardInput = 4.0;
-                                standardOutput = 20.0;
-                            }
-                        }
-                        candidateModels[ourKey] = {
-                            ...existing,
-                            input: inputPer1M,
-                            output: outputPer1M,
-                            cacheRead: cacheReadPer1M,
-                            cacheWrite: cacheWritePer1M,
-                            isPromo,
-                            promoNote,
-                            standardInput,
-                            standardOutput,
-                        };
+                            ? round4(entry.cache_creation_input_token_cost * 1_000_000)
+                            : existing.provider === 'google'
+                                ? inputPer1M
+                                : existing.cacheWrite;
+                        candidateModels[ourKey] =
+                            existing.provider === 'google'
+                                ? buildGooglePromoRate(ourKey, existing, inputPer1M, outputPer1M, cacheReadPer1M, cacheWritePer1M)
+                                : {
+                                    ...existing,
+                                    input: inputPer1M,
+                                    output: outputPer1M,
+                                    cacheRead: cacheReadPer1M,
+                                    cacheWrite: cacheWritePer1M,
+                                };
+                        litellmApplied = true;
                         break;
                     }
                 }
@@ -283,23 +400,20 @@ export async function syncOfficialPricing() {
     catch {
         // Offline fallback: keep local ledger intact
     }
-    // Ensure active Google promotional pricing is strictly applied
-    if (candidateModels['gemini-4-argon']) {
-        candidateModels['gemini-4-argon'] = {
-            ...candidateModels['gemini-4-argon'],
-            input: 2.0,
-            output: 10.0,
-            cacheRead: 0.1,
-            cacheWrite: 2.0,
-            isPromo: true,
-            promoNote: 'Promo Google AI Launch (-50% fino al 30/11/2026)',
-            standardInput: 4.0,
-            standardOutput: 20.0,
-        };
+    // 3. Derive composite Orchestrator rates dynamically from live Planner (Carbon/Argon) + Executor (Hydrogen) rates
+    const hydrogenRate = candidateModels['gemini-4-hydrogen'];
+    if (hydrogenRate) {
+        if (candidateModels['gemini-4-carbon'] && candidateModels['orchestrator-carbon']) {
+            candidateModels['orchestrator-carbon'] = deriveOrchestratorRate('Carbon', candidateModels['gemini-4-carbon'], hydrogenRate, candidateModels['orchestrator-carbon']);
+        }
+        if (candidateModels['gemini-4-argon'] && candidateModels['orchestrator-argon']) {
+            candidateModels['orchestrator-argon'] = deriveOrchestratorRate('Argon', candidateModels['gemini-4-argon'], hydrogenRate, candidateModels['orchestrator-argon']);
+        }
     }
     if (ratesDiffer(latestSnapshot.models, candidateModels)) {
-        const effectiveFrom = remoteUpdatedAt
-            ? `${remoteUpdatedAt}T00:00:00.000Z`
+        const remoteIso = remoteUpdatedAt ? `${remoteUpdatedAt}T00:00:00.000Z` : null;
+        const effectiveFrom = repoApplied && !litellmApplied && remoteIso && remoteIso > latestSnapshot.effectiveFrom
+            ? remoteIso
             : new Date().toISOString();
         current.history = current.history || [];
         current.history.push({
@@ -307,8 +421,9 @@ export async function syncOfficialPricing() {
             source: 'official-sync',
             models: candidateModels,
         });
+        current.history.sort((a, b) => (a.effectiveFrom > b.effectiveFrom ? 1 : -1));
         current.models = structuredClone(candidateModels);
-        current.updatedAt = remoteUpdatedAt || effectiveFrom.slice(0, 10);
+        current.updatedAt = remoteUpdatedAt && repoApplied && !litellmApplied ? remoteUpdatedAt : effectiveFrom.slice(0, 10);
         cachedPricing = current;
         saveUserLedger(current);
         return { updated: true, effectiveFrom };
@@ -342,6 +457,18 @@ export function resolveModelKey(rawModel, source, pricing) {
         if (cleaned.includes('3-7') || cleaned.includes('3.7'))
             return 'claude-3-7-sonnet';
         return 'claude-sonnet-4';
+    }
+    if (cleaned.includes('orchestrator')) {
+        if (cleaned.includes('argon') && pricing.models['orchestrator-argon']) {
+            return 'orchestrator-argon';
+        }
+        return pricing.models['orchestrator-carbon'] ? 'orchestrator-carbon' : defaultKey;
+    }
+    if (cleaned.includes('hydrogen')) {
+        return pricing.models['gemini-4-hydrogen'] ? 'gemini-4-hydrogen' : defaultKey;
+    }
+    if (cleaned.includes('carbon')) {
+        return pricing.models['gemini-4-carbon'] ? 'gemini-4-carbon' : defaultKey;
     }
     if (cleaned.includes('argon') ||
         cleaned.includes('ultra') ||
@@ -450,7 +577,7 @@ function formatDisplayModel(raw, fallbackLabel) {
     const trimmed = raw.trim();
     if (trimmed.length > 34)
         return fallbackLabel;
-    if (trimmed.startsWith('Gemini '))
+    if (trimmed.startsWith('Gemini ') || trimmed.startsWith('Orchestrator ('))
         return trimmed;
     return fallbackLabel;
 }

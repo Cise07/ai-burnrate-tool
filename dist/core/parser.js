@@ -162,9 +162,6 @@ function parseAntigravityFile(filePath, stat, pricing) {
             startedAt = timestamp;
         if (!lastActiveAt || timestamp > lastActiveAt)
             lastActiveAt = timestamp;
-        if (typeof obj.model === 'string' && obj.model.trim()) {
-            currentModel = obj.model.trim();
-        }
         if (obj.type === 'USER_INPUT' && typeof obj.content === 'string') {
             lastUserPromptChars = obj.content.length;
             const modelMatch = obj.content.match(/Model Selection`?\s+from\s+[^\r\n]+?\s+to\s+([^\r\n]+?)\.(?:\s|$)/i);
@@ -220,8 +217,9 @@ function parseAntigravityFile(filePath, stat, pricing) {
             const totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
             if (totalTokens <= 0)
                 continue;
+            const turnModel = typeof obj.model === 'string' && obj.model.trim() ? obj.model.trim() : currentModel;
             const costCalc = calculateTurnCost({
-                rawModel: currentModel,
+                rawModel: turnModel,
                 source: 'antigravity',
                 timestamp,
                 inputTokens,
@@ -231,7 +229,7 @@ function parseAntigravityFile(filePath, stat, pricing) {
             }, pricing);
             turnHistory.push({
                 timestamp,
-                model: currentModel,
+                model: turnModel,
                 normalizedModel: costCalc.normalizedModel,
                 modelLabel: costCalc.modelLabel,
                 inputTokens,
