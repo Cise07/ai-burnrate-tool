@@ -277,6 +277,33 @@ function FilterDropdown<T extends string>({
   );
 }
 
+function parseCurrency(raw?: string | null): Currency | undefined {
+  const upper = raw?.toUpperCase();
+  return upper === 'EUR' || upper === 'USD' ? upper : undefined;
+}
+
+function parseToolFilter(raw?: string | null): ToolFilter | undefined {
+  const lower = raw?.toLowerCase();
+  return lower === 'all' || lower === 'antigravity' || lower === 'claude' ? lower : undefined;
+}
+
+function parseTimeRange(raw?: string | null): TimeRange | undefined {
+  const lower = raw?.toLowerCase();
+  return lower === '24h' || lower === '7d' || lower === '30d' || lower === 'all'
+    ? lower
+    : undefined;
+}
+
+function clearUrlOverrideParam(key: 'currency' | 'tool' | 'range') {
+  if (typeof window === 'undefined' || !window.location.search) return;
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has(key)) return;
+  params.delete(key);
+  const qs = params.toString();
+  const nextUrl = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`;
+  window.history.replaceState(null, '', nextUrl);
+}
+
 function readUrlLaunchOverrides(): {
   currency?: Currency;
   toolFilter?: ToolFilter;
@@ -284,17 +311,10 @@ function readUrlLaunchOverrides(): {
 } {
   if (typeof window === 'undefined') return {};
   const params = new URLSearchParams(window.location.search);
-  const rawCur = params.get('currency')?.toUpperCase();
-  const rawTool = params.get('tool')?.toLowerCase();
-  const rawRange = params.get('range')?.toLowerCase();
   return {
-    currency: rawCur === 'EUR' || rawCur === 'USD' ? rawCur : undefined,
-    toolFilter:
-      rawTool === 'all' || rawTool === 'antigravity' || rawTool === 'claude' ? rawTool : undefined,
-    timeRange:
-      rawRange === '24h' || rawRange === '7d' || rawRange === '30d' || rawRange === 'all'
-        ? rawRange
-        : undefined,
+    currency: parseCurrency(params.get('currency')),
+    toolFilter: parseToolFilter(params.get('tool')),
+    timeRange: parseTimeRange(params.get('range')),
   };
 }
 
@@ -310,12 +330,15 @@ export default function App() {
   const [lastChangedFile, setLastChangedFile] = useState<string | null>(null);
   const [isRescanning, setIsRescanning] = useState<boolean>(false);
 
-  const [toolFilter, setToolFilter] = useState<ToolFilter>(urlOverrides.toolFilter || 'all');
-  const [timeRange, setTimeRange] = useState<TimeRange>(urlOverrides.timeRange || 'all');
-  const [currency, setCurrency] = useState<Currency>(() => {
-    if (urlOverrides.currency) return urlOverrides.currency;
-      return (localStorage.getItem('burnrate_currency') as Currency) === 'EUR' ? 'EUR' : 'USD';
-  });
+  const [toolFilter, setToolFilter] = useState<ToolFilter>(
+    () => urlOverrides.toolFilter || parseToolFilter(localStorage.getItem('burnrate_tool_filter')) || 'all'
+  );
+  const [timeRange, setTimeRange] = useState<TimeRange>(
+    () => urlOverrides.timeRange || parseTimeRange(localStorage.getItem('burnrate_time_range')) || 'all'
+  );
+  const [currency, setCurrency] = useState<Currency>(
+    () => urlOverrides.currency || parseCurrency(localStorage.getItem('burnrate_currency')) || 'USD'
+  );
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [tableModelFilter, setTableModelFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<WorkspaceSortField>('lastActiveAt');
@@ -367,14 +390,19 @@ export default function App() {
     userTouchedCurrencyRef.current = true;
     setCurrency(next);
     localStorage.setItem('burnrate_currency', next);
+    clearUrlOverrideParam('currency');
   };
   const selectToolFilter = (next: ToolFilter) => {
     userTouchedToolRef.current = true;
     setToolFilter(next);
+    localStorage.setItem('burnrate_tool_filter', next);
+    clearUrlOverrideParam('tool');
   };
   const selectTimeRange = (next: TimeRange) => {
     userTouchedRangeRef.current = true;
     setTimeRange(next);
+    localStorage.setItem('burnrate_time_range', next);
+    clearUrlOverrideParam('range');
   };
   const currencySymbol = currency === 'EUR' ? '€' : '$';
   const rateMultiplier = currency === 'EUR' ? EUR_RATE : 1;
@@ -419,14 +447,21 @@ export default function App() {
           } | null
         ) => {
           if (!defaults) return;
+          const defaultsSig = JSON.stringify(defaults);
+          if (sessionStorage.getItem('burnrate_applied_defaults') === defaultsSig) return;
+          sessionStorage.setItem('burnrate_applied_defaults', defaultsSig);
+
           if (!urlOverrides.currency && !userTouchedCurrencyRef.current && defaults.currency) {
             setCurrency(defaults.currency);
+            localStorage.setItem('burnrate_currency', defaults.currency);
           }
           if (!urlOverrides.toolFilter && !userTouchedToolRef.current && defaults.toolFilter) {
             setToolFilter(defaults.toolFilter);
+            localStorage.setItem('burnrate_tool_filter', defaults.toolFilter);
           }
           if (!urlOverrides.timeRange && !userTouchedRangeRef.current && defaults.timeRange) {
             setTimeRange(defaults.timeRange);
+            localStorage.setItem('burnrate_time_range', defaults.timeRange);
           }
         }
       )
