@@ -94,29 +94,53 @@ export function normalizeWorkspaceKey(workspacePath: string): string {
   return cleaned ? cleaned.toLowerCase() : 'global / cli';
 }
 
+export type WorkspaceSortField =
+  | 'lastActiveAt'
+  | 'startedAt'
+  | 'totalTokens'
+  | 'ioTokens'
+  | 'cacheReadTokens'
+  | 'cacheSavingsUSD'
+  | 'costUSD'
+  | 'turns'
+  | 'chats'
+  | 'workspaceName'
+  | 'primaryModelLabel'
+  | 'tool';
+export type SortDirection = 'asc' | 'desc';
+
 export function filterSessions(
   sessions: SessionStats[],
   options: {
     toolFilter?: ToolFilter;
     timeRange?: TimeRange;
     searchQuery?: string;
+    modelFilter?: string;
   } = {}
 ): SessionStats[] {
-  const { toolFilter = 'all', timeRange = 'all', searchQuery = '' } = options;
+  const { toolFilter = 'all', timeRange = 'all', searchQuery = '', modelFilter = 'all' } = options;
   const cutoffMs = getCutoffMs(timeRange);
   const query = searchQuery.trim().toLowerCase();
+  const targetModel = modelFilter && modelFilter !== 'all' ? modelFilter.toLowerCase() : '';
   const filtered: SessionStats[] = [];
 
   for (const session of sessions) {
     if (toolFilter !== 'all' && session.source !== toolFilter) continue;
 
-    const validTurns =
+    let validTurns =
       cutoffMs > 0
         ? session.turnHistory.filter((t) => {
             const ts = new Date(t.timestamp).getTime();
             return !Number.isNaN(ts) && ts >= cutoffMs;
           })
         : session.turnHistory;
+
+    if (targetModel) {
+      validTurns = validTurns.filter((t) => {
+        const label = (t.modelLabel || t.normalizedModel || t.model || '').toLowerCase();
+        return label === targetModel;
+      });
+    }
 
     if (validTurns.length === 0) continue;
 
@@ -127,6 +151,8 @@ export function filterSessions(
     let totalTokens = 0;
     let costUSD = 0;
     let cacheSavingsUSD = 0;
+    let minTs = '';
+    let maxTs = '';
 
     for (const t of validTurns) {
       inputTokens += t.inputTokens;
@@ -136,10 +162,15 @@ export function filterSessions(
       totalTokens += t.totalTokens;
       costUSD += t.costUSD;
       cacheSavingsUSD += t.cacheSavingsUSD;
+      if (t.timestamp) {
+        if (!minTs || t.timestamp < minTs) minTs = t.timestamp;
+        if (!maxTs || t.timestamp > maxTs) maxTs = t.timestamp;
+      }
     }
 
     const chatPrimaryModel =
       getSessionModelBreakdown(validTurns)[0]?.modelLabel || session.primaryModelLabel;
+    const isTurnScoped = cutoffMs > 0 || Boolean(targetModel);
 
     const scopedSession: SessionStats = {
       ...session,
@@ -152,6 +183,8 @@ export function filterSessions(
       totalTokens,
       costUSD,
       cacheSavingsUSD,
+      startedAt: (isTurnScoped && minTs) || session.startedAt,
+      lastActiveAt: (isTurnScoped && maxTs) || session.lastActiveAt,
       turnHistory: validTurns,
     };
 
@@ -291,6 +324,88 @@ export function buildWorkspaceGroups(sessions: SessionStats[]): WorkspaceGroup[]
   return groups.sort((a, b) => (b.lastActiveAt > a.lastActiveAt ? 1 : -1));
 }
 
+function compareValues(a: string | number, b: string | number): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+}
+
+function getWorkspaceSortKey(ws: WorkspaceGroup, field: WorkspaceSortField): string | number {
+  switch (field) {
+    case 'lastActiveAt':
+      return ws.lastActiveAt || '';
+    case 'startedAt':
+      return ws.startedAt || '';
+    case 'totalTokens':
+      return ws.totalTokens;
+    case 'ioTokens':
+      return ws.inputTokens + ws.outputTokens;
+    case 'cacheReadTokens':
+      return ws.cacheReadTokens;
+    case 'cacheSavingsUSD':
+      return ws.cacheSavingsUSD;
+    case 'costUSD':
+      return ws.costUSD;
+    case 'turns':
+      return ws.turns;
+    case 'chats':
+      return ws.chats.length;
+    case 'workspaceName':
+      return ws.workspaceName;
+    case 'primaryModelLabel':
+      return ws.primaryModelLabel;
+    case 'tool':
+      return ws.sources.join(',');
+  }
+}
+
+function getChatSortKey(chat: SessionStats, field: WorkspaceSortField): string | number {
+  switch (field) {
+    case 'lastActiveAt':
+    case 'chats':
+      return chat.lastActiveAt || '';
+    case 'startedAt':
+      return chat.startedAt || '';
+    case 'totalTokens':
+      return chat.totalTokens;
+    case 'ioTokens':
+      return chat.inputTokens + chat.outputTokens;
+    case 'cacheReadTokens':
+      return chat.cacheReadTokens;
+    case 'cacheSavingsUSD':
+      return chat.cacheSavingsUSD;
+    case 'costUSD':
+      return chat.costUSD;
+    case 'turns':
+      return chat.turns;
+    case 'workspaceName':
+      return chat.sessionTitle || chat.sessionId;
+    case 'primaryModelLabel':
+      return chat.primaryModelLabel;
+    case 'tool':
+      return chat.source;
+  }
+}
+
+export function sortWorkspaceGroups(
+  groups: WorkspaceGroup[],
+  sortBy: WorkspaceSortField = 'lastActiveAt',
+  direction: SortDirection = 'desc'
+): WorkspaceGroup[] {
+  const dir = direction === 'asc' ? 1 : -1;
+  return groups
+    .map((ws) => ({
+      ...ws,
+      chats: [...ws.chats].sort((a, b) => {
+        const cmp = compareValues(getChatSortKey(a, sortBy), getChatSortKey(b, sortBy));
+        return cmp !== 0 ? cmp * dir : compareValues(b.lastActiveAt || '', a.lastActiveAt || '');
+      }),
+    }))
+    .sort((a, b) => {
+      const cmp = compareValues(getWorkspaceSortKey(a, sortBy), getWorkspaceSortKey(b, sortBy));
+      return cmp !== 0 ? cmp * dir : compareValues(b.lastActiveAt || '', a.lastActiveAt || '');
+    });
+}
+
 function escapeCsvCell(value: string | number): string {
   const str = String(value ?? '');
   if (/[",\r\n]/.test(str)) {
@@ -357,7 +472,14 @@ export function workspacesToCsv(workspaces: WorkspaceGroup[], currency: Currency
 export function workspacesToJson(
   workspaces: WorkspaceGroup[],
   currency: Currency,
-  filters: { toolFilter?: ToolFilter; timeRange?: TimeRange; searchQuery?: string } = {}
+  filters: {
+    toolFilter?: ToolFilter;
+    timeRange?: TimeRange;
+    modelFilter?: string;
+    searchQuery?: string;
+    sortBy?: WorkspaceSortField;
+    sortDir?: SortDirection;
+  } = {}
 ): string {
   let chats = 0;
   let turns = 0;
@@ -388,7 +510,10 @@ export function workspacesToJson(
     filters: {
       tool: filters.toolFilter || 'all',
       range: filters.timeRange || 'all',
+      model: filters.modelFilter || 'all',
       query: filters.searchQuery || '',
+      sortBy: filters.sortBy || 'lastActiveAt',
+      sortDir: filters.sortDir || 'desc',
     },
     summary: {
       workspaces: workspaces.length,

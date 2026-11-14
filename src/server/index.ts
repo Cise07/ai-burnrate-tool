@@ -2,9 +2,16 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
+import type { Currency, TimeRange, ToolFilter } from '../core/analytics.js';
 import { scanAllLogs } from '../core/parser.js';
 import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
 import type { BurnrateSnapshot } from '../core/types.js';
+
+export interface LaunchDefaults {
+  currency?: Currency;
+  toolFilter?: ToolFilter;
+  timeRange?: TimeRange;
+}
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -42,7 +49,8 @@ export interface BurnrateServer {
 
 export async function startServer(
   preferredPort: number,
-  initialSnapshot: BurnrateSnapshot
+  initialSnapshot: BurnrateSnapshot,
+  launchDefaults: LaunchDefaults = {}
 ): Promise<BurnrateServer> {
   const port = await findFreePort(preferredPort);
   let currentSnapshot = initialSnapshot;
@@ -107,8 +115,20 @@ export async function startServer(
       return;
     }
 
+    if (pathname === '/api/defaults' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      });
+      res.end(JSON.stringify(launchDefaults));
+      return;
+    }
+
     if (pathname === '/api/stats' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      });
       res.end(JSON.stringify(currentSnapshot));
       return;
     }
@@ -117,7 +137,10 @@ export async function startServer(
       void syncOfficialPricing().finally(() => {
         const fresh = scanAllLogs(true);
         broadcast(fresh);
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        });
         res.end(JSON.stringify(fresh));
       });
       return;
@@ -137,7 +160,11 @@ export async function startServer(
     if (fs.existsSync(filePath)) {
       const ext = path.extname(filePath).toLowerCase();
       const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': contentType });
+      const headers: Record<string, string> = { 'Content-Type': contentType };
+      if (ext === '.html') {
+        headers['Cache-Control'] = 'no-store, no-cache, must-revalidate';
+      }
+      res.writeHead(200, headers);
       fs.createReadStream(filePath).pipe(res);
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

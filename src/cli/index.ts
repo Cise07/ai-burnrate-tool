@@ -9,7 +9,7 @@ import { scanAllLogs } from '../core/parser.js';
 import type { TimeRange, ToolFilter } from '../core/analytics.js';
 import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
 import { startLogWatcher } from '../core/watcher.js';
-import { startServer } from '../server/index.js';
+import { startServer, type LaunchDefaults } from '../server/index.js';
 import { printCliReport } from './reporter.js';
 
 const NPM_PACKAGE = 'ai-burnrate-tool';
@@ -40,9 +40,9 @@ program
   .description('Real-time local token & API equivalent cost tracker for Antigravity CLI and Claude Code')
   .version(getPackageVersion())
   .option('--cli', 'Print the usage report in ANSI tables in the terminal and exit immediately', false)
-  .option('--eur', 'Display costs in EUR (€) instead of USD ($) in --cli mode', false)
-  .option('--tool <tool>', 'Filter --cli report by tool (all, antigravity, claude)', 'all')
-  .option('--range <range>', 'Filter --cli report by time range (24h, 7d, 30d, all)', 'all')
+  .option('--eur', 'Display costs in EUR (€) instead of USD ($) in Web UI and --cli mode', false)
+  .option('--tool <tool>', 'Filter Web UI and --cli report by tool (all, antigravity, claude)', 'all')
+  .option('--range <range>', 'Filter Web UI and --cli report by time range (24h, 7d, 30d, all)', 'all')
   .option('--json', 'Print --cli report as JSON instead of ANSI tables', false)
   .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
   .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
@@ -128,7 +128,24 @@ async function main() {
   }
 
   const preferredPort = Number.parseInt(String(opts.port || '4321'), 10) || 4321;
-  const server = await startServer(preferredPort, snapshot);
+  const launchDefaults: LaunchDefaults = {};
+  const urlParams = new URLSearchParams();
+
+  if (program.getOptionValueSource('eur') === 'cli') {
+    launchDefaults.currency = opts.eur ? 'EUR' : 'USD';
+    urlParams.set('currency', launchDefaults.currency);
+  }
+  if (program.getOptionValueSource('tool') === 'cli') {
+    launchDefaults.toolFilter = toolFilter as ToolFilter;
+    urlParams.set('tool', launchDefaults.toolFilter);
+  }
+  if (program.getOptionValueSource('range') === 'cli') {
+    launchDefaults.timeRange = timeRange as TimeRange;
+    urlParams.set('range', launchDefaults.timeRange);
+  }
+
+  const server = await startServer(preferredPort, snapshot, launchDefaults);
+  const dashboardUrl = urlParams.toString() ? `${server.url}/?${urlParams.toString()}` : server.url;
 
   const watcherHandle = startLogWatcher((updatedSnapshot, changedPath) => {
     server.broadcast(updatedSnapshot, changedPath);
@@ -143,7 +160,7 @@ async function main() {
     `  ${pc.bgGreen(pc.black(pc.bold(' AI-BURNRATE ')))} ${pc.green('● LIVE')} ${pc.bold('Real-Time Token & Cost Tracker')}`
   );
   console.log(`  ${pc.dim('─'.repeat(58))}`);
-  console.log(`  ${pc.bold('Dashboard URL:')}  ${pc.cyan(pc.underline(server.url))}`);
+  console.log(`  ${pc.bold('Dashboard URL:')}  ${pc.cyan(pc.underline(dashboardUrl))}`);
   console.log(`  ${pc.bold('SSE Stream:')}     ${pc.dim(`${server.url}/api/events`)}`);
   console.log(`  ${pc.bold('Watching:')}       ${pc.dim(snapshot.watchedPaths.join(' & '))}`);
   console.log(`  ${pc.bold('Sessions Found:')} ${pc.yellow(String(snapshot.sessions.length))}`);
@@ -152,9 +169,9 @@ async function main() {
 
   if (opts.open !== false) {
     try {
-      await open(server.url);
+      await open(dashboardUrl);
     } catch {
-      console.log(`  ${pc.yellow('!')} Could not auto-open browser. Open ${pc.cyan(server.url)} manually.`);
+      console.log(`  ${pc.yellow('!')} Could not auto-open browser. Open ${pc.cyan(dashboardUrl)} manually.`);
     }
   }
 

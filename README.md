@@ -55,9 +55,9 @@ Once installed, the **`burnrate`** (or **`ai-burnrate`**) command is available g
 | :--- | :--- |
 | `burnrate` | 🟢 **Live Mode (Default):** Syncs official pricing, starts the local HTTP + SSE server, watches `~/.gemini` & `~/.claude`, and opens the React Dashboard in your browser. |
 | `burnrate --cli` | 📊 **Terminal Mode:** Syncs pricing, prints the workspace/chat token & cost report in colorized ANSI tables, and exits immediately. |
-| `burnrate --cli --eur` | 💶 **CLI EUR Mode:** Prints terminal costs in EUR (`€`) instead of USD (`$`). |
-| `burnrate --cli --tool <tool>` | 🔎 **CLI Tool Filter:** Filters `--cli` output by `all`, `antigravity`, or `claude`. |
-| `burnrate --cli --range <range>` | 🕒 **CLI Time Range:** Filters `--cli` output by `24h`, `7d`, `30d`, or `all`. |
+| `burnrate --eur` | 💶 **EUR Mode (Web UI & CLI):** Sets the currency to EUR (`€`) instead of USD (`$`) in the browser dashboard and terminal report. |
+| `burnrate --tool <tool>` | 🔎 **Tool Filter (Web UI & CLI):** Filters the browser dashboard and `--cli` output by `all`, `antigravity`, or `claude`. |
+| `burnrate --range <range>` | 🕒 **Time Range (Web UI & CLI):** Filters the browser dashboard and `--cli` output by `24h`, `7d`, `30d`, or `all`. |
 | `burnrate --cli --json` | 🧾 **CLI JSON Output:** Prints aggregated workspaces, chats, and per-model breakdowns as JSON. |
 | `burnrate --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without automatically opening the browser. |
 | `burnrate -p, --port <number>` | 🔌 **Custom Port:** Starts the dashboard on a specific port (default: `4321`, automatically falling back to the next free port if busy). |
@@ -115,7 +115,7 @@ npm uninstall -g ai-burnrate-tool
   - **Daily API Burn Rate:** Stacked area chart comparing Antigravity CLI and Claude Code spend over time.
   - **Cost by Model:** Horizontal bar chart ranking spend by model.
   - **Total Token Usage by Model:** Central grid showing total tokens, percentage share, and `Input / Cached / Output` breakdown for every model (keeps the top 2 most-used models visible and collapses extra models when more than 2 are used).
-- **🗂️ Live Sessions & Workspaces Table:** Real-time searchable table grouping all chats inside normalized workspaces (`~/...`) with human-readable chat titles, inline model summaries, expandable per-model breakdowns, and one-click **CSV / JSON** export.
+- **🗂️ Live Sessions & Workspaces Table:** Real-time searchable table grouping all chats inside normalized workspaces (`~/...`) with human-readable chat titles, model filter selector, clickable multi-column sorting (date, total tokens, API cost, turns, cache metrics, workspace, model, tool), expandable per-model breakdowns, and **CSV / JSON** export matching the currently filtered and sorted rows.
 
 ---
 
