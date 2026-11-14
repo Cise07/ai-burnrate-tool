@@ -125,11 +125,6 @@ npm uninstall -g ai-burnrate-tool
 ai-burnrate/
 ├── config/
 │   └── pricing.json        # Initial baseline model rates & subscription references
-├── scripts/
-│   ├── install.ps1         # Windows remote one-liner & local installer
-│   ├── uninstall.ps1       # Windows one-liner uninstaller
-│   ├── install.sh          # macOS/Linux remote one-liner & local installer
-│   └── uninstall.sh        # macOS/Linux one-liner uninstaller
 ├── src/
 │   ├── cli/
 │   │   ├── index.ts        # CLI entrypoint (#!/usr/bin/env node)
