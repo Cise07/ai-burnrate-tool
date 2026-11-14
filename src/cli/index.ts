@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import open from 'open';
 import pc from 'picocolors';
+import QRCode from 'qrcode';
 import { scanAllLogs } from '../core/parser.js';
 import type { TimeRange, ToolFilter } from '../core/analytics.js';
 import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
@@ -31,6 +32,29 @@ function resolveNpmUpdateSpec(): string {
     return `${NPM_PACKAGE}@${version}`;
   }
   return `${NPM_PACKAGE}@latest`;
+}
+
+function renderTerminalQr(url: string, indent = '  '): string[] {
+  const qr = QRCode.create(url, { errorCorrectionLevel: 'M' });
+  const size = qr.modules.size;
+  const data = qr.modules.data;
+  const isDark = (r: number, c: number): boolean =>
+    r >= 0 && r < size && c >= 0 && c < size ? Boolean(data[r * size + c]) : false;
+
+  const lines: string[] = [];
+  for (let r = -2; r < size + 2; r += 2) {
+    let row = '';
+    for (let c = -2; c < size + 2; c++) {
+      const top = isDark(r, c);
+      const bottom = isDark(r + 1, c);
+      if (top && bottom) row += '\u2588';
+      else if (top && !bottom) row += '\u2580';
+      else if (!top && bottom) row += '\u2584';
+      else row += ' ';
+    }
+    lines.push(`${indent}${pc.bgWhite(pc.black(row))}`);
+  }
+  return lines;
 }
 
 const program = new Command();
@@ -146,6 +170,12 @@ async function main() {
 
   const server = await startServer(preferredPort, snapshot, launchDefaults);
   const dashboardUrl = urlParams.toString() ? `${server.url}/?${urlParams.toString()}` : server.url;
+  let mobileUrl: string | null = null;
+  if (server.lanUrl) {
+    const mobileParams = new URLSearchParams(urlParams);
+    mobileParams.set('code', server.mobileCode);
+    mobileUrl = `${server.lanUrl}/?${mobileParams.toString()}`;
+  }
 
   const watcherHandle = startLogWatcher((updatedSnapshot, changedPath) => {
     server.broadcast(updatedSnapshot, changedPath);
@@ -161,9 +191,25 @@ async function main() {
   );
   console.log(`  ${pc.dim('─'.repeat(58))}`);
   console.log(`  ${pc.bold('Dashboard URL:')}  ${pc.cyan(pc.underline(dashboardUrl))}`);
+  if (server.lanUrl) {
+    console.log(`  ${pc.bold('Network (LAN):')}  ${pc.cyan(pc.underline(server.lanUrl))} ${pc.dim('(0.0.0.0)')}`);
+    console.log(
+      `  ${pc.bold('Phone Code:')}     ${pc.bgBlack(pc.green(pc.bold(` ${server.mobileCode} `)))} ${pc.dim('(enter on phone or scan QR)')}`
+    );
+  } else {
+    console.log(`  ${pc.bold('Network Bind:')}   ${pc.dim(`0.0.0.0:${server.port} (no external LAN IP detected)`)}`);
+    console.log(`  ${pc.bold('Phone Code:')}     ${pc.green(pc.bold(server.mobileCode))}`);
+  }
   console.log(`  ${pc.bold('SSE Stream:')}     ${pc.dim(`${server.url}/api/events`)}`);
   console.log(`  ${pc.bold('Watching:')}       ${pc.dim(snapshot.watchedPaths.join(' & '))}`);
   console.log(`  ${pc.bold('Sessions Found:')} ${pc.yellow(String(snapshot.sessions.length))}`);
+  if (mobileUrl) {
+    console.log(`  ${pc.dim('─'.repeat(58))}`);
+    console.log(`  ${pc.bold('Scan from phone:')}`);
+    for (const line of renderTerminalQr(mobileUrl, '  ')) {
+      console.log(line);
+    }
+  }
   console.log(`  ${pc.dim('─'.repeat(58))}`);
   console.log(`  ${pc.dim('Press Ctrl+C to stop the live watcher and exit.')}\n`);
 

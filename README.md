@@ -18,6 +18,7 @@ Track in real time how many tokens you are consuming across **Antigravity CLI** 
 ## ✨ Key Features
 
 - 🔒 **100% Local, Dynamic & Cross-Platform:** Automatically resolves your user home directory (`os.homedir()` → `~/.gemini` and `~/.claude`) on Windows, macOS, and Linux with zero hardcoded paths. You can also override watched folders via `BURNRATE_GEMINI_DIR` and `BURNRATE_CLAUDE_DIR`.
+- 📱 **Mobile & LAN Access with 6-Digit PIN + QR Code:** Running `burnrate` binds to `0.0.0.0` by default and prints your local network URL, a random **6-digit access code**, and a scannable **terminal QR code** so you can monitor your dashboard live from your phone over Wi-Fi. Localhost stays instant-access, while LAN clients require the PIN (protected with constant-time verification, per-IP rate limiting, and `HttpOnly` session cookies).
 - 🟢 **Live Dashboard & Server-Sent Events (SSE):** A background file watcher (`chokidar`) monitors your active AI transcripts and pushes instant real-time updates to charts, KPIs, and session tables in the browser via `/api/events`.
 - 🔄 **Automatic Official Price Sync & Historical Tariff Protection:** On startup (and on manual rescan), `ai-burnrate` automatically fetches the latest official per-token model prices from the public **LiteLLM Pricing Registry** and the official repository feed. Whenever a model's price changes, a new timestamped rate snapshot (`effectiveFrom`) is appended to `~/.burnrate/pricing-ledger.json`—**tokens consumed before the price change are never recalculated**, and the new tariff applies strictly to turns recorded after the change.
 - 💱 **Instant `$ USD` / `€ EUR` Currency Switch:** Toggle the entire dashboard (KPI cards, monthly subscription comparison, charts, and live session table) between US Dollars and Euros with persistent `localStorage` state.
@@ -53,7 +54,7 @@ Once installed, the **`burnrate`** (or **`ai-burnrate`**) command is available g
 
 | Command | Description |
 | :--- | :--- |
-| `burnrate` | 🟢 **Live Mode (Default):** Syncs official pricing, starts the local HTTP + SSE server, watches `~/.gemini` & `~/.claude`, and opens the React Dashboard in your browser. |
+| `burnrate` | 🟢 **Live Mode (Default):** Syncs official pricing, starts the HTTP + SSE server on `0.0.0.0` (localhost + protected LAN access via 6-digit code & terminal QR), watches `~/.gemini` & `~/.claude`, and opens the React Dashboard in your browser. |
 | `burnrate --cli` | 📊 **Terminal Mode:** Syncs pricing, prints the workspace/chat token & cost report in colorized ANSI tables, and exits immediately. |
 | `burnrate --eur` | 💶 **EUR Mode (Web UI & CLI):** Sets the currency to EUR (`€`) instead of USD (`$`) in the browser dashboard and terminal report. |
 | `burnrate --tool <tool>` | 🔎 **Tool Filter (Web UI & CLI):** Filters the browser dashboard and `--cli` output by `all`, `antigravity`, or `claude`. |
@@ -105,14 +106,14 @@ npm uninstall -g ai-burnrate-tool
 
 ## 📊 Dashboard Overview
 
-- **🔝 Non-Wrapping Top Bar:** Displays the pulsing `LIVE` SSE connection badge, tool filter (`All`, `Antigravity`, `Claude`), time window selector (`24h`, `7d`, `30d`, `all`), `$ USD` / `€ EUR` currency switch, and manual rescan button.
+- **🔝 Responsive Top Navigation Bar:** Displays the pulsing `LIVE` SSE connection badge, tool filter (`All`, `Antigravity`, `Claude`), time window selector (`24h`, `7d`, `30d`, `all`), `$ USD` / `€ EUR` currency switch, and manual rescan button—staying on a single non-wrapping horizontal row on PC (`>= 768px`) and wrapping cleanly on smartphones (`< 768px`).
 - **💸 4 Top KPI Cards:**
   1. **API Equivalent Spend:** Total spend with per-tool split (`AGY` vs `Claude`) and ROI multiplier against monthly subscription plans.
   2. **Total Tokens:** Cumulative tokens processed across all LLM turns, split into `Input`, `Output`, and `Cached`.
   3. **Cache Savings:** Total money saved via context caching and overall *Cache Hit Ratio* percentage.
   4. **Sessions & Projects:** Active sessions count, distinct workspaces count, and average cost per session.
 - **📈 Interactive Charts & Model Token Widget:**
-  - **Daily API Burn Rate:** Stacked area chart comparing Antigravity CLI and Claude Code spend over time.
+  - **Daily API Burn Rate:** Area chart displaying stacked Antigravity CLI and Claude Code spend in `All` mode, or isolating only the active tool's series and legend when filtering by `Antigravity` or `Claude`.
   - **Cost by Model:** Horizontal bar chart ranking spend by model.
   - **Total Token Usage by Model:** Central grid showing total tokens, percentage share, and `Input / Cached / Output` breakdown for every model (keeps the top 2 most-used models visible and collapses extra models when more than 2 are used).
 - **🗂️ Live Sessions & Workspaces Table:** Real-time searchable table grouping all chats inside normalized workspaces (`~/...`) with human-readable chat titles, model filter selector, clickable multi-column sorting (date, total tokens, API cost, turns, cache metrics, workspace, model, tool), expandable per-model breakdowns, and **CSV / JSON** export matching the currently filtered and sorted rows.
@@ -127,7 +128,7 @@ ai-burnrate/
 │   └── pricing.json        # Initial baseline model rates & subscription references
 ├── src/
 │   ├── cli/
-│   │   ├── index.ts        # CLI entrypoint (#!/usr/bin/env node)
+│   │   ├── index.ts        # CLI entrypoint (#!/usr/bin/env node) & terminal QR output
 │   │   └── reporter.ts     # ANSI terminal table formatter (--cli)
 │   ├── core/
 │   │   ├── analytics.ts    # Shared filtering, workspace grouping, currency & CSV/JSON export
@@ -136,9 +137,9 @@ ai-burnrate/
 │   │   ├── watcher.ts      # Real-time file watcher with chokidar
 │   │   └── types.ts        # Shared TypeScript interfaces
 │   ├── server/
-│   │   └── index.ts        # Local HTTP server + SSE stream (/api/events)
+│   │   └── index.ts        # HTTP/SSE server (0.0.0.0 bind, LAN 6-digit PIN & cookie auth)
 │   └── web/
-│       ├── App.tsx         # Dark Mode React Dashboard + USD/EUR toggle
+│       ├── App.tsx         # Responsive Dark Mode React Dashboard + USD/EUR toggle
 │       ├── main.tsx        # React entrypoint
 │       └── index.css       # Tailwind CSS styles
 ├── dist/                   # Prebuilt bundle (CLI + static web assets)

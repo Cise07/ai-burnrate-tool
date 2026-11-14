@@ -961,13 +961,13 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col overflow-x-clip">
       {/* Subtle top glow */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-64 bg-gradient-to-b from-emerald-500/[0.05] via-cyan-500/[0.02] to-transparent" />
 
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md animate-burn-header">
-        <div className="max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3 overflow-x-auto whitespace-nowrap">
+        <div className="max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] mx-auto px-3 sm:px-6 py-2.5 md:py-0 md:h-16 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 md:overflow-x-auto md:whitespace-nowrap">
           {/* Brand & Live Status */}
           <div className="flex items-center gap-2.5 shrink-0 group">
             <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shadow-inner shrink-0 transition-all duration-200 group-hover:border-emerald-500/40 group-hover:shadow-[0_0_16px_-4px_rgba(16,185,129,0.45)]">
@@ -999,7 +999,7 @@ export default function App() {
           </div>
 
           {/* Controls: Tool Filter, Time Selector, Currency, Rescan */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          <div className="flex flex-wrap md:flex-nowrap items-center justify-between sm:justify-start gap-1.5 sm:gap-2.5 w-full md:w-auto md:shrink-0">
             {/* Tool Filter (with smooth sliding indicator) */}
             <div
               ref={toolGroupRef}
@@ -1138,7 +1138,7 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
         {/* Live Event Banner if a file just updated */}
         {lastChangedFile && (
           <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300 animate-burn-expand">
@@ -1315,16 +1315,24 @@ export default function App() {
                   Daily API Burn Rate ({currency})
                 </h2>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  Equivalent API spend over time across Antigravity CLI and Claude Code
+                  {toolFilter === 'all'
+                    ? 'Equivalent API spend over time across Antigravity CLI and Claude Code'
+                    : toolFilter === 'antigravity'
+                      ? 'Equivalent API spend over time for Antigravity CLI'
+                      : 'Equivalent API spend over time for Claude Code'}
                 </p>
               </div>
               <div className="flex items-center gap-4 text-xs font-mono">
-                <span className="flex items-center gap-1.5 text-cyan-300">
-                  <span className="h-2 w-2 rounded-full bg-cyan-400" /> Antigravity
-                </span>
-                <span className="flex items-center gap-1.5 text-fuchsia-300">
-                  <span className="h-2 w-2 rounded-full bg-fuchsia-400" /> Claude Code
-                </span>
+                {toolFilter !== 'claude' && (
+                  <span className="flex items-center gap-1.5 text-cyan-300">
+                    <span className="h-2 w-2 rounded-full bg-cyan-400" /> Antigravity
+                  </span>
+                )}
+                {toolFilter !== 'antigravity' && (
+                  <span className="flex items-center gap-1.5 text-fuchsia-300">
+                    <span className="h-2 w-2 rounded-full bg-fuchsia-400" /> Claude Code
+                  </span>
+                )}
               </div>
             </div>
 
@@ -1376,24 +1384,28 @@ export default function App() {
                         name === 'antigravityUSD' ? 'Antigravity CLI' : 'Claude Code',
                       ]}
                     />
-                    <Area
-                      type="monotone"
-                      dataKey="antigravityUSD"
-                      stackId="1"
-                      stroke="#06b6d4"
-                      strokeWidth={2}
-                      fillOpacity={1}
-                      fill="url(#colorAgy)"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="claudeUSD"
-                      stackId="1"
-                      stroke="#d946ef"
-                      strokeWidth={2}
-                      fillOpacity={1}
-                      fill="url(#colorClaude)"
-                    />
+                    {toolFilter !== 'claude' && (
+                      <Area
+                        type="monotone"
+                        dataKey="antigravityUSD"
+                        stackId={toolFilter === 'all' ? '1' : undefined}
+                        stroke="#06b6d4"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorAgy)"
+                      />
+                    )}
+                    {toolFilter !== 'antigravity' && (
+                      <Area
+                        type="monotone"
+                        dataKey="claudeUSD"
+                        stackId={toolFilter === 'all' ? '1' : undefined}
+                        stroke="#d946ef"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorClaude)"
+                      />
+                    )}
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -1612,6 +1624,7 @@ export default function App() {
                 ariaLabel="Filter by model"
                 title="Filter workspaces and chats by model"
                 maxWidthClass="max-w-[180px]"
+                menuAlign="left"
               />
 
               <div className="inline-flex items-stretch h-8 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus-within:border-emerald-500/50 transition-colors shrink-0">

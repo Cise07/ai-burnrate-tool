@@ -350,8 +350,18 @@ export async function syncOfficialPricing(): Promise<{
           ],
         },
         {
+          ourKey: 'claude-opus-5-5',
+          litellmKeys: [
+            'claude-opus-5-5',
+            'anthropic.claude-opus-5-5',
+          ],
+        },
+        {
           ourKey: 'claude-opus-4-5',
           litellmKeys: [
+            'claude-opus-5',
+            'claude-opus-4-8',
+            'claude-opus-4-7',
             'claude-opus-4-6',
             'claude-opus-4-5-20251101',
             'claude-opus-4-5',
@@ -542,10 +552,23 @@ export function resolveModelKey(
   }
 
   if (cleaned.includes('opus')) {
-    if (/opus[-_.\s]?4[-_.\s]?[5-9]/.test(cleaned) && pricing.models['claude-opus-4-5']) {
+    if (/(?:^|[^0-9])5[-_.\s]?[5-9](?:$|[^0-9])/.test(cleaned) && pricing.models['claude-opus-5-5']) {
+      return 'claude-opus-5-5';
+    }
+    if (
+      (/(?:^|[^0-9])4[-_.\s]?[5-9](?:$|[^0-9])/.test(cleaned) ||
+        /(?:^|[^0-9])5(?:\.0)?(?:$|[^0-9])/.test(cleaned)) &&
+      pricing.models['claude-opus-4-5']
+    ) {
       return 'claude-opus-4-5';
     }
-    return cleaned.includes('4') ? 'claude-opus-4' : 'claude-3-opus';
+    if (/(?:^|[^0-9])3(?:[-_.\s]?0)?(?:$|[^0-9])/.test(cleaned)) {
+      return 'claude-3-opus';
+    }
+    if (/(?:^|[^0-9])4(?:[-_.\s]?[01])?(?:$|[^0-9])/.test(cleaned)) {
+      return 'claude-opus-4';
+    }
+    return pricing.models['claude-opus-4-5'] ? 'claude-opus-4-5' : 'claude-opus-4';
   }
   if (cleaned.includes('haiku')) {
     return cleaned.includes('4') ? 'claude-haiku-4' : 'claude-3-5-haiku';

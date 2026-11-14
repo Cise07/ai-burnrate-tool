@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-11-13",
+  "updatedAt": "2026-11-14",
   "currency": "USD",
   "unit": "per_1m_tokens",
   "subscriptions": {
@@ -37,6 +37,14 @@
       "output": 15.0,
       "cacheRead": 0.3,
       "cacheWrite": 3.75
+    },
+    "claude-opus-5-5": {
+      "label": "Claude Opus 5.5",
+      "provider": "anthropic",
+      "input": 4.0,
+      "output": 20.0,
+      "cacheRead": 0.2,
+      "cacheWrite": 5.0
     },
     "claude-opus-4-5": {
       "label": "Claude Opus 4.5+",
