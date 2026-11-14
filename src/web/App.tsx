@@ -4,6 +4,8 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Check,
+  ChevronDown,
   ChevronRight,
   Cpu,
   Database,
@@ -160,6 +162,120 @@ const TEXT_SORT_FIELDS: ReadonlySet<WorkspaceSortField> = new Set([
   'primaryModelLabel',
   'tool',
 ]);
+
+interface FilterDropdownOption<T extends string> {
+  value: T;
+  label: string;
+}
+
+function FilterDropdown<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  title,
+  prefixLabel,
+  attachedLeft = false,
+  maxWidthClass = 'max-w-[180px]',
+  menuAlign = 'right',
+}: {
+  value: T;
+  options: Array<FilterDropdownOption<T>>;
+  onChange: (next: T) => void;
+  ariaLabel: string;
+  title: string;
+  prefixLabel?: string;
+  attachedLeft?: boolean;
+  maxWidthClass?: string;
+  menuAlign?: 'left' | 'right';
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  const selectedLabel = options.find((opt) => opt.value === value)?.label ?? value;
+
+  return (
+    <div ref={containerRef} className={`relative ${attachedLeft ? 'h-full' : 'shrink-0'}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        title={title}
+        className={
+          attachedLeft
+            ? `h-full px-2.5 flex items-center gap-1.5 text-xs font-mono text-zinc-200 hover:bg-zinc-900/70 rounded-l-lg transition-colors cursor-pointer select-none ${maxWidthClass}`
+            : `h-8 px-2.5 rounded-lg bg-zinc-950 border ${
+                open ? 'border-emerald-500/50' : 'border-zinc-800 hover:border-zinc-700'
+              } flex items-center gap-1.5 text-xs font-mono text-zinc-200 transition-colors cursor-pointer select-none ${maxWidthClass}`
+        }
+      >
+        <span className="truncate">
+          {prefixLabel ? <span className="text-zinc-400">{prefixLabel} </span> : null}
+          <span>{selectedLabel}</span>
+        </span>
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-zinc-400 shrink-0 transition-transform duration-150 ${
+            open ? 'rotate-180 text-emerald-400' : ''
+          }`}
+        />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label={ariaLabel}
+          className={`absolute top-full ${
+            menuAlign === 'left' ? 'left-0' : 'right-0'
+          } mt-1.5 z-40 min-w-[205px] max-h-72 overflow-y-auto rounded-lg bg-zinc-950/95 backdrop-blur-md border border-zinc-800 shadow-2xl shadow-black/80 p-1 space-y-0.5 animate-burn-expand`}
+        >
+          {options.map((opt) => {
+            const isSelected = opt.value === value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-md text-left text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                  isSelected
+                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                    : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white border border-transparent'
+                }`}
+              >
+                <span className="truncate">{opt.label}</span>
+                {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function readUrlLaunchOverrides(): {
   currency?: Currency;
@@ -1397,8 +1513,8 @@ export default function App() {
         </section>
 
         {/* Live Sessions / Workspaces Table */}
-        <section className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 overflow-hidden animate-burn-fade-up" style={{ animationDelay: '130ms' }}>
-          <div className="p-4 sm:p-5 border-b border-zinc-800/80 flex flex-wrap items-center justify-between gap-3">
+        <section className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 animate-burn-fade-up" style={{ animationDelay: '130ms' }}>
+          <div className="relative z-20 p-4 sm:p-5 border-b border-zinc-800/80 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-emerald-400" />
@@ -1448,47 +1564,41 @@ export default function App() {
                 )}
               </div>
 
-              <select
+              <FilterDropdown
                 value={activeModelFilter}
-                onChange={(e) => setTableModelFilter(e.target.value)}
-                aria-label="Filter by model"
+                options={[
+                  { value: 'all', label: 'All models' },
+                  ...analytics.availableModels.map((modelName) => ({
+                    value: modelName,
+                    label: modelName,
+                  })),
+                ]}
+                onChange={(nextModel) => setTableModelFilter(nextModel)}
+                ariaLabel="Filter by model"
                 title="Filter workspaces and chats by model"
-                className="h-8 px-2.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/50 max-w-[170px] cursor-pointer transition-colors"
-              >
-                <option value="all" className="bg-zinc-950 text-zinc-200">
-                  All models
-                </option>
-                {analytics.availableModels.map((modelName) => (
-                  <option key={modelName} value={modelName} className="bg-zinc-950 text-zinc-200">
-                    {modelName}
-                  </option>
-                ))}
-              </select>
+                maxWidthClass="max-w-[180px]"
+              />
 
-              <div className="inline-flex items-stretch h-8 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus-within:border-emerald-500/50 overflow-hidden transition-colors shrink-0">
-                <select
+              <div className="inline-flex items-stretch h-8 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus-within:border-emerald-500/50 transition-colors shrink-0">
+                <FilterDropdown
                   value={sortBy}
-                  onChange={(e) => {
-                    const nextField = e.target.value as WorkspaceSortField;
+                  options={SORT_OPTIONS}
+                  onChange={(nextField) => {
                     setSortBy(nextField);
                     setSortDir(TEXT_SORT_FIELDS.has(nextField) ? 'asc' : 'desc');
                   }}
-                  aria-label="Sort workspaces by"
+                  ariaLabel="Sort workspaces by"
                   title="Sort workspaces and chats"
-                  className="h-full pl-2.5 pr-1.5 bg-transparent border-0 text-xs font-mono text-zinc-200 focus:outline-none cursor-pointer"
-                >
-                  {SORT_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value} className="bg-zinc-950 text-zinc-200">
-                      Sort: {opt.label}
-                    </option>
-                  ))}
-                </select>
+                  prefixLabel="Sort:"
+                  attachedLeft
+                  maxWidthClass="max-w-[190px]"
+                />
                 <button
                   type="button"
                   onClick={() => setSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
                   aria-label={`Sort direction ${sortDir === 'desc' ? 'descending' : 'ascending'}`}
                   title={sortDir === 'desc' ? 'Descending (click for ascending)' : 'Ascending (click for descending)'}
-                  className="h-full w-8 border-l border-zinc-800 hover:bg-zinc-800/70 text-emerald-400 hover:text-emerald-300 flex items-center justify-center transition-colors cursor-pointer select-none"
+                  className="h-full w-8 border-l border-zinc-800 hover:bg-zinc-800/70 rounded-r-lg text-emerald-400 hover:text-emerald-300 flex items-center justify-center transition-colors cursor-pointer select-none"
                 >
                   {sortDir === 'asc' ? (
                     <ArrowUp className="w-3.5 h-3.5" />
@@ -1521,7 +1631,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-b-xl">
             <table className="w-full text-left border-collapse min-w-[1020px] xl:min-w-0">
               <thead>
                 <tr className="border-b border-zinc-800/80 text-[10px] xl:text-[11px] font-mono uppercase text-zinc-400 bg-zinc-950/40">
