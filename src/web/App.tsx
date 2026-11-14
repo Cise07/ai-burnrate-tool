@@ -219,11 +219,7 @@ export default function App() {
     }
   };
 
-  const resetAllFilters = () => {
-    userTouchedToolRef.current = true;
-    userTouchedRangeRef.current = true;
-    setToolFilter('all');
-    setTimeRange('all');
+  const resetTableFilters = () => {
     setTableModelFilter('all');
     setSearchQuery('');
   };
@@ -570,11 +566,7 @@ export default function App() {
   const subMultiplier =
     analytics.referenceSubUSD > 0 ? (analytics.totalCostUSD / analytics.referenceSubUSD).toFixed(1) : '0.0';
 
-  const hasActiveFilters =
-    toolFilter !== 'all' ||
-    timeRange !== 'all' ||
-    activeModelFilter !== 'all' ||
-    searchQuery.trim().length > 0;
+  const hasTableFilters = activeModelFilter !== 'all' || searchQuery.trim().length > 0;
 
   const exportReport = (format: 'csv' | 'json') => {
     const dateStamp = new Date().toISOString().slice(0, 10);
@@ -1416,14 +1408,14 @@ export default function App() {
                 <span>
                   Real-time telemetry grouped by workspace ({tableData.workspaces.length} workspaces · {tableData.chatsCount} chats)
                 </span>
-                {hasActiveFilters && (
+                {hasTableFilters && (
                   <>
                     <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
                       filtered
                     </span>
                     <button
                       type="button"
-                      onClick={resetAllFilters}
+                      onClick={resetTableFilters}
                       className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 underline underline-offset-2 cursor-pointer"
                     >
                       Reset filters
@@ -1442,7 +1434,7 @@ export default function App() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Filter workspace, chat, model..."
-                  className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+                  className="w-full h-8 pl-8 pr-7 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono transition-colors"
                 />
                 {searchQuery && (
                   <button
@@ -1461,17 +1453,19 @@ export default function App() {
                 onChange={(e) => setTableModelFilter(e.target.value)}
                 aria-label="Filter by model"
                 title="Filter workspaces and chats by model"
-                className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/50 max-w-[170px] cursor-pointer"
+                className="h-8 px-2.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/50 max-w-[170px] cursor-pointer transition-colors"
               >
-                <option value="all">All models</option>
+                <option value="all" className="bg-zinc-950 text-zinc-200">
+                  All models
+                </option>
                 {analytics.availableModels.map((modelName) => (
-                  <option key={modelName} value={modelName}>
+                  <option key={modelName} value={modelName} className="bg-zinc-950 text-zinc-200">
                     {modelName}
                   </option>
                 ))}
               </select>
 
-              <div className="flex items-center shrink-0">
+              <div className="inline-flex items-stretch h-8 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus-within:border-emerald-500/50 overflow-hidden transition-colors shrink-0">
                 <select
                   value={sortBy}
                   onChange={(e) => {
@@ -1481,10 +1475,10 @@ export default function App() {
                   }}
                   aria-label="Sort workspaces by"
                   title="Sort workspaces and chats"
-                  className="px-2.5 py-1.5 rounded-l-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+                  className="h-full pl-2.5 pr-1.5 bg-transparent border-0 text-xs font-mono text-zinc-200 focus:outline-none cursor-pointer"
                 >
                   {SORT_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
+                    <option key={opt.value} value={opt.value} className="bg-zinc-950 text-zinc-200">
                       Sort: {opt.label}
                     </option>
                   ))}
@@ -1494,7 +1488,7 @@ export default function App() {
                   onClick={() => setSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
                   aria-label={`Sort direction ${sortDir === 'desc' ? 'descending' : 'ascending'}`}
                   title={sortDir === 'desc' ? 'Descending (click for ascending)' : 'Ascending (click for descending)'}
-                  className="px-2 py-1.5 rounded-r-lg bg-zinc-950 border border-l-0 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/80 text-xs font-mono text-emerald-400 flex items-center gap-1 transition-colors cursor-pointer select-none"
+                  className="h-full w-8 border-l border-zinc-800 hover:bg-zinc-800/70 text-emerald-400 hover:text-emerald-300 flex items-center justify-center transition-colors cursor-pointer select-none"
                 >
                   {sortDir === 'asc' ? (
                     <ArrowUp className="w-3.5 h-3.5" />
@@ -1511,12 +1505,12 @@ export default function App() {
                     type="button"
                     disabled={tableData.workspaces.length === 0}
                     onClick={() => exportReport(fmt)}
-                    title={`Export ${hasActiveFilters ? 'filtered & sorted' : 'sorted'} report (${tableData.workspaces.length} workspaces, ${currency}) as ${fmt.toUpperCase()}`}
-                    className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/80 text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={`Export ${hasTableFilters ? 'filtered & sorted' : 'sorted'} report (${tableData.workspaces.length} workspaces, ${currency}) as ${fmt.toUpperCase()}`}
+                    className="h-8 px-2.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/80 text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Download className="w-3.5 h-3.5 text-emerald-400" />
                     <span>{fmt.toUpperCase()}</span>
-                    {hasActiveFilters && (
+                    {hasTableFilters && (
                       <span className="text-[10px] text-emerald-400">
                         ({tableData.workspaces.length})
                       </span>
