@@ -159,6 +159,19 @@ function buildGooglePromoRate(
     cacheWrite: cacheWritePer1M,
   };
 
+  if (ourKey === 'gemini-4-neon') {
+    // Standard tier Neon launch pricing ($3.00 / $15.00 / $0.15) has no introductory promo
+    if (inputPer1M >= 3.0) return stripPromoMetadata(base);
+    return {
+      ...base,
+      isPromo: true,
+      standardInput: existing.standardInput || 3.0,
+      standardOutput: existing.standardOutput || 15.0,
+      standardCacheRead: existing.standardCacheRead || 0.15,
+      standardCacheWrite: existing.standardCacheWrite || 3.0,
+    };
+  }
+
   if (ourKey === 'gemini-4-hydrogen') {
     // Standard tier Hydrogen launch pricing ($1.50 / $7.50 / $0.075) has no introductory promo
     if (inputPer1M >= 1.5) return stripPromoMetadata(base);
@@ -407,6 +420,10 @@ export async function syncOfficialPricing(): Promise<{
           litellmKeys: ['gemini/gemini-4-carbon', 'vertex_ai/gemini-4-carbon', 'gmi/google/gemini-4-carbon'],
         },
         {
+          ourKey: 'gemini-4-neon',
+          litellmKeys: ['gemini/gemini-4-neon', 'vertex_ai/gemini-4-neon', 'gmi/google/gemini-4-neon', 'gemini-4-neon'],
+        },
+        {
           ourKey: 'gemini-4-hydrogen',
           litellmKeys: ['gemini/gemini-4-hydrogen', 'vertex_ai/gemini-4-hydrogen'],
         },
@@ -585,6 +602,9 @@ export function resolveModelKey(
     }
     return pricing.models['orchestrator-carbon'] ? 'orchestrator-carbon' : defaultKey;
   }
+  if (cleaned.includes('neon')) {
+    return pricing.models['gemini-4-neon'] ? 'gemini-4-neon' : defaultKey;
+  }
   if (cleaned.includes('hydrogen')) {
     return pricing.models['gemini-4-hydrogen'] ? 'gemini-4-hydrogen' : defaultKey;
   }
@@ -739,9 +759,25 @@ export function calculateTurnCost(
   };
 }
 
+const EFFORT_LABELS: Record<string, string> = {
+  xhigh: 'XHigh',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+  minimal: 'Minimal',
+};
+
 function formatDisplayModel(raw: string, fallbackLabel: string): string {
   const trimmed = raw.trim();
   if (trimmed.length > 34) return fallbackLabel;
   if (trimmed.startsWith('Gemini ') || trimmed.startsWith('Orchestrator (')) return trimmed;
+
+  const effortMatch = trimmed.match(/(?:[-_\s]+|\()(xhigh|high|medium|low|minimal)\)?$/i);
+  if (effortMatch) {
+    const effort = EFFORT_LABELS[effortMatch[1].toLowerCase()];
+    if (effort && !/\((?:xhigh|high|medium|low|minimal)\)$/i.test(fallbackLabel)) {
+      return `${fallbackLabel} (${effort})`;
+    }
+  }
   return fallbackLabel;
 }

@@ -643,7 +643,6 @@ export default function App() {
 
     const modelData = Array.from(modelMap.values())
       .sort((a, b) => b.costUSD - a.costUSD)
-      .slice(0, 6)
       .map((m) => ({
         ...m,
         costUSD: Number(m.costUSD.toFixed(2)),
@@ -1424,57 +1423,60 @@ export default function App() {
               </p>
             </div>
 
-            <div className="h-64 w-full">
+            <div className="h-64 w-full overflow-y-auto overflow-x-hidden pr-1">
               {analytics.modelData.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-xs text-zinc-500 font-mono">
                   No model usage data available.
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={analytics.modelData}
-                    layout="vertical"
-                    margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
-                    <XAxis
-                      type="number"
-                      stroke="#71717a"
-                      fontSize={11}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(v) => `${currencySymbol}${(Number(v) * rateMultiplier).toFixed(0)}`}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="model"
-                      stroke="#a1a1aa"
-                      fontSize={11}
-                      width={115}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <Tooltip
-                      cursor={{ fill: '#18181b' }}
-                      contentStyle={{
-                        backgroundColor: '#09090b',
-                        borderColor: '#27272a',
-                        borderRadius: '0.5rem',
-                        fontSize: '12px',
-                        fontFamily: 'JetBrains Mono, monospace',
-                        color: '#f4f4f5',
-                      }}
-                      labelStyle={{ color: '#f4f4f5', fontWeight: 600, marginBottom: '2px' }}
-                      itemStyle={{ color: '#34d399' }}
-                      formatter={(val: number) => [formatMoney(Number(val), currency), 'API Spend']}
-                    />
-                    <Bar dataKey="costUSD" radius={[0, 6, 6, 0]} barSize={20}>
-                      {analytics.modelData.map((_, idx) => (
-                        <Cell key={idx} fill={MODEL_COLORS[idx % MODEL_COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                <div style={{ height: Math.max(256, analytics.modelData.length * 36), width: '100%' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={analytics.modelData}
+                      layout="vertical"
+                      margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
+                      <XAxis
+                        type="number"
+                        stroke="#71717a"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(v) => `${currencySymbol}${(Number(v) * rateMultiplier).toFixed(0)}`}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="model"
+                        interval={0}
+                        stroke="#a1a1aa"
+                        fontSize={11}
+                        width={115}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip
+                        cursor={{ fill: '#18181b' }}
+                        contentStyle={{
+                          backgroundColor: '#09090b',
+                          borderColor: '#27272a',
+                          borderRadius: '0.5rem',
+                          fontSize: '12px',
+                          fontFamily: 'JetBrains Mono, monospace',
+                          color: '#f4f4f5',
+                        }}
+                        labelStyle={{ color: '#f4f4f5', fontWeight: 600, marginBottom: '2px' }}
+                        itemStyle={{ color: '#34d399' }}
+                        formatter={(val: number) => [formatMoney(Number(val), currency), 'API Spend']}
+                      />
+                      <Bar dataKey="costUSD" radius={[0, 6, 6, 0]} barSize={20} minPointSize={3}>
+                        {analytics.modelData.map((_, idx) => (
+                          <Cell key={idx} fill={MODEL_COLORS[idx % MODEL_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               )}
             </div>
           </div>

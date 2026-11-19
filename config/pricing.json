@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-11-14",
+  "updatedAt": "2026-11-19",
   "currency": "USD",
   "unit": "per_1m_tokens",
   "subscriptions": {
@@ -117,6 +117,15 @@
       "standardOutput": 20.0,
       "standardCacheRead": 0.2,
       "standardCacheWrite": 4.0
+    },
+    "gemini-4-neon": {
+      "label": "Gemini 4 Neon",
+      "provider": "google",
+      "input": 3.0,
+      "output": 15.0,
+      "cacheRead": 0.15,
+      "cacheWrite": 3.0,
+      "isPromo": false
     },
     "gemini-4-hydrogen": {
       "label": "Gemini 4 Hydrogen",
