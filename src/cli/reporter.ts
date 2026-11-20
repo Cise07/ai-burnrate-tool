@@ -48,11 +48,14 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   const toolFilter: ToolFilter = options.toolFilter || 'all';
   const timeRange: TimeRange = options.timeRange || 'all';
 
-  const sessions = filterSessions(snapshot.sessions, { toolFilter, timeRange });
-  const workspaceGroups = buildWorkspaceGroups(sessions);
+  const activeSessions = filterSessions(snapshot.sessions, { toolFilter, timeRange });
+  const deletedSessions = filterSessions(snapshot.deletedSessions || [], { toolFilter, timeRange });
+  const trackedDeletedSessions = deletedSessions.filter((s) => !s.untrackedHistory);
+  const allSessions = [...activeSessions, ...trackedDeletedSessions];
+  const workspaceGroups = buildWorkspaceGroups(activeSessions);
 
   if (options.json) {
-    console.log(workspacesToJson(workspaceGroups, currency, { toolFilter, timeRange }));
+    console.log(workspacesToJson(workspaceGroups, currency, { toolFilter, timeRange }, deletedSessions));
     return;
   }
 
@@ -62,6 +65,7 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   let totalOutput = 0;
   let totalCacheRead = 0;
   let totalTokens = 0;
+  let deletedCost = 0;
 
   const byTool = {
     antigravity: { sessions: 0, turns: 0, input: 0, cache: 0, output: 0, tokens: 0, cost: 0, savings: 0 },
@@ -73,13 +77,14 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
     { label: string; normalizedModel: string; turns: number; input: number; cache: number; output: number; tokens: number; cost: number; savings: number }
   >();
 
-  for (const s of sessions) {
+  for (const s of allSessions) {
     totalCost += s.costUSD;
     totalCacheSavings += s.cacheSavingsUSD;
     totalInput += s.inputTokens;
     totalOutput += s.outputTokens;
     totalCacheRead += s.cacheReadTokens;
     totalTokens += s.totalTokens;
+    if (s.deleted) deletedCost += s.costUSD;
 
     const bucket = byTool[s.source];
     bucket.sessions += 1;
@@ -135,7 +140,15 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
       `${pc.bold('Cache Saved:')} ${pc.cyan(pc.bold(formatMoney(totalCacheSavings, currency)))}   ` +
       `${pc.bold('Total Tokens:')} ${pc.yellow(pc.bold(fmtTokens(totalTokens)))}   ` +
       `${pc.bold('Workspaces:')} ${pc.white(pc.bold(String(workspaceGroups.length)))}   ` +
-      `${pc.bold('Chats:')} ${pc.white(pc.bold(String(sessions.length)))}`
+      `${pc.bold('Chats:')} ${pc.white(pc.bold(String(activeSessions.length)))}${
+        deletedSessions.length > 0
+          ? pc.dim(
+              deletedCost > 0
+                ? ` (+${deletedSessions.length} deleted: ${formatMoney(deletedCost, currency)})`
+                : ` (+${deletedSessions.length} deleted)`
+            )
+          : ''
+      }`
   );
   console.log(
     `  ${pc.dim(`Input (Uncached): ${fmtTokens(totalInput)}  •  Cache Read (Context): ${fmtTokens(totalCacheRead)}  •  Output (Think+Resp): ${fmtTokens(totalOutput)}`)}`
@@ -255,6 +268,28 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
     console.log(
       `\n  ${pc.dim(`Showing ${maxWorkspaces} of ${workspaceGroups.length} workspaces (open the web dashboard or pass --json for full list).`)}`
     );
+  }
+
+  if (deletedSessions.length > 0) {
+    console.log(`\n${pc.bold(pc.white('  DELETED CHATS (PRESERVED API SPEND)'))}`);
+    console.log(
+      `  ${padRight(pc.dim('Tool'), 13)} ${padRight(pc.dim('Chat Title'), 30)} ${padRight(pc.dim('Workspace'), 20)} ${padLeft(pc.dim('Turns'), 6)} ${padLeft(pc.dim('Tokens'), 10)} ${padLeft(pc.dim('API Cost'), 10)} ${padLeft(pc.dim('Deleted'), 11)}`
+    );
+    console.log(`  ${pc.dim('─'.repeat(106))}`);
+    for (const chat of deletedSessions.slice(0, 8)) {
+      const toolLabel = chat.source === 'antigravity' ? pc.cyan('Antigravity') : pc.magenta('Claude Code');
+      const title = truncateLabel(chat.sessionTitle || chat.sessionId, 29);
+      const ws = truncateLabel(chat.workspaceName, 19, true);
+      const delDate = (chat.deletedAt || chat.lastActiveAt || '').slice(0, 10) || '-';
+      const tokStr = chat.untrackedHistory ? pc.dim('N/A') : fmtTokens(chat.totalTokens);
+      const costStr = chat.untrackedHistory ? pc.dim('N/A') : pc.green(formatMoney(chat.costUSD, currency));
+      console.log(
+        `  ${padRight(toolLabel, 13)} ${padRight(title, 30)} ${padRight(pc.dim(ws), 20)} ${padLeft(String(chat.turns), 6)} ${padLeft(tokStr, 10)} ${padLeft(costStr, 10)} ${padLeft(pc.dim(delDate), 11)}`
+      );
+    }
+    if (deletedSessions.length > 8) {
+      console.log(`  ${pc.dim(`+${deletedSessions.length - 8} more deleted chat(s) in web dashboard popup.`)}`);
+    }
   }
 
   console.log('');

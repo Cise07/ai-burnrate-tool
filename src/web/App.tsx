@@ -11,6 +11,8 @@ import {
   Database,
   DollarSign,
   Download,
+  Eye,
+  EyeOff,
   FolderGit2,
   Layers,
   MessageSquare,
@@ -18,6 +20,7 @@ import {
   Search,
   Sparkles,
   Terminal,
+  Trash2,
   TrendingUp,
   X,
   Zap,
@@ -348,6 +351,58 @@ export default function App() {
   const [isModelUsageExpanded, setIsModelUsageExpanded] = useState<boolean>(() => {
     return localStorage.getItem('burnrate_models_expanded') === 'true';
   });
+  const [isDeletedModalOpen, setIsDeletedModalOpen] = useState<boolean>(false);
+  const [isDeletedModalRendered, setIsDeletedModalRendered] = useState<boolean>(false);
+  const [isDeletedModalVisible, setIsDeletedModalVisible] = useState<boolean>(false);
+  const [deletedSearchQuery, setDeletedSearchQuery] = useState<string>('');
+  const [hideLegacyDeleted, setHideLegacyDeleted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('burnrate_hide_legacy_deleted') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleHideLegacyDeleted = () => {
+    setHideLegacyDeleted((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('burnrate_hide_legacy_deleted', String(next));
+      } catch {
+        // ignore storage quota/privacy restrictions
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (isDeletedModalOpen) {
+      setIsDeletedModalRendered(true);
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => setIsDeletedModalVisible(true));
+      });
+      return () => {
+        cancelAnimationFrame(raf1);
+        if (raf2) cancelAnimationFrame(raf2);
+      };
+    }
+    setIsDeletedModalVisible(false);
+    const timer = setTimeout(() => {
+      setIsDeletedModalRendered(false);
+      setDeletedSearchQuery('');
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [isDeletedModalOpen]);
+
+  useEffect(() => {
+    if (!isDeletedModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsDeletedModalOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isDeletedModalOpen]);
 
   const handleSortField = (field: WorkspaceSortField) => {
     if (sortBy === field) {
@@ -523,13 +578,25 @@ export default function App() {
   };
 
   // Global KPIs & charts scoped to topbar toolFilter and timeRange
+  // Includes both active and deleted sessions so API spend never drops when chats are deleted.
   const analytics = useMemo(() => {
     if (!snapshot) return null;
 
-    const filteredSessions: SessionStats[] = filterSessions(snapshot.sessions, {
+    const activeFilteredSessions: SessionStats[] = filterSessions(snapshot.sessions, {
       toolFilter,
       timeRange,
     });
+    const deletedFilteredSessions: SessionStats[] = filterSessions(snapshot.deletedSessions || [], {
+      toolFilter,
+      timeRange,
+    }).sort((a, b) => {
+      const aKey = a.deletedAt || a.lastActiveAt || '';
+      const bKey = b.deletedAt || b.lastActiveAt || '';
+      return bKey > aKey ? 1 : -1;
+    });
+    const trackedDeletedSessions = deletedFilteredSessions.filter((s) => !s.untrackedHistory);
+    const legacyDeletedCount = deletedFilteredSessions.length - trackedDeletedSessions.length;
+    const allFilteredSessions: SessionStats[] = [...activeFilteredSessions, ...trackedDeletedSessions];
 
     let totalCostUSD = 0;
     let totalCacheSavingsUSD = 0;
@@ -539,6 +606,10 @@ export default function App() {
     let totalCacheWriteTokens = 0;
     let totalTokens = 0;
     let totalTurns = 0;
+
+    let deletedCostUSD = 0;
+    let deletedTokens = 0;
+    let deletedCacheSavingsUSD = 0;
 
     let antigravityCost = 0;
     let claudeCost = 0;
@@ -562,9 +633,17 @@ export default function App() {
         rate?: ModelRate;
       }
     >();
+    const activeModelCostMap = new Map<string, number>();
     const workspaceSet = new Set<string>();
 
-    for (const session of filteredSessions) {
+    for (const session of activeFilteredSessions) {
+      workspaceSet.add(normalizeWorkspaceKey(session.workspace));
+      for (const t of session.turnHistory) {
+        activeModelCostMap.set(t.modelLabel, (activeModelCostMap.get(t.modelLabel) || 0) + t.costUSD);
+      }
+    }
+
+    for (const session of allFilteredSessions) {
       totalCostUSD += session.costUSD;
       totalCacheSavingsUSD += session.cacheSavingsUSD;
       totalInputTokens += session.inputTokens;
@@ -573,7 +652,12 @@ export default function App() {
       totalCacheWriteTokens += session.cacheWriteTokens;
       totalTokens += session.totalTokens;
       totalTurns += session.turns;
-      workspaceSet.add(normalizeWorkspaceKey(session.workspace));
+
+      if (session.deleted) {
+        deletedCostUSD += session.costUSD;
+        deletedTokens += session.totalTokens;
+        deletedCacheSavingsUSD += session.cacheSavingsUSD;
+      }
 
       if (session.source === 'antigravity') {
         antigravityCost += session.costUSD;
@@ -648,9 +732,9 @@ export default function App() {
         costUSD: Number(m.costUSD.toFixed(2)),
       }));
 
-    const availableModels = Array.from(modelMap.values())
-      .sort((a, b) => b.costUSD - a.costUSD)
-      .map((m) => m.model);
+    const availableModels = Array.from(activeModelCostMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([model]) => model);
 
     const promptPool = totalInputTokens + totalCacheReadTokens;
     const cacheHitRate = promptPool > 0 ? (totalCacheReadTokens / promptPool) * 100 : 0;
@@ -679,8 +763,16 @@ export default function App() {
       timelineData,
       modelData,
       availableModels,
-      filteredSessions,
-      totalSessionsCount: filteredSessions.length,
+      filteredSessions: activeFilteredSessions,
+      totalSessionsCount: activeFilteredSessions.length,
+      deletedSessions: deletedFilteredSessions,
+      deletedSessionsCount: deletedFilteredSessions.length,
+      trackedDeletedCount: trackedDeletedSessions.length,
+      legacyDeletedCount,
+      deletedCostUSD,
+      deletedTokens,
+      deletedCacheSavingsUSD,
+      totalAllSessionsCount: allFilteredSessions.length,
     };
   }, [snapshot, toolFilter, timeRange]);
 
@@ -699,6 +791,30 @@ export default function App() {
       chatsCount: tableSessions.length,
     };
   }, [analytics, searchQuery, activeModelFilter, sortBy, sortDir]);
+
+  const visibleDeletedSessions = useMemo(() => {
+    if (!analytics) return [];
+    const base = hideLegacyDeleted
+      ? analytics.deletedSessions.filter((chat) => !chat.untrackedHistory)
+      : analytics.deletedSessions;
+    const q = deletedSearchQuery.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter(
+      (chat) =>
+        (chat.sessionTitle || '').toLowerCase().includes(q) ||
+        chat.workspaceName.toLowerCase().includes(q) ||
+        chat.workspace.toLowerCase().includes(q) ||
+        chat.sessionId.toLowerCase().includes(q) ||
+        chat.source.toLowerCase().includes(q) ||
+        chat.primaryModelLabel.toLowerCase().includes(q) ||
+        chat.turnHistory.some(
+          (t) =>
+            t.modelLabel.toLowerCase().includes(q) ||
+            t.normalizedModel.toLowerCase().includes(q) ||
+            t.model.toLowerCase().includes(q)
+        )
+    );
+  }, [analytics, deletedSearchQuery, hideLegacyDeleted]);
 
   if (!snapshot || !analytics) {
       return (
@@ -1170,7 +1286,7 @@ export default function App() {
               <div className="text-3xl font-bold font-mono tracking-tight text-white">
                 {formatMoney(analytics.totalCostUSD, currency)}
               </div>
-              <div className="mt-1 flex items-center gap-2 text-xs text-zinc-400">
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400">
                 <span className="text-cyan-400 font-mono">
                   AGY: {formatMoney(analytics.antigravityCost, currency)}
                 </span>
@@ -1178,6 +1294,17 @@ export default function App() {
                 <span className="text-fuchsia-400 font-mono">
                   Claude: {formatMoney(analytics.claudeCost, currency)}
                 </span>
+                {analytics.deletedCostUSD > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsDeletedModalOpen(true)}
+                    title="View deleted chats included in total API spend"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 hover:bg-rose-500/20 font-mono text-[10px] transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
+                    incl. {formatMoney(analytics.deletedCostUSD, currency)} deleted
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1281,8 +1408,21 @@ export default function App() {
             </div>
 
             <div className="my-3">
-              <div className="text-3xl font-bold font-mono tracking-tight text-white">
-                {analytics.totalSessionsCount}
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold font-mono tracking-tight text-white">
+                  {analytics.totalSessionsCount}
+                </span>
+                {analytics.deletedSessionsCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsDeletedModalOpen(true)}
+                    title="View deleted chats archive"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 hover:bg-rose-500/20 font-mono text-[10px] transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
+                    +{analytics.deletedSessionsCount} deleted
+                  </button>
+                )}
               </div>
               <div className="mt-1 text-xs text-zinc-400">
                 Active in {analytics.workspacesCount} distinct workspaces
@@ -1293,8 +1433,8 @@ export default function App() {
               <span className="text-zinc-400">Avg Cost / Session</span>
               <span className="text-amber-300 font-semibold">
                 {formatMoney(
-                  analytics.totalSessionsCount > 0
-                    ? analytics.totalCostUSD / analytics.totalSessionsCount
+                  analytics.totalAllSessionsCount > 0
+                    ? analytics.totalCostUSD / analytics.totalAllSessionsCount
                     : 0,
                   currency
                 )}
@@ -1345,11 +1485,11 @@ export default function App() {
                   <AreaChart data={analytics.timelineData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="colorAgy" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4} />
+                        <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.32} />
                         <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.0} />
                       </linearGradient>
                       <linearGradient id="colorClaude" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#d946ef" stopOpacity={0.4} />
+                        <stop offset="5%" stopColor="#d946ef" stopOpacity={0.32} />
                         <stop offset="95%" stopColor="#d946ef" stopOpacity={0.0} />
                       </linearGradient>
                     </defs>
@@ -1387,7 +1527,6 @@ export default function App() {
                       <Area
                         type="monotone"
                         dataKey="antigravityUSD"
-                        stackId={toolFilter === 'all' ? '1' : undefined}
                         stroke="#06b6d4"
                         strokeWidth={2}
                         fillOpacity={1}
@@ -1398,7 +1537,6 @@ export default function App() {
                       <Area
                         type="monotone"
                         dataKey="claudeUSD"
-                        stackId={toolFilter === 'all' ? '1' : undefined}
                         stroke="#d946ef"
                         strokeWidth={2}
                         fillOpacity={1}
@@ -1659,6 +1797,37 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsDeletedModalOpen(true)}
+                  title="Inspect deleted chats and their preserved API cost"
+                  className={`h-8 px-2.5 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer select-none ${
+                    analytics.deletedSessionsCount > 0
+                      ? 'bg-rose-500/10 border-rose-500/30 text-rose-200 hover:bg-rose-500/20 hover:border-rose-400/40'
+                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/80 hover:text-zinc-200'
+                  }`}
+                >
+                  <Trash2
+                    className={`w-3.5 h-3.5 ${
+                      analytics.deletedSessionsCount > 0 ? 'text-rose-400' : 'text-zinc-500'
+                    }`}
+                  />
+                  <span>Deleted</span>
+                  <span
+                    className={`px-1 py-0.2 rounded text-[10px] ${
+                      analytics.deletedSessionsCount > 0
+                        ? 'bg-rose-500/20 text-rose-200'
+                        : 'bg-zinc-800/80 text-zinc-400'
+                    }`}
+                  >
+                    {analytics.deletedSessionsCount}
+                  </span>
+                  {analytics.deletedCostUSD > 0 && (
+                    <span className="text-[10px] text-emerald-300 font-semibold hidden sm:inline">
+                      {formatMoney(analytics.deletedCostUSD, currency)}
+                    </span>
+                  )}
+                </button>
                 {(['csv', 'json'] as const).map((fmt) => (
                   <button
                     key={fmt}
@@ -2097,6 +2266,309 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {/* Deleted Chats Popup Modal */}
+      {isDeletedModalRendered && (
+        <div
+          className={`fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-200 ease-out motion-reduce:transition-none ${
+            isDeletedModalVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+          onClick={() => setIsDeletedModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Deleted Chats Archive"
+        >
+          <div
+            className={`w-full max-w-2xl max-h-[82vh] flex flex-col rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden transition-all duration-200 ease-out motion-reduce:transition-none ${
+              isDeletedModalVisible
+                ? 'opacity-100 translate-y-0 scale-100'
+                : 'opacity-0 translate-y-2 scale-[0.985]'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-zinc-800/90 flex items-start justify-between gap-3 bg-zinc-950/60 animate-burn-header">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-400 mt-0.5 shrink-0">
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-100">
+                    Deleted Chats & Preserved API Spend
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Chats removed from Antigravity or Claude Code stay hidden from active workspaces, while their API spend remains counted in your totals.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDeletedModalOpen(false)}
+                aria-label="Close deleted chats popup"
+                className="group p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors duration-200 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4 transition-transform duration-200 group-hover:rotate-90 motion-reduce:transition-none" />
+              </button>
+            </div>
+
+            {/* Summary Strip */}
+            <div
+              className="grid grid-cols-3 gap-3 px-5 py-3.5 border-b border-zinc-800/80 bg-zinc-950/30 animate-burn-fade-up"
+              style={{ animationDelay: '40ms' }}
+            >
+              <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/75 px-3 py-2 transition-colors duration-200">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+                  Deleted Chats
+                </div>
+                <div className="text-lg font-bold font-mono text-zinc-100 mt-0.5 flex items-baseline gap-1.5">
+                  <span>{analytics.deletedSessionsCount}</span>
+                  {analytics.legacyDeletedCount > 0 && (
+                    <span className="text-[10px] font-normal text-zinc-500">
+                      ({analytics.trackedDeletedCount} tracked · {analytics.legacyDeletedCount} legacy)
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/75 px-3 py-2 transition-colors duration-200">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+                  API Cost Preserved
+                </div>
+                <div className="text-lg font-bold font-mono text-emerald-400 mt-0.5">
+                  {formatMoney(analytics.deletedCostUSD, currency)}
+                </div>
+              </div>
+              <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/75 px-3 py-2 transition-colors duration-200">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+                  Tokens / Cache Saved
+                </div>
+                <div className="text-sm font-semibold font-mono text-zinc-200 mt-1 truncate">
+                  {formatTokens(analytics.deletedTokens)}{' '}
+                  <span className="text-fuchsia-400 text-xs">
+                    ({formatMoney(analytics.deletedCacheSavingsUSD, currency)})
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {analytics.legacyDeletedCount > 0 && (
+              <div
+                aria-hidden={hideLegacyDeleted}
+                className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+                  hideLegacyDeleted ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <div className="px-5 py-2.5 border-b border-zinc-800/70 bg-amber-500/5 text-[11px] text-amber-200/90 font-mono">
+                    {analytics.legacyDeletedCount} older deleted chat(s) were removed before burnrate archived their token logs: shown as N/A so real totals stay accurate. Any chat deleted from now on preserves exact API cost automatically.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Search Bar & Legacy Toggle */}
+            {analytics.deletedSessionsCount > 0 && (
+              <div
+                className="px-5 py-3 border-b border-zinc-800/80 bg-zinc-950/40 flex flex-wrap items-center gap-2 animate-burn-fade-up"
+                style={{ animationDelay: '70ms' }}
+              >
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={deletedSearchQuery}
+                    onChange={(e) => setDeletedSearchQuery(e.target.value)}
+                    placeholder="Search deleted chat, workspace, model..."
+                    className="w-full h-8 pl-8 pr-7 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono transition-colors duration-200"
+                  />
+                  {deletedSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setDeletedSearchQuery('')}
+                      aria-label="Clear deleted chats search"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                {analytics.legacyDeletedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={toggleHideLegacyDeleted}
+                    aria-pressed={hideLegacyDeleted}
+                    title={
+                      hideLegacyDeleted
+                        ? `Show ${analytics.legacyDeletedCount} legacy deleted chats without token logs`
+                        : `Hide ${analytics.legacyDeletedCount} legacy deleted chats without token logs`
+                    }
+                    className={`h-8 px-2.5 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] motion-reduce:transition-none cursor-pointer select-none shrink-0 ${
+                      hideLegacyDeleted
+                        ? 'bg-amber-500/15 border-amber-500/35 text-amber-200 hover:bg-amber-500/25'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/80 hover:text-white'
+                    }`}
+                  >
+                    {hideLegacyDeleted ? (
+                      <Eye className="w-3.5 h-3.5 text-amber-300 transition-transform duration-200" />
+                    ) : (
+                      <EyeOff className="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" />
+                    )}
+                    <span>{hideLegacyDeleted ? 'Show Legacy' : 'Hide Legacy'}</span>
+                    <span className="text-[10px] opacity-75">({analytics.legacyDeletedCount})</span>
+                  </button>
+                )}
+                {(deletedSearchQuery.trim() || hideLegacyDeleted) && (
+                  <span className="text-[11px] font-mono text-zinc-400 shrink-0 animate-burn-expand">
+                    {visibleDeletedSessions.length}/{analytics.deletedSessionsCount}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Deleted Chats List */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5">
+              {analytics.deletedSessions.length === 0 ? (
+                <div className="py-12 text-center space-y-2 animate-burn-fade-up">
+                  <div className="w-10 h-10 rounded-full bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center mx-auto text-zinc-500">
+                    <Trash2 className="w-4 h-4" />
+                  </div>
+                  <p className="text-xs font-medium text-zinc-300">
+                    No deleted chats in this filter
+                  </p>
+                  <p className="text-[11px] text-zinc-500 max-w-sm mx-auto">
+                    Whenever you delete a chat in Antigravity or Claude Code, it disappears from your active table and its spent API cost is archived here automatically.
+                  </p>
+                </div>
+              ) : visibleDeletedSessions.length === 0 ? (
+                <div className="py-10 text-center space-y-2 animate-burn-expand">
+                  <p className="text-xs font-mono text-zinc-400">
+                    {deletedSearchQuery.trim()
+                      ? `No deleted chats matching "${deletedSearchQuery.trim()}".`
+                      : 'No tracked deleted chats yet (legacy chats are hidden).'}
+                  </p>
+                  <div className="flex items-center justify-center gap-3">
+                    {deletedSearchQuery.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setDeletedSearchQuery('')}
+                        className="text-[11px] font-mono text-emerald-400 hover:text-emerald-300 underline underline-offset-2 transition-colors cursor-pointer"
+                      >
+                        Clear search
+                      </button>
+                    )}
+                    {hideLegacyDeleted && analytics.legacyDeletedCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={toggleHideLegacyDeleted}
+                        className="text-[11px] font-mono text-amber-300 hover:text-amber-200 underline underline-offset-2 transition-colors cursor-pointer"
+                      >
+                        Show legacy ({analytics.legacyDeletedCount})
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                visibleDeletedSessions.map((chat, idx) => {
+                  const delTs = formatPreciseDateTime(chat.deletedAt || chat.lastActiveAt);
+                  const chatModels = getSessionModelBreakdown(chat.turnHistory);
+                  const isLegacy = Boolean(chat.untrackedHistory);
+                  return (
+                    <div
+                      key={`${chat.source}:${chat.sessionId}`}
+                      style={{ animationDelay: `${Math.min(idx, 10) * 24}ms` }}
+                      className={`rounded-xl border p-3.5 transition-colors duration-200 animate-burn-fade-up ${
+                        isLegacy
+                          ? 'bg-zinc-950/45 border-zinc-800/60 hover:border-zinc-700/75 hover:bg-zinc-900/50'
+                          : 'bg-zinc-950/75 border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/65'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className="text-xs font-semibold text-zinc-100 truncate max-w-[320px]"
+                              title={chat.sessionTitle || chat.sessionId}
+                            >
+                              {chat.sessionTitle || chat.sessionId}
+                            </span>
+                            <ToolBadge source={chat.source} compact />
+                            {isLegacy && (
+                              <span
+                                className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/25"
+                                title="Deleted before burnrate archived its .jsonl token log"
+                              >
+                                Legacy · no token log
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] font-mono text-zinc-400">
+                            <span className="inline-flex items-center gap-1 text-zinc-300" title={chat.workspace}>
+                              <FolderGit2 className="w-3 h-3 text-zinc-500 shrink-0" />
+                              {chat.workspaceName}
+                            </span>
+                            <span className="text-zinc-600">•</span>
+                            <span>
+                              {chat.turns} {isLegacy ? 'prompts' : 'turns'}
+                            </span>
+                            {!isLegacy && (
+                              <>
+                                <span className="text-zinc-600">•</span>
+                                <span>{formatTokens(chat.totalTokens)} tok</span>
+                              </>
+                            )}
+                            <span className="text-zinc-600">•</span>
+                            <span
+                              className="text-rose-300/90"
+                              title={`${isLegacy ? 'Last active' : 'Deleted'} ${delTs.date} ${delTs.time}`}
+                            >
+                              {isLegacy ? 'Last seen' : 'Deleted'} {formatRelativeTime(chat.deletedAt || chat.lastActiveAt)} ({delTs.date})
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          {isLegacy ? (
+                            <div
+                              className="text-xs font-mono text-zinc-500"
+                              title="Token log was removed before burnrate ledger tracking"
+                            >
+                              N/A
+                            </div>
+                          ) : (
+                            <>
+                              <div className="text-sm font-bold font-mono text-emerald-400">
+                                {formatMoney(chat.costUSD, currency)}
+                              </div>
+                              {chat.cacheSavingsUSD > 0 && (
+                                <div className="text-[10px] font-mono text-fuchsia-400">
+                                  +{formatMoney(chat.cacheSavingsUSD, currency)} saved
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {chatModels.length > 0 && (
+                        <div className="mt-2.5 pt-2 border-t border-zinc-800/70 flex flex-wrap items-center gap-1.5">
+                          {chatModels.map((m) => (
+                            <span
+                              key={m.modelLabel}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-[10px] font-mono text-zinc-300"
+                            >
+                              <span>{m.modelLabel}</span>
+                              <span className="text-emerald-400">{formatMoney(m.costUSD, currency)}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

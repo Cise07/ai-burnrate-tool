@@ -127,6 +127,25 @@ export function filterSessions(
   for (const session of sessions) {
     if (toolFilter !== 'all' && session.source !== toolFilter) continue;
 
+    if (session.untrackedHistory) {
+      if (targetModel) continue;
+      if (cutoffMs > 0) {
+        const ts = new Date(session.deletedAt || session.lastActiveAt || session.startedAt).getTime();
+        if (Number.isNaN(ts) || ts < cutoffMs) continue;
+      }
+      if (query) {
+        const matchesQuery =
+          session.workspaceName.toLowerCase().includes(query) ||
+          session.workspace.toLowerCase().includes(query) ||
+          (session.sessionTitle || '').toLowerCase().includes(query) ||
+          session.sessionId.toLowerCase().includes(query) ||
+          session.source.toLowerCase().includes(query);
+        if (!matchesQuery) continue;
+      }
+      filtered.push(session);
+      continue;
+    }
+
     let validTurns =
       cutoffMs > 0
         ? session.turnHistory.filter((t) => {
@@ -479,7 +498,8 @@ export function workspacesToJson(
     searchQuery?: string;
     sortBy?: WorkspaceSortField;
     sortDir?: SortDirection;
-  } = {}
+  } = {},
+  deletedSessions: SessionStats[] = []
 ): string {
   let chats = 0;
   let turns = 0;
@@ -501,6 +521,25 @@ export function workspacesToJson(
     cacheSavingsUSD += ws.cacheSavingsUSD;
   }
 
+  let deletedTurns = 0;
+  let deletedInputTokens = 0;
+  let deletedCacheReadTokens = 0;
+  let deletedOutputTokens = 0;
+  let deletedTotalTokens = 0;
+  let deletedCostUSD = 0;
+  let deletedCacheSavingsUSD = 0;
+
+  for (const d of deletedSessions) {
+    if (d.untrackedHistory) continue;
+    deletedTurns += d.turns;
+    deletedInputTokens += d.inputTokens;
+    deletedCacheReadTokens += d.cacheReadTokens;
+    deletedOutputTokens += d.outputTokens;
+    deletedTotalTokens += d.totalTokens;
+    deletedCostUSD += d.costUSD;
+    deletedCacheSavingsUSD += d.cacheSavingsUSD;
+  }
+
   const roundMoney = (usd: number) => Number(convertMoney(usd, currency).toFixed(4));
 
   const payload = {
@@ -518,13 +557,15 @@ export function workspacesToJson(
     summary: {
       workspaces: workspaces.length,
       chats,
-      turns,
-      inputTokens,
-      cacheReadTokens,
-      outputTokens,
-      totalTokens,
-      cacheSavings: roundMoney(cacheSavingsUSD),
-      apiCost: roundMoney(costUSD),
+      deletedChats: deletedSessions.length,
+      turns: turns + deletedTurns,
+      inputTokens: inputTokens + deletedInputTokens,
+      cacheReadTokens: cacheReadTokens + deletedCacheReadTokens,
+      outputTokens: outputTokens + deletedOutputTokens,
+      totalTokens: totalTokens + deletedTotalTokens,
+      cacheSavings: roundMoney(cacheSavingsUSD + deletedCacheSavingsUSD),
+      apiCost: roundMoney(costUSD + deletedCostUSD),
+      deletedApiCost: roundMoney(deletedCostUSD),
     },
     workspaces: workspaces.map((ws) => ({
       workspaceName: ws.workspaceName,
@@ -567,6 +608,24 @@ export function workspacesToJson(
         })),
       })),
     })),
+    ...(deletedSessions.length > 0
+      ? {
+          deletedChats: deletedSessions.map((c) => ({
+            sessionId: c.sessionId,
+            sessionTitle: c.sessionTitle || c.sessionId,
+            workspaceName: c.workspaceName,
+            workspace: c.workspace,
+            source: c.source,
+            primaryModel: c.primaryModelLabel,
+            turns: c.turns,
+            totalTokens: c.totalTokens,
+            cacheSavings: roundMoney(c.cacheSavingsUSD),
+            apiCost: roundMoney(c.costUSD),
+            deletedAt: c.deletedAt || c.lastActiveAt,
+            untrackedHistory: Boolean(c.untrackedHistory),
+          })),
+        }
+      : {}),
   };
 
   return JSON.stringify(payload, null, 2);

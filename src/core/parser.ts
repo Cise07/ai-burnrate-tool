@@ -2,51 +2,416 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { calculateTurnCost, loadPricing } from './pricing.js';
+import { getSessionKey, reconcileSessionLedger } from './session-ledger.js';
 import type { BurnrateSnapshot, PricingConfig, SessionStats, ToolSource, UsageTurn } from './types.js';
 
 const require = createRequire(import.meta.url);
 
-function loadAntigravityTitles(geminiDir: string): Map<string, string> {
+interface AntigravityAppStore {
+  hasSummaryDb: boolean;
+  hasConversationsDir: boolean;
+  summaryIds: Set<string>;
+  conversationFileIds: Set<string>;
+}
+
+interface StaleSummaryRecord {
+  sessionId: string;
+  title: string;
+  stepCount: number;
+  workspace: string;
+  lastModifiedTime: string;
+}
+
+interface AntigravityMetadata {
+  titles: Map<string, string>;
+  workspaces: Map<string, string>;
+  appStores: Map<string, AntigravityAppStore>;
+  allActiveConversationFileIds: Set<string>;
+  staleSummaries: Map<string, StaleSummaryRecord>;
+}
+
+const ORPHAN_GRACE_MS = 10_000;
+
+function normalizePathKey(p: string): string {
+  return path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function parseFirstWorkspaceUri(rawUris: string | undefined): string | null {
+  if (!rawUris) return null;
+  try {
+    const parsed = JSON.parse(rawUris);
+    if (!Array.isArray(parsed) || parsed.length === 0 || typeof parsed[0] !== 'string') return null;
+    const uri = parsed[0].trim();
+    if (!uri) return null;
+    if (uri.toLowerCase().startsWith('file://')) {
+      try {
+        return fileURLToPath(uri);
+      } catch {
+        const decoded = decodeURIComponent(uri.replace(/^file:\/+/i, ''));
+        return /^[a-z]:/i.test(decoded) ? decoded : `/${decoded}`;
+      }
+    }
+    return uri;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeIsoTimestamp(raw: string | number | undefined): string {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    const cleaned = raw.trim().replace(' ', 'T');
+    const d = new Date(cleaned);
+    if (!Number.isNaN(d.getTime()) && d.getUTCFullYear() > 1970) return d.toISOString();
+  }
+  return '';
+}
+
+function loadAntigravityMetadata(geminiDir: string): AntigravityMetadata {
   const titles = new Map<string, string>();
-  let DatabaseSync: any;
+  const workspaces = new Map<string, string>();
+  const appStores = new Map<string, AntigravityAppStore>();
+  const allActiveConversationFileIds = new Set<string>();
+  const staleSummaries = new Map<string, StaleSummaryRecord>();
+
+  let DatabaseSync: any = null;
   try {
     ({ DatabaseSync } = require('node:sqlite'));
   } catch {
-    return titles;
+    DatabaseSync = null;
   }
 
-  const dbCandidates = [
-    path.join(geminiDir, 'antigravity-cli', 'conversation_summaries.db'),
-    path.join(geminiDir, 'antigravity', 'conversation_summaries.db'),
-    path.join(geminiDir, 'conversation_summaries.db'),
+  const appRoots = [
+    path.join(geminiDir, 'antigravity-cli'),
+    path.join(geminiDir, 'antigravity'),
+    geminiDir,
   ];
 
-  for (const dbPath of dbCandidates) {
-    if (!fs.existsSync(dbPath)) continue;
-    let db: any = null;
-    try {
-      db = new DatabaseSync(dbPath, { readOnly: true });
-      const rows = db
-        .prepare("SELECT conversation_id, title FROM conversation_summaries WHERE title != ''")
-        .all() as Array<{ conversation_id?: string; title?: string }>;
-      for (const row of rows) {
-        if (row.conversation_id && row.title && !titles.has(row.conversation_id)) {
-          titles.set(row.conversation_id, row.title.trim());
+  for (const appRoot of appRoots) {
+    if (!fs.existsSync(appRoot)) continue;
+
+    const store: AntigravityAppStore = {
+      hasSummaryDb: false,
+      hasConversationsDir: false,
+      summaryIds: new Set<string>(),
+      conversationFileIds: new Set<string>(),
+    };
+
+    const convDir = path.join(appRoot, 'conversations');
+    if (fs.existsSync(convDir)) {
+      try {
+        const entries = fs.readdirSync(convDir, { withFileTypes: true });
+        store.hasConversationsDir = true;
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          const match = entry.name.match(/^([^.]+)\.(?:db|pb)$/i);
+          if (match && match[1]) {
+            store.conversationFileIds.add(match[1]);
+            allActiveConversationFileIds.add(match[1]);
+          }
+        }
+      } catch {
+        // Ignore transient directory read errors
+      }
+    }
+
+    const dbPath = path.join(appRoot, 'conversation_summaries.db');
+    if (DatabaseSync && fs.existsSync(dbPath)) {
+      let db: any = null;
+      try {
+        db = new DatabaseSync(dbPath, { readOnly: true });
+        const rows = db
+          .prepare(
+            'SELECT conversation_id, title, step_count, workspace_uris, last_modified_time FROM conversation_summaries'
+          )
+          .all() as Array<{
+          conversation_id?: string;
+          title?: string;
+          step_count?: number;
+          workspace_uris?: string;
+          last_modified_time?: string;
+        }>;
+        store.hasSummaryDb = true;
+        for (const row of rows) {
+          if (!row.conversation_id) continue;
+          const id = row.conversation_id;
+          store.summaryIds.add(id);
+          const title = row.title?.trim() || '';
+          if (title && !titles.has(id)) {
+            titles.set(id, title);
+          }
+          const wsPath = parseFirstWorkspaceUri(row.workspace_uris);
+          if (wsPath && !workspaces.has(id)) {
+            workspaces.set(id, wsPath);
+          }
+          const stepCount = Number(row.step_count ?? 0);
+          if (
+            store.hasConversationsDir &&
+            !store.conversationFileIds.has(id) &&
+            stepCount > 0 &&
+            !staleSummaries.has(id)
+          ) {
+            staleSummaries.set(id, {
+              sessionId: id,
+              title: title || id,
+              stepCount,
+              workspace: wsPath || 'Global / CLI',
+              lastModifiedTime: normalizeIsoTimestamp(row.last_modified_time),
+            });
+          }
+        }
+      } catch {
+        // Ignore locked or incompatible SQLite DB
+      } finally {
+        try {
+          db?.close?.();
+        } catch {
+          // ignore close error
         }
       }
-    } catch {
-      // Ignore locked or incompatible SQLite DB
-    } finally {
-      try {
-        db?.close?.();
-      } catch {
-        // ignore close error
-      }
+    }
+
+    if (store.hasConversationsDir || store.hasSummaryDb) {
+      appStores.set(normalizePathKey(appRoot), store);
     }
   }
 
-  return titles;
+  return { titles, workspaces, appStores, allActiveConversationFileIds, staleSummaries };
+}
+
+function collectLegacyDeletedSessions(
+  geminiDir: string,
+  claudeDir: string,
+  antigravityMeta: AntigravityMetadata,
+  knownKeys: Set<string>
+): SessionStats[] {
+  const recovered = new Map<string, SessionStats>();
+
+  // 1. Stale Antigravity summary DB rows whose conversation file & brain logs were deleted before tracking
+  for (const [id, rec] of antigravityMeta.staleSummaries.entries()) {
+    const key = getSessionKey('antigravity', id);
+    if (knownKeys.has(key) || antigravityMeta.allActiveConversationFileIds.has(id)) continue;
+    const relWs = toRelativeHomePath(rec.workspace || 'Global / CLI');
+    const ts = rec.lastModifiedTime || new Date(0).toISOString();
+    recovered.set(key, {
+      sessionId: id,
+      sessionTitle: rec.title || id,
+      source: 'antigravity',
+      workspace: relWs,
+      workspaceName: formatWorkspaceName(relWs),
+      filePath: '',
+      startedAt: ts,
+      lastActiveAt: ts,
+      primaryModel: 'unknown',
+      primaryModelLabel: 'Unavailable (legacy)',
+      turns: rec.stepCount,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      costUSD: 0,
+      cacheSavingsUSD: 0,
+      estimatedTurns: 0,
+      turnHistory: [],
+      deleted: true,
+      deletedAt: ts,
+      untrackedHistory: true,
+    });
+  }
+
+  // 2. Previously deleted Antigravity CLI chats recorded in antigravity-cli/history.jsonl
+  const MAX_HISTORY_BYTES = 25 * 1024 * 1024;
+  const agyHistoryPath = path.join(geminiDir, 'antigravity-cli', 'history.jsonl');
+  if (fs.existsSync(agyHistoryPath)) {
+    try {
+      if (fs.statSync(agyHistoryPath).size > MAX_HISTORY_BYTES) throw new Error('history too large');
+      const grouped = new Map<
+        string,
+        { prompts: number; firstPrompt: string; workspace: string; firstTs: number; lastTs: number }
+      >();
+      const lines = fs.readFileSync(agyHistoryPath, 'utf-8').split(/\r?\n/);
+      for (const raw of lines) {
+        if (!raw.trim()) continue;
+        let obj: Record<string, any>;
+        try {
+          obj = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        const id = typeof obj.conversationId === 'string' ? obj.conversationId.trim() : '';
+        if (!id) continue;
+        const key = getSessionKey('antigravity', id);
+        if (knownKeys.has(key) || antigravityMeta.allActiveConversationFileIds.has(id)) continue;
+        const disp = typeof obj.display === 'string' ? cleanChatTitle(obj.display) : '';
+        if (!disp || disp.startsWith('/')) continue;
+        const ts = typeof obj.timestamp === 'number' && Number.isFinite(obj.timestamp) ? obj.timestamp : 0;
+        const ws = typeof obj.workspace === 'string' && obj.workspace.trim() ? obj.workspace.trim() : '';
+        const prev = grouped.get(id);
+        if (!prev) {
+          grouped.set(id, { prompts: 1, firstPrompt: disp, workspace: ws, firstTs: ts, lastTs: ts });
+        } else {
+          prev.prompts += 1;
+          if (ts && (!prev.firstTs || ts < prev.firstTs)) prev.firstTs = ts;
+          if (ts && ts > prev.lastTs) prev.lastTs = ts;
+          if (!prev.workspace && ws) prev.workspace = ws;
+        }
+      }
+
+      for (const [id, info] of grouped.entries()) {
+        const key = getSessionKey('antigravity', id);
+        const existing = recovered.get(key);
+        const startedIso = normalizeIsoTimestamp(info.firstTs) || existing?.startedAt || '';
+        const lastIso = normalizeIsoTimestamp(info.lastTs) || existing?.lastActiveAt || startedIso;
+        const rawWs = info.workspace || antigravityMeta.workspaces.get(id) || existing?.workspace || 'Global / CLI';
+        const relWs = toRelativeHomePath(rawWs);
+        const title = antigravityMeta.titles.get(id) || existing?.sessionTitle || info.firstPrompt || id;
+        recovered.set(key, {
+          sessionId: id,
+          sessionTitle: title,
+          source: 'antigravity',
+          workspace: relWs,
+          workspaceName: formatWorkspaceName(relWs),
+          filePath: '',
+          startedAt: startedIso,
+          lastActiveAt: lastIso,
+          primaryModel: 'unknown',
+          primaryModelLabel: 'Unavailable (legacy)',
+          turns: Math.max(info.prompts, existing?.turns ?? 0),
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          costUSD: 0,
+          cacheSavingsUSD: 0,
+          estimatedTurns: 0,
+          turnHistory: [],
+          deleted: true,
+          deletedAt: lastIso,
+          untrackedHistory: true,
+        });
+      }
+    } catch {
+      // Ignore unreadable history.jsonl
+    }
+  }
+
+  // 3. Previously deleted Claude Code chats recorded in ~/.claude/history.jsonl
+  const claudeHistoryPath = path.join(claudeDir, 'history.jsonl');
+  if (fs.existsSync(claudeHistoryPath)) {
+    try {
+      if (fs.statSync(claudeHistoryPath).size > MAX_HISTORY_BYTES) throw new Error('history too large');
+      const grouped = new Map<
+        string,
+        { prompts: number; firstPrompt: string; workspace: string; firstTs: number; lastTs: number }
+      >();
+      const lines = fs.readFileSync(claudeHistoryPath, 'utf-8').split(/\r?\n/);
+      for (const raw of lines) {
+        if (!raw.trim()) continue;
+        let obj: Record<string, any>;
+        try {
+          obj = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        const id = typeof obj.sessionId === 'string' ? obj.sessionId.trim() : '';
+        if (!id) continue;
+        const key = getSessionKey('claude', id);
+        if (knownKeys.has(key)) continue;
+        const disp = typeof obj.display === 'string' ? cleanChatTitle(obj.display) : '';
+        if (!disp || disp.startsWith('/')) continue;
+        const ts = typeof obj.timestamp === 'number' && Number.isFinite(obj.timestamp) ? obj.timestamp : 0;
+        const ws = typeof obj.project === 'string' && obj.project.trim() ? obj.project.trim() : '';
+        const prev = grouped.get(id);
+        if (!prev) {
+          grouped.set(id, { prompts: 1, firstPrompt: disp, workspace: ws, firstTs: ts, lastTs: ts });
+        } else {
+          prev.prompts += 1;
+          if (ts && (!prev.firstTs || ts < prev.firstTs)) prev.firstTs = ts;
+          if (ts && ts > prev.lastTs) prev.lastTs = ts;
+          if (!prev.workspace && ws) prev.workspace = ws;
+        }
+      }
+
+      for (const [id, info] of grouped.entries()) {
+        const key = getSessionKey('claude', id);
+        const startedIso = normalizeIsoTimestamp(info.firstTs);
+        const lastIso = normalizeIsoTimestamp(info.lastTs) || startedIso;
+        const relWs = toRelativeHomePath(info.workspace || 'Global / CLI');
+        recovered.set(key, {
+          sessionId: id,
+          sessionTitle: info.firstPrompt || id,
+          source: 'claude',
+          workspace: relWs,
+          workspaceName: formatWorkspaceName(relWs),
+          filePath: '',
+          startedAt: startedIso,
+          lastActiveAt: lastIso,
+          primaryModel: 'unknown',
+          primaryModelLabel: 'Unavailable (legacy)',
+          turns: info.prompts,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          costUSD: 0,
+          cacheSavingsUSD: 0,
+          estimatedTurns: 0,
+          turnHistory: [],
+          deleted: true,
+          deletedAt: lastIso,
+          untrackedHistory: true,
+        });
+      }
+    } catch {
+      // Ignore unreadable history.jsonl
+    }
+  }
+
+  return Array.from(recovered.values()).sort((a, b) => {
+    const aKey = a.deletedAt || a.lastActiveAt || '';
+    const bKey = b.deletedAt || b.lastActiveAt || '';
+    return bKey > aKey ? 1 : -1;
+  });
+}
+
+function isOrphanedAntigravitySession(
+  filePath: string,
+  sessionId: string,
+  meta: AntigravityMetadata
+): boolean {
+  const normFile = path.resolve(filePath).replace(/\\/g, '/');
+  const brainIdx = normFile.toLowerCase().lastIndexOf('/brain/');
+  if (brainIdx <= 0) return false;
+
+  const appRootKey = normFile.slice(0, brainIdx).toLowerCase();
+  const store = meta.appStores.get(appRootKey);
+  if (!store) return false;
+
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(filePath).mtimeMs;
+  } catch {
+    return true;
+  }
+  if (Date.now() - mtimeMs < ORPHAN_GRACE_MS) {
+    return false;
+  }
+
+  if (store.hasConversationsDir) {
+    return !store.conversationFileIds.has(sessionId);
+  }
+  if (store.hasSummaryDb && store.summaryIds.size > 0) {
+    return !store.summaryIds.has(sessionId);
+  }
+  return false;
 }
 
 function cleanChatTitle(raw: string, maxLen = 72): string {
@@ -218,7 +583,8 @@ function parseAntigravityFile(
   filePath: string,
   stat: fs.Stats,
   pricing: PricingConfig,
-  antigravityTitles?: Map<string, string>
+  antigravityTitles?: Map<string, string>,
+  antigravityWorkspaces?: Map<string, string>
 ): SessionStats | null {
   let content: string;
   try {
@@ -364,12 +730,13 @@ function parseAntigravityFile(
   if (turnHistory.length === 0) return null;
 
   const sessionTitle = antigravityTitles?.get(sessionId) || firstUserTitle || sessionId;
+  const resolvedWorkspace = workspace || antigravityWorkspaces?.get(sessionId) || 'Global / CLI';
 
   return summarizeSession({
     sessionId,
     sessionTitle,
     source: 'antigravity',
-    workspace: toRelativeHomePath(workspace || 'Global / CLI'),
+    workspace: toRelativeHomePath(resolvedWorkspace),
     filePath: toRelativeHomePath(filePath),
     startedAt: startedAt || new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
     lastActiveAt: lastActiveAt || new Date(stat.mtimeMs).toISOString(),
@@ -635,7 +1002,8 @@ export function parseSingleFile(
   filePath: string,
   source: ToolSource,
   pricing: PricingConfig = loadPricing(),
-  antigravityTitles?: Map<string, string>
+  antigravityTitles?: Map<string, string>,
+  antigravityWorkspaces?: Map<string, string>
 ): SessionStats | null {
   if (shouldSkipJsonlFile(filePath, source)) return null;
 
@@ -647,8 +1015,13 @@ export function parseSingleFile(
     return null;
   }
 
-  const resolvedTitles =
-    source === 'antigravity' ? antigravityTitles || loadAntigravityTitles(getWatchRoots().geminiDir) : undefined;
+  let resolvedTitles = antigravityTitles;
+  let resolvedWorkspaces = antigravityWorkspaces;
+  if (source === 'antigravity' && (!resolvedTitles || !resolvedWorkspaces)) {
+    const meta = loadAntigravityMetadata(getWatchRoots().geminiDir);
+    resolvedTitles = resolvedTitles || meta.titles;
+    resolvedWorkspaces = resolvedWorkspaces || meta.workspaces;
+  }
 
   const cached = fileCache.get(filePath);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
@@ -656,12 +1029,20 @@ export function parseSingleFile(
       const dbTitle = resolvedTitles.get(cached.session.sessionId);
       if (dbTitle) cached.session.sessionTitle = dbTitle;
     }
+    if (cached.session && resolvedWorkspaces && cached.session.workspace === 'Global / CLI') {
+      const dbWs = resolvedWorkspaces.get(cached.session.sessionId);
+      if (dbWs) {
+        const rel = toRelativeHomePath(dbWs);
+        cached.session.workspace = rel;
+        cached.session.workspaceName = formatWorkspaceName(rel);
+      }
+    }
     return cached.session;
   }
 
   const session =
     source === 'antigravity'
-      ? parseAntigravityFile(filePath, stat, pricing, resolvedTitles)
+      ? parseAntigravityFile(filePath, stat, pricing, resolvedTitles, resolvedWorkspaces)
       : parseClaudeFile(filePath, stat, pricing);
 
   fileCache.set(filePath, {
@@ -680,29 +1061,66 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
 
   const pricing = loadPricing(forceClearCache);
   const { geminiDir, claudeDir } = getWatchRoots();
-  const antigravityTitles = loadAntigravityTitles(geminiDir);
+  const antigravityMeta = loadAntigravityMetadata(geminiDir);
 
   const geminiFiles = collectJsonlFiles(geminiDir, 'antigravity');
   const claudeFiles = collectJsonlFiles(claudeDir, 'claude');
 
-  const sessions: SessionStats[] = [];
+  // Purge stale entries from fileCache for files deleted from disk
+  const seenFiles = new Set<string>([...geminiFiles, ...claudeFiles]);
+  for (const cachedPath of fileCache.keys()) {
+    if (!seenFiles.has(cachedPath)) {
+      fileCache.delete(cachedPath);
+    }
+  }
+
+  const liveSessions: SessionStats[] = [];
+  const orphanedDeletedSessions: SessionStats[] = [];
 
   for (const file of geminiFiles) {
-    const session = parseSingleFile(file, 'antigravity', pricing, antigravityTitles);
-    if (session) sessions.push(session);
+    const session = parseSingleFile(
+      file,
+      'antigravity',
+      pricing,
+      antigravityMeta.titles,
+      antigravityMeta.workspaces
+    );
+    if (!session) continue;
+    if (isOrphanedAntigravitySession(file, session.sessionId, antigravityMeta)) {
+      orphanedDeletedSessions.push(session);
+    } else {
+      liveSessions.push(session);
+    }
   }
 
   for (const file of claudeFiles) {
     const session = parseSingleFile(file, 'claude', pricing);
-    if (session) sessions.push(session);
+    if (session) liveSessions.push(session);
   }
 
-  sessions.sort((a, b) => (b.lastActiveAt > a.lastActiveAt ? 1 : -1));
+  const { activeSessions, deletedSessions: ledgerDeleted } = reconcileSessionLedger({
+    liveSessions,
+    orphanedDeletedSessions,
+    geminiDirExists: fs.existsSync(geminiDir),
+    claudeDirExists: fs.existsSync(claudeDir),
+  });
+
+  const knownKeys = new Set<string>();
+  for (const s of activeSessions) knownKeys.add(getSessionKey(s.source, s.sessionId));
+  for (const s of ledgerDeleted) knownKeys.add(getSessionKey(s.source, s.sessionId));
+
+  const legacyDeleted = collectLegacyDeletedSessions(geminiDir, claudeDir, antigravityMeta, knownKeys);
+  const deletedSessions = [...ledgerDeleted, ...legacyDeleted].sort((a, b) => {
+    const aKey = a.deletedAt || a.lastActiveAt || '';
+    const bKey = b.deletedAt || b.lastActiveAt || '';
+    return bKey > aKey ? 1 : -1;
+  });
 
   return {
     generatedAt: new Date().toISOString(),
     watchedPaths: [toRelativeHomePath(geminiDir), toRelativeHomePath(claudeDir)],
     pricing,
-    sessions,
+    sessions: activeSessions,
+    deletedSessions,
   };
 }

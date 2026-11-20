@@ -76,6 +76,9 @@ export interface SessionStats {
   cacheSavingsUSD: number;
   estimatedTurns: number;
   turnHistory: UsageTurn[];
+  deleted?: boolean;
+  deletedAt?: string;
+  untrackedHistory?: boolean;
 }
 
 export interface BurnrateSnapshot {
@@ -83,4 +86,5 @@ export interface BurnrateSnapshot {
   watchedPaths: string[];
   pricing: PricingConfig;
   sessions: SessionStats[];
+  deletedSessions?: SessionStats[];
 }
