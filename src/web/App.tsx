@@ -1208,6 +1208,24 @@ export default function App() {
               </div>
             </div>
 
+            {m.rate.longContext && (
+              <div
+                className="text-[10px] text-zinc-400 font-mono flex items-center justify-between gap-1.5 bg-zinc-900/60 px-2 py-1 rounded border border-zinc-800/70"
+                title={`Requests exceeding ${(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k context tokens are billed at the long-context tier`}
+              >
+                <span className="text-sky-400 font-semibold shrink-0">
+                  &gt;{(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k ctx:
+                </span>
+                <span className="truncate">
+                  <span className="text-zinc-200">{formatRateMoney(m.rate.longContext.input, currency)}</span>
+                  <span className="text-zinc-600 mx-1">/</span>
+                  <span className="text-cyan-400">{formatRateMoney(m.rate.longContext.cacheRead, currency)}</span>
+                  <span className="text-zinc-600 mx-1">/</span>
+                  <span className="text-amber-300">{formatRateMoney(m.rate.longContext.output, currency)}</span>
+                </span>
+              </div>
+            )}
+
             {promoActive && m.rate.promoNote && (
               <div className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
                 <span className="text-amber-400">●</span>

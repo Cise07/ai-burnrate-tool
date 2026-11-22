@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "config",
+    "scripts",
     "README.md"
   ],
   "repository": {
@@ -20,6 +21,7 @@
     "build:web": "vite build",
     "build:cli": "tsc -p tsconfig.cli.json",
     "build": "npm run build:web && npm run build:cli",
+    "postinstall": "node scripts/postinstall.mjs",
     "setup": "npm install && npm run build && npm install -g .",
     "remove": "npm uninstall -g ai-burnrate-tool",
     "start": "node ./dist/cli/index.js"

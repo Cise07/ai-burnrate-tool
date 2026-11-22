@@ -27,6 +27,14 @@ export interface HooksStatus {
   claude: boolean;
 }
 
+export interface LongContextTier {
+  thresholdTokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface ModelRate {
   label: string;
   provider: 'anthropic' | 'google' | string;
@@ -34,6 +42,7 @@ export interface ModelRate {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  longContext?: LongContextTier;
   isPromo?: boolean;
   promoStart?: string;
   promoEnd?: string;

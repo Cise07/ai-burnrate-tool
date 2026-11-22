@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ModelRate, PricingConfig, RateSnapshot, ToolSource } from './types.js';
+import type { LongContextTier, ModelRate, PricingConfig, RateSnapshot, ToolSource } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,11 +82,17 @@ export function loadPricing(forceReload = false): PricingConfig {
         if (!ledger.models[k]) {
           ledger.models[k] = structuredClone(v);
           migrated = true;
+        } else if (v.longContext && !ledger.models[k].longContext) {
+          ledger.models[k].longContext = structuredClone(v.longContext);
+          migrated = true;
         }
         if (ledger.history) {
           for (const snap of ledger.history) {
             if (!snap.models[k]) {
               snap.models[k] = structuredClone(v);
+              migrated = true;
+            } else if (v.longContext && !snap.models[k].longContext) {
+              snap.models[k].longContext = structuredClone(v.longContext);
               migrated = true;
             }
           }
@@ -110,6 +116,18 @@ export function loadPricing(forceReload = false): PricingConfig {
   return cachedPricing;
 }
 
+function longContextTiersDiffer(a?: LongContextTier, b?: LongContextTier): boolean {
+  if (!a && !b) return false;
+  if (!a || !b) return true;
+  return (
+    a.thresholdTokens !== b.thresholdTokens ||
+    Math.abs(a.input - b.input) > 1e-6 ||
+    Math.abs(a.output - b.output) > 1e-6 ||
+    Math.abs(a.cacheRead - b.cacheRead) > 1e-6 ||
+    Math.abs(a.cacheWrite - b.cacheWrite) > 1e-6
+  );
+}
+
 function ratesDiffer(a: Record<string, ModelRate>, b: Record<string, ModelRate>): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const k of keys) {
@@ -122,7 +140,8 @@ function ratesDiffer(a: Record<string, ModelRate>, b: Record<string, ModelRate>)
       Math.abs(ma.cacheRead - mb.cacheRead) > 1e-6 ||
       Math.abs(ma.cacheWrite - mb.cacheWrite) > 1e-6 ||
       Boolean(ma.isPromo) !== Boolean(mb.isPromo) ||
-      (ma.promoEnd || '') !== (mb.promoEnd || '')
+      (ma.promoEnd || '') !== (mb.promoEnd || '') ||
+      longContextTiersDiffer(ma.longContext, mb.longContext)
     ) {
       return true;
     }
@@ -131,6 +150,64 @@ function ratesDiffer(a: Record<string, ModelRate>, b: Record<string, ModelRate>)
 }
 
 const round4 = (n: number): number => Number(n.toFixed(4));
+
+function extractLiteLlmLongContextTier(
+  entry: Record<string, any>,
+  provider: string,
+  baseInputPer1M: number,
+  baseCacheReadPer1M: number
+): LongContextTier | undefined {
+  let bestThreshold = 0;
+  let bestInput = 0;
+  let bestOutput = 0;
+  let bestCacheRead: number | undefined;
+  let bestCacheWrite: number | undefined;
+
+  for (const [field, rawVal] of Object.entries(entry)) {
+    const match = field.match(/^input_cost_per_token_above_(\d+)k_tokens$/);
+    if (!match || typeof rawVal !== 'number' || rawVal <= 0) continue;
+    const kNum = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(kNum) || kNum <= 0) continue;
+
+    const outRaw = entry[`output_cost_per_token_above_${kNum}k_tokens`];
+    if (typeof outRaw !== 'number' || outRaw <= 0) continue;
+
+    const thresholdTokens = kNum * 1_000;
+    if (bestThreshold === 0 || thresholdTokens < bestThreshold) {
+      bestThreshold = thresholdTokens;
+      bestInput = round4(rawVal * 1_000_000);
+      bestOutput = round4(outRaw * 1_000_000);
+      const cacheReadRaw = entry[`cache_read_input_token_cost_above_${kNum}k_tokens`];
+      const cacheWriteRaw = entry[`cache_creation_input_token_cost_above_${kNum}k_tokens`];
+      bestCacheRead =
+        typeof cacheReadRaw === 'number' && cacheReadRaw >= 0
+          ? round4(cacheReadRaw * 1_000_000)
+          : undefined;
+      bestCacheWrite =
+        typeof cacheWriteRaw === 'number' && cacheWriteRaw > 0
+          ? round4(cacheWriteRaw * 1_000_000)
+          : undefined;
+    }
+  }
+
+  if (bestThreshold <= 0 || bestInput <= 0 || bestOutput <= 0) return undefined;
+
+  const cacheReadRatio = baseInputPer1M > 0 ? baseCacheReadPer1M / baseInputPer1M : 0.1;
+  const cacheRead =
+    bestCacheRead !== undefined ? bestCacheRead : round4(bestInput * cacheReadRatio);
+  const cacheWrite =
+    provider === 'anthropic'
+      ? bestCacheWrite ?? round4(bestInput * 1.25)
+      : bestInput;
+
+  return {
+    thresholdTokens: bestThreshold,
+    input: bestInput,
+    output: bestOutput,
+    cacheRead,
+    cacheWrite,
+  };
+}
 
 function stripPromoMetadata(rate: ModelRate): ModelRate {
   const {
@@ -621,7 +698,14 @@ export async function syncOfficialPricing(): Promise<{
                   ? inputPer1M
                   : existing.cacheWrite;
 
-            candidateModels[ourKey] =
+            const longContext = extractLiteLlmLongContextTier(
+              entry,
+              existing.provider,
+              inputPer1M,
+              cacheReadPer1M
+            );
+
+            const nextRate: ModelRate =
               existing.provider === 'google'
                 ? buildGooglePromoRate(ourKey, existing, inputPer1M, outputPer1M, cacheReadPer1M, cacheWritePer1M)
                 : {
@@ -631,6 +715,12 @@ export async function syncOfficialPricing(): Promise<{
                     cacheRead: cacheReadPer1M,
                     cacheWrite: cacheWritePer1M,
                   };
+            if (longContext) {
+              nextRate.longContext = longContext;
+            } else {
+              delete nextRate.longContext;
+            }
+            candidateModels[ourKey] = nextRate;
             litellmApplied = true;
             break;
           }
@@ -976,22 +1066,34 @@ export function calculateTurnCost(
   const cacheWrite = Math.max(0, params.cacheWriteTokens);
   const output = Math.max(0, params.outputTokens);
 
-  const cacheReadRate =
-    typeof rate.cacheRead === 'number'
+  const contextTokens = nonCachedInput + cacheRead + cacheWrite;
+  const activeTier =
+    rate.longContext &&
+    rate.longContext.thresholdTokens > 0 &&
+    contextTokens > rate.longContext.thresholdTokens
+      ? rate.longContext
+      : null;
+
+  const inputRate = activeTier ? activeTier.input : rate.input;
+  const outputRate = activeTier ? activeTier.output : rate.output;
+  const cacheReadRate = activeTier
+    ? activeTier.cacheRead
+    : typeof rate.cacheRead === 'number'
       ? rate.cacheRead
       : rate.input * (rate.provider === 'anthropic' ? 0.1 : 0.25);
-  const cacheWriteRate =
-    typeof rate.cacheWrite === 'number'
+  const cacheWriteRate = activeTier
+    ? activeTier.cacheWrite
+    : typeof rate.cacheWrite === 'number'
       ? rate.cacheWrite
       : rate.input * (rate.provider === 'anthropic' ? 1.25 : 1.0);
 
-  const inputCost = (nonCachedInput / 1_000_000) * rate.input;
+  const inputCost = (nonCachedInput / 1_000_000) * inputRate;
   const cacheReadCost = (cacheRead / 1_000_000) * cacheReadRate;
   const cacheWriteCost = (cacheWrite / 1_000_000) * cacheWriteRate;
-  const outputCost = (output / 1_000_000) * rate.output;
+  const outputCost = (output / 1_000_000) * outputRate;
 
   const costUSD = inputCost + cacheReadCost + cacheWriteCost + outputCost;
-  const cacheSavingsUSD = Math.max(0, (cacheRead / 1_000_000) * (rate.input - cacheReadRate));
+  const cacheSavingsUSD = Math.max(0, (cacheRead / 1_000_000) * (inputRate - cacheReadRate));
 
   return {
     normalizedModel,

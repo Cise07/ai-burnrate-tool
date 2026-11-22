@@ -158,7 +158,7 @@ async function main() {
     const targetSpec = resolveNpmUpdateSpec();
     console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold(targetSpec)} from npm...`);
     try {
-      execSync(`npm install -g ${targetSpec}`, {
+      execSync(`npm install -g --foreground-scripts ${targetSpec}`, {
         stdio: 'inherit',
       });
       console.log(`  ${pc.green('✓')} ${pc.bold(targetSpec)} updated successfully!\n`);

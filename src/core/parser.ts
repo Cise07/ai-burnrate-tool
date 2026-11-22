@@ -500,10 +500,27 @@ function formatSlugTitle(slug: string): string {
     .join(' ');
 }
 
+interface CodexThreadRelation {
+  sessionId: string;
+  parentSessionId?: string;
+  isSideChat: boolean;
+  subagentName?: string;
+  workspace?: string;
+}
+
+interface CodexMetadata {
+  titles: Map<string, string>;
+  parentIds: Map<string, string>;
+  sideChatIds: Set<string>;
+  agentNames: Map<string, string>;
+  workspaces: Map<string, string>;
+}
+
 interface CachedFileEntry {
   mtimeMs: number;
   size: number;
   session: SessionStats | null;
+  codexRelation?: CodexThreadRelation | null;
 }
 
 const fileCache = new Map<string, CachedFileEntry>();
@@ -524,7 +541,9 @@ export function getWatchRoots(): {
       : path.join(home, '.claude'),
     codexDir: process.env.BURNRATE_CODEX_DIR
       ? path.resolve(process.env.BURNRATE_CODEX_DIR)
-      : path.join(home, '.codex'),
+      : process.env.CODEX_HOME
+        ? path.resolve(process.env.CODEX_HOME)
+        : path.join(home, '.codex'),
   };
 }
 
@@ -1036,12 +1055,72 @@ function extractCodexMessageText(content: unknown): string {
   return '';
 }
 
-function parseCodexFile(filePath: string, stat: fs.Stats, pricing: PricingConfig): SessionStats | null {
+function loadCodexSessionTitles(codexDir: string): Map<string, string> {
+  const titles = new Map<string, string>();
+  const indexPath = path.join(codexDir, 'session_index.jsonl');
+  if (!fs.existsSync(indexPath)) return titles;
+  try {
+    if (fs.statSync(indexPath).size > 25 * 1024 * 1024) return titles;
+    const lines = fs.readFileSync(indexPath, 'utf-8').split(/\r?\n/);
+    for (const raw of lines) {
+      if (!raw.trim()) continue;
+      let obj: Record<string, any>;
+      try {
+        obj = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+      const name = typeof obj.thread_name === 'string' ? cleanChatTitle(obj.thread_name) : '';
+      if (id && name) {
+        titles.set(id, name);
+      }
+    }
+  } catch {
+    // Ignore unreadable session_index.jsonl
+  }
+  return titles;
+}
+
+function isSyntheticCodexUserPrompt(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return true;
+  if (
+    trimmed.startsWith('# AGENTS.md') ||
+    trimmed.startsWith('<environment_context') ||
+    trimmed.startsWith('<permissions instructions') ||
+    trimmed.startsWith('<INSTRUCTIONS>') ||
+    trimmed.startsWith('<collaboration_mode') ||
+    trimmed.startsWith('<turn_aborted>') ||
+    trimmed.startsWith('Side conversation boundary.') ||
+    trimmed.startsWith('Everything before this boundary is inherited history')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function cleanCodexUserTitle(raw: string): string {
+  if (isSyntheticCodexUserPrompt(raw)) return '';
+  const stripped = raw
+    .trim()
+    .replace(/^\/(?:btw|side)\s+/i, '')
+    .trim();
+  if (!stripped || /^\/(?:btw|side)$/i.test(stripped)) return '';
+  return cleanChatTitle(stripped);
+}
+
+function parseCodexFile(
+  filePath: string,
+  stat: fs.Stats,
+  pricing: PricingConfig,
+  codexTitles?: Map<string, string>
+): { session: SessionStats | null; relation: CodexThreadRelation | null } {
   let content: string;
   try {
     content = fs.readFileSync(filePath, 'utf-8');
   } catch {
-    return null;
+    return { session: null, relation: null };
   }
 
   const lines = content.split(/\r?\n/);
@@ -1052,6 +1131,14 @@ function parseCodexFile(filePath: string, stat: fs.Stats, pricing: PricingConfig
   let firstUserTitle = '';
   let startedAt = '';
   let lastActiveAt = '';
+
+  // Primary SessionMeta lineage fields (first session_meta in file is canonical; later ones may be copied from parent)
+  let seenPrimarySessionMeta = false;
+  let forkedFromId = '';
+  let parentThreadId = '';
+  let rootSessionId = '';
+  let isSideChat = false;
+  let agentName = '';
 
   const VALID_CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
   const normalizeCodexEffort = (val: unknown): string => {
@@ -1090,8 +1177,39 @@ function parseCodexFile(filePath: string, stat: fs.Stats, pricing: PricingConfig
     const payload = obj.payload && typeof obj.payload === 'object' ? obj.payload : obj;
 
     if (obj.type === 'session_meta') {
-      if (typeof payload.id === 'string' && payload.id.trim()) sessionId = payload.id.trim();
-      if (typeof payload.cwd === 'string' && payload.cwd.trim()) workspace = payload.cwd.trim();
+      if (!seenPrimarySessionMeta) {
+        seenPrimarySessionMeta = true;
+        if (typeof payload.id === 'string' && payload.id.trim()) sessionId = payload.id.trim();
+        if (typeof payload.cwd === 'string' && payload.cwd.trim()) workspace = payload.cwd.trim();
+        if (typeof payload.forked_from_id === 'string' && payload.forked_from_id.trim()) {
+          forkedFromId = payload.forked_from_id.trim();
+        }
+        if (typeof payload.session_id === 'string' && payload.session_id.trim()) {
+          rootSessionId = payload.session_id.trim();
+        }
+        if (payload.attached_thread === true) {
+          isSideChat = true;
+        }
+        const subSpawn =
+          payload.source?.subagent?.thread_spawn ||
+          payload.source?.SubAgent?.ThreadSpawn ||
+          payload.source?.subagent ||
+          null;
+        const rawParent =
+          (typeof payload.parent_thread_id === 'string' && payload.parent_thread_id.trim()) ||
+          (typeof subSpawn?.parent_thread_id === 'string' && subSpawn.parent_thread_id.trim()) ||
+          '';
+        if (rawParent) parentThreadId = rawParent;
+        const rawAgent =
+          (typeof payload.agent_nickname === 'string' && payload.agent_nickname.trim()) ||
+          (typeof payload.agent_role === 'string' && payload.agent_role.trim()) ||
+          (typeof subSpawn?.agent_nickname === 'string' && subSpawn.agent_nickname.trim()) ||
+          (typeof subSpawn?.agent_role === 'string' && subSpawn.agent_role.trim()) ||
+          '';
+        if (rawAgent) agentName = rawAgent;
+      } else if (workspace === 'Global / CLI' && typeof payload.cwd === 'string' && payload.cwd.trim()) {
+        workspace = payload.cwd.trim();
+      }
       const metaModel =
         (typeof payload.model === 'string' && payload.model.trim()) ||
         (typeof payload.model_slug === 'string' && payload.model_slug.trim()) ||
@@ -1123,21 +1241,40 @@ function parseCodexFile(filePath: string, stat: fs.Stats, pricing: PricingConfig
       continue;
     }
 
+    if (obj.type === 'response_item' && payload.role === 'developer') {
+      const devText = extractCodexMessageText(payload.content);
+      if (devText.includes('You are in a side conversation, not the main thread.')) {
+        isSideChat = true;
+      }
+      continue;
+    }
+
     if (
-      !firstUserTitle &&
       obj.type === 'response_item' &&
       (payload.role === 'user' || payload.type === 'message') &&
       payload.role === 'user'
     ) {
-      const candidate = cleanChatTitle(extractCodexMessageText(payload.content));
-      if (candidate && !candidate.startsWith('# AGENTS.md') && !candidate.startsWith('<environment_context')) {
-        firstUserTitle = candidate;
+      const rawUserText = extractCodexMessageText(payload.content).trim();
+      if (
+        rawUserText.startsWith('Side conversation boundary.') ||
+        rawUserText.startsWith('Everything before this boundary is inherited history')
+      ) {
+        // Everything before the side conversation boundary is inherited parent history — reset so we never double-count parent turns or leak parent titles
+        isSideChat = true;
+        firstUserTitle = '';
+        turnHistory.length = 0;
+        startedAt = '';
+        continue;
+      }
+      if (!firstUserTitle) {
+        const candidate = cleanCodexUserTitle(rawUserText);
+        if (candidate) firstUserTitle = candidate;
       }
       continue;
     }
 
     if (obj.type === 'event_msg' && payload.type === 'user_message' && !firstUserTitle) {
-      const candidate = cleanChatTitle(String(payload.message || payload.text || ''));
+      const candidate = cleanCodexUserTitle(String(payload.message || payload.text || ''));
       if (candidate) firstUserTitle = candidate;
       continue;
     }
@@ -1226,18 +1363,44 @@ function parseCodexFile(filePath: string, stat: fs.Stats, pricing: PricingConfig
     }
   }
 
-  if (turnHistory.length === 0) return null;
+  const resolvedSideParent =
+    forkedFromId ||
+    parentThreadId ||
+    (rootSessionId && rootSessionId !== sessionId ? rootSessionId : '');
+  const relation: CodexThreadRelation | null = isSideChat
+    ? {
+        sessionId,
+        parentSessionId: resolvedSideParent && resolvedSideParent !== sessionId ? resolvedSideParent : undefined,
+        isSideChat: true,
+        workspace: workspace !== 'Global / CLI' ? workspace : undefined,
+      }
+    : parentThreadId && parentThreadId !== sessionId
+      ? {
+          sessionId,
+          parentSessionId: parentThreadId,
+          isSideChat: false,
+          subagentName: agentName || 'subagent',
+          workspace: workspace !== 'Global / CLI' ? workspace : undefined,
+        }
+      : null;
 
-  return summarizeSession({
+  if (turnHistory.length === 0) return { session: null, relation };
+
+  const indexedTitle = codexTitles?.get(sessionId);
+  const resolvedTitle = indexedTitle || firstUserTitle || sessionId;
+
+  const session = summarizeSession({
     sessionId,
-    sessionTitle: firstUserTitle || sessionId,
+    sessionTitle: resolvedTitle,
     source: 'codex',
     workspace: toRelativeHomePath(workspace),
     filePath: toRelativeHomePath(filePath),
-    startedAt: startedAt || new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
+    startedAt: startedAt || turnHistory[0]?.timestamp || new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
     lastActiveAt: lastActiveAt || new Date(stat.mtimeMs).toISOString(),
     turnHistory,
   });
+
+  return { session, relation };
 }
 
 function summarizeSession(params: {
@@ -1318,7 +1481,8 @@ export function parseSingleFile(
   source: ToolSource,
   pricing: PricingConfig = loadPricing(),
   antigravityTitles?: Map<string, string>,
-  antigravityWorkspaces?: Map<string, string>
+  antigravityWorkspaces?: Map<string, string>,
+  codexTitles?: Map<string, string>
 ): SessionStats | null {
   if (shouldSkipJsonlFile(filePath, source)) return null;
 
@@ -1340,11 +1504,11 @@ export function parseSingleFile(
 
   const cached = fileCache.get(filePath);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-    if (cached.session && resolvedTitles) {
+    if (cached.session && source === 'antigravity' && resolvedTitles) {
       const dbTitle = resolvedTitles.get(cached.session.sessionId);
       if (dbTitle) cached.session.sessionTitle = dbTitle;
     }
-    if (cached.session && resolvedWorkspaces && cached.session.workspace === 'Global / CLI') {
+    if (cached.session && source === 'antigravity' && resolvedWorkspaces && cached.session.workspace === 'Global / CLI') {
       const dbWs = resolvedWorkspaces.get(cached.session.sessionId);
       if (dbWs) {
         const rel = toRelativeHomePath(dbWs);
@@ -1352,20 +1516,30 @@ export function parseSingleFile(
         cached.session.workspaceName = formatWorkspaceName(rel);
       }
     }
+    if (cached.session && source === 'codex' && codexTitles) {
+      const idxTitle = codexTitles.get(cached.session.sessionId);
+      if (idxTitle) cached.session.sessionTitle = idxTitle;
+    }
     return cached.session;
   }
 
-  const session =
-    source === 'antigravity'
-      ? parseAntigravityFile(filePath, stat, pricing, resolvedTitles, resolvedWorkspaces)
-      : source === 'claude'
-        ? parseClaudeFile(filePath, stat, pricing)
-        : parseCodexFile(filePath, stat, pricing);
+  let session: SessionStats | null = null;
+  let codexRelation: CodexThreadRelation | null = null;
+  if (source === 'antigravity') {
+    session = parseAntigravityFile(filePath, stat, pricing, resolvedTitles, resolvedWorkspaces);
+  } else if (source === 'claude') {
+    session = parseClaudeFile(filePath, stat, pricing);
+  } else {
+    const parsedCodex = parseCodexFile(filePath, stat, pricing, codexTitles);
+    session = parsedCodex.session;
+    codexRelation = parsedCodex.relation;
+  }
 
   fileCache.set(filePath, {
     mtimeMs: stat.mtimeMs,
     size: stat.size,
     session,
+    ...(codexRelation ? { codexRelation } : {}),
   });
 
   return session;
@@ -1426,17 +1600,22 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
   if (candidates.length > 0) {
     const { filePath, source } = candidates[0];
     const antigravityMeta = source === 'antigravity' ? loadAntigravityMetadata(geminiDir) : null;
+    const codexTitles = source === 'codex' ? loadCodexSessionTitles(codexDir) : undefined;
     const session = parseSingleFile(
       filePath,
       source,
       pricing,
       antigravityMeta?.titles,
-      antigravityMeta?.workspaces
+      antigravityMeta?.workspaces,
+      codexTitles
     );
     if (session) {
       let requiresParentSubagentMerge = false;
-      const btwEntries = loadBtwHistoryEntries(geminiDir, claudeDir);
-      if (matchBtwParent(session, btwEntries, antigravityMeta)) {
+      const btwEntries = loadBtwHistoryEntries(geminiDir, claudeDir, codexDir);
+      const codexRel = source === 'codex' ? fileCache.get(filePath)?.codexRelation : null;
+      if (codexRel?.isSideChat || codexRel?.parentSessionId) {
+        requiresParentSubagentMerge = true;
+      } else if (matchBtwParent(session, btwEntries, antigravityMeta)) {
         requiresParentSubagentMerge = true;
       } else if (
         btwEntries.some(
@@ -1514,7 +1693,11 @@ function normalizeWorkspaceForMatch(ws: string | undefined): string {
   return rel.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
-function loadBtwHistoryEntries(geminiDir: string, claudeDir: string): BtwHistoryEntry[] {
+function loadBtwHistoryEntries(
+  geminiDir: string,
+  claudeDir: string,
+  codexDir?: string
+): BtwHistoryEntry[] {
   const entries: BtwHistoryEntry[] = [];
   const MAX_BYTES = 25 * 1024 * 1024;
 
@@ -1523,6 +1706,12 @@ function loadBtwHistoryEntries(geminiDir: string, claudeDir: string): BtwHistory
     { source: 'antigravity', filePath: path.join(geminiDir, 'antigravity', 'history.jsonl') },
     { source: 'claude', filePath: path.join(claudeDir, 'history.jsonl') },
   ];
+  if (codexDir) {
+    sources.push(
+      { source: 'codex', filePath: path.join(codexDir, 'history.jsonl') },
+      { source: 'codex', filePath: path.join(codexDir, 'history', 'history.jsonl') }
+    );
+  }
 
   for (const { source, filePath } of sources) {
     if (!fs.existsSync(filePath)) continue;
@@ -1530,22 +1719,35 @@ function loadBtwHistoryEntries(geminiDir: string, claudeDir: string): BtwHistory
       if (fs.statSync(filePath).size > MAX_BYTES) continue;
       const lines = fs.readFileSync(filePath, 'utf-8').split(/\r?\n/);
       for (const raw of lines) {
-        if (!raw.trim() || !raw.includes('/btw')) continue;
+        if (!raw.trim()) continue;
+        if (!raw.includes('/btw') && !(source === 'codex' && raw.includes('/side'))) continue;
         let obj: Record<string, any>;
         try {
           obj = JSON.parse(raw);
         } catch {
           continue;
         }
-        const display = typeof obj.display === 'string' ? obj.display.trim() : '';
-        const btwMatch = display.match(/^\/btw(?:\s+([\s\S]+))?$/i);
+        const display =
+          (typeof obj.display === 'string' && obj.display.trim()) ||
+          (typeof obj.text === 'string' && obj.text.trim()) ||
+          '';
+        const btwMatch =
+          source === 'codex'
+            ? display.match(/^\/(?:btw|side)(?:\s+([\s\S]+))?$/i)
+            : display.match(/^\/btw(?:\s+([\s\S]+))?$/i);
         if (!btwMatch) continue;
         const parentSessionId =
           (typeof obj.conversationId === 'string' && obj.conversationId.trim()) ||
           (typeof obj.sessionId === 'string' && obj.sessionId.trim()) ||
+          (typeof obj.session_id === 'string' && obj.session_id.trim()) ||
           '';
-        const timestampMs =
-          typeof obj.timestamp === 'number' && Number.isFinite(obj.timestamp) ? obj.timestamp : 0;
+        const rawTs =
+          typeof obj.timestamp === 'number' && Number.isFinite(obj.timestamp)
+            ? obj.timestamp
+            : typeof obj.ts === 'number' && Number.isFinite(obj.ts)
+              ? obj.ts
+              : 0;
+        const timestampMs = rawTs > 0 && rawTs < 1e12 ? rawTs * 1000 : rawTs;
         if (!parentSessionId || !timestampMs) continue;
 
         const promptBody = (btwMatch[1] || '').trim();
@@ -1553,6 +1755,7 @@ function loadBtwHistoryEntries(geminiDir: string, claudeDir: string): BtwHistory
         const rawWs =
           (typeof obj.workspace === 'string' && obj.workspace.trim()) ||
           (typeof obj.project === 'string' && obj.project.trim()) ||
+          (typeof obj.cwd === 'string' && obj.cwd.trim()) ||
           '';
 
         entries.push({
@@ -1576,7 +1779,8 @@ function loadBtwHistoryEntries(geminiDir: string, claudeDir: string): BtwHistory
 function matchBtwParent(
   session: SessionStats,
   btwEntries: BtwHistoryEntry[],
-  antigravityMeta?: AntigravityMetadata | null
+  antigravityMeta?: AntigravityMetadata | null,
+  codexMeta?: CodexMetadata | null
 ): {
   parentKey: string;
   subagentId: string;
@@ -1594,6 +1798,9 @@ function matchBtwParent(
   const hasUuidTitle =
     !sessTitleNorm || sessTitleNorm === session.sessionId.toLowerCase();
   const sessWsNorm = normalizeWorkspaceForMatch(session.workspace);
+  const isKnownCodexSide = Boolean(
+    session.source === 'codex' && codexMeta?.sideChatIds.has(session.sessionId)
+  );
 
   let bestEntry: BtwHistoryEntry | null = null;
   let bestScore = Infinity; // Lower is better; title matches get priority over timestamp-only fallback
@@ -1617,13 +1824,17 @@ function matchBtwParent(
       }
     }
 
-    if (matchTier === 0 && deltaMs >= -5_000 && deltaMs <= 15_000) {
+    const entryWsNorm =
+      entry.workspaceNorm ||
+      (entry.source === 'codex' ? normalizeWorkspaceForMatch(codexMeta?.workspaces.get(entry.parentSessionId)) : '');
+
+    if (matchTier === 0 && deltaMs >= -5_000 && deltaMs <= (isKnownCodexSide ? 180_000 : 15_000)) {
       const wsMatches =
-        Boolean(entry.workspaceNorm && sessWsNorm) &&
-        (sessWsNorm === entry.workspaceNorm ||
-          sessWsNorm.startsWith(`${entry.workspaceNorm}/`) ||
-          entry.workspaceNorm.startsWith(`${sessWsNorm}/`));
-      if (wsMatches || ((!entry.workspaceNorm || !sessWsNorm) && diffMs <= 5_000)) {
+        Boolean(entryWsNorm && sessWsNorm) &&
+        (sessWsNorm === entryWsNorm ||
+          sessWsNorm.startsWith(`${entryWsNorm}/`) ||
+          entryWsNorm.startsWith(`${sessWsNorm}/`));
+      if (wsMatches || ((!entryWsNorm || !sessWsNorm) && (isKnownCodexSide || diffMs <= 5_000))) {
         matchTier = 2;
       }
     }
@@ -1643,11 +1854,19 @@ function matchBtwParent(
     session.source === 'antigravity' && antigravityMeta
       ? resolveRootParentId(bestEntry.parentSessionId, antigravityMeta.parentIds) ||
         bestEntry.parentSessionId
-      : bestEntry.parentSessionId;
+      : session.source === 'codex' && codexMeta
+        ? resolveRootParentId(bestEntry.parentSessionId, codexMeta.parentIds) ||
+          bestEntry.parentSessionId
+        : bestEntry.parentSessionId;
 
   const resolvedBtwTitle =
     (!hasUuidTitle && session.sessionTitle ? session.sessionTitle.trim() : '') ||
     bestEntry.promptTitle ||
+    undefined;
+
+  const resolvedWs =
+    bestEntry.rawWorkspace ||
+    (session.source === 'codex' ? codexMeta?.workspaces.get(rootParentId) : undefined) ||
     undefined;
 
   return {
@@ -1655,7 +1874,7 @@ function matchBtwParent(
     subagentId: `btw:${session.sessionId}`,
     subagentName: '/btw',
     subagentTitle: resolvedBtwTitle,
-    workspace: bestEntry.rawWorkspace || undefined,
+    workspace: resolvedWs,
   };
 }
 
@@ -1675,7 +1894,8 @@ function resolveRootParentId(sessionId: string, parentIds: Map<string, string>):
 function mergeSessionsAndSubagents(
   rawSessions: SessionStats[],
   antigravityMeta: AntigravityMetadata,
-  btwEntries: BtwHistoryEntry[]
+  btwEntries: BtwHistoryEntry[],
+  codexMeta?: CodexMetadata
 ): {
   merged: SessionStats[];
   mergedSubagentKeys: Set<string>;
@@ -1716,8 +1936,28 @@ function mergeSessionsAndSubagents(
       }
     }
 
-    // 2. Ephemeral /btw side-chat detected via history.jsonl (`/btw <prompt>`)
-    const btwParent = matchBtwParent(s, btwEntries, antigravityMeta);
+    // 1b. Codex /btw (/side) forked side-chats & multi-agent subagents detected via SessionMeta lineage
+    if (s.source === 'codex' && codexMeta) {
+      const rootParentId = resolveRootParentId(s.sessionId, codexMeta.parentIds);
+      if (rootParentId) {
+        const isSide = codexMeta.sideChatIds.has(s.sessionId);
+        const subTitle =
+          codexMeta.titles.get(s.sessionId) ||
+          (s.sessionTitle && s.sessionTitle !== s.sessionId ? s.sessionTitle : undefined);
+        pendingChildren.push({
+          parentKey: getSessionKey('codex', rootParentId),
+          session: s,
+          subagentId: isSide ? `btw:${s.sessionId}` : s.sessionId,
+          subagentName: isSide ? '/btw' : codexMeta.agentNames.get(s.sessionId) || 'subagent',
+          subagentTitle: subTitle,
+          workspace: codexMeta.workspaces.get(rootParentId) || codexMeta.workspaces.get(s.sessionId),
+        });
+        continue;
+      }
+    }
+
+    // 2. Ephemeral /btw side-chat detected via history.jsonl (`/btw <prompt>` or Codex `/side`)
+    const btwParent = matchBtwParent(s, btwEntries, antigravityMeta, codexMeta);
     if (btwParent) {
       pendingChildren.push({
         parentKey: btwParent.parentKey,
@@ -1873,25 +2113,51 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
     if (session) rawLiveSessions.push(session);
   }
 
+  const codexMeta: CodexMetadata = {
+    titles: loadCodexSessionTitles(codexDir),
+    parentIds: new Map<string, string>(),
+    sideChatIds: new Set<string>(),
+    agentNames: new Map<string, string>(),
+    workspaces: new Map<string, string>(),
+  };
+
+  const recordCodexSessionMeta = (file: string, session: SessionStats | null) => {
+    const rel = fileCache.get(file)?.codexRelation;
+    if (rel) {
+      if (rel.isSideChat) codexMeta.sideChatIds.add(rel.sessionId);
+      if (rel.parentSessionId && rel.parentSessionId !== rel.sessionId) {
+        codexMeta.parentIds.set(rel.sessionId, rel.parentSessionId);
+      }
+      if (rel.subagentName) codexMeta.agentNames.set(rel.sessionId, rel.subagentName);
+      if (rel.workspace) codexMeta.workspaces.set(rel.sessionId, rel.workspace);
+    }
+    if (session && session.workspace && session.workspace !== 'Global / CLI') {
+      codexMeta.workspaces.set(session.sessionId, session.workspace);
+    }
+  };
+
   for (const file of codexLiveFiles) {
-    const session = parseSingleFile(file, 'codex', pricing);
+    const session = parseSingleFile(file, 'codex', pricing, undefined, undefined, codexMeta.titles);
+    recordCodexSessionMeta(file, session);
     if (session) rawLiveSessions.push(session);
   }
 
   for (const file of codexArchivedFiles) {
-    const session = parseSingleFile(file, 'codex', pricing);
+    const session = parseSingleFile(file, 'codex', pricing, undefined, undefined, codexMeta.titles);
+    recordCodexSessionMeta(file, session);
     if (session) rawOrphanedDeletedSessions.push(session);
   }
 
-  const btwEntries = loadBtwHistoryEntries(geminiDir, claudeDir);
+  const btwEntries = loadBtwHistoryEntries(geminiDir, claudeDir, codexDir);
 
   const { merged: liveSessions, mergedSubagentKeys: liveMergedSubKeys } = mergeSessionsAndSubagents(
     rawLiveSessions,
     antigravityMeta,
-    btwEntries
+    btwEntries,
+    codexMeta
   );
   const { merged: orphanedDeletedSessions, mergedSubagentKeys: orphanMergedSubKeys } =
-    mergeSessionsAndSubagents(rawOrphanedDeletedSessions, antigravityMeta, btwEntries);
+    mergeSessionsAndSubagents(rawOrphanedDeletedSessions, antigravityMeta, btwEntries, codexMeta);
 
   const mergedSubagentKeys = new Set<string>([...liveMergedSubKeys, ...orphanMergedSubKeys]);
   const codexDirExists = fs.existsSync(codexDir);
@@ -1913,14 +2179,36 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
         };
       }
     }
-    return matchBtwParent(candidate, btwEntries, antigravityMeta);
+    if (candidate.source === 'codex') {
+      const rootParentId = resolveRootParentId(candidate.sessionId, codexMeta.parentIds);
+      if (rootParentId) {
+        const isSide = codexMeta.sideChatIds.has(candidate.sessionId);
+        const subTitle =
+          codexMeta.titles.get(candidate.sessionId) ||
+          (candidate.sessionTitle && candidate.sessionTitle !== candidate.sessionId
+            ? candidate.sessionTitle
+            : undefined);
+        return {
+          parentKey: getSessionKey('codex', rootParentId),
+          subagentId: isSide ? `btw:${candidate.sessionId}` : candidate.sessionId,
+          subagentName: isSide ? '/btw' : codexMeta.agentNames.get(candidate.sessionId) || 'subagent',
+          subagentTitle: subTitle,
+        };
+      }
+    }
+    return matchBtwParent(candidate, btwEntries, antigravityMeta, codexMeta);
   };
 
   const resolveBtwTurnTitle = (
     parent: SessionStats,
-    _subagentId: string,
+    subagentId: string,
     earliestTimestamp: string
   ): string | undefined => {
+    if (parent.source === 'codex' && subagentId.startsWith('btw:')) {
+      const rawId = subagentId.slice(4);
+      const indexed = codexMeta.titles.get(rawId);
+      if (indexed) return indexed;
+    }
     const targetMs = earliestTimestamp ? new Date(earliestTimestamp).getTime() : NaN;
     if (Number.isNaN(targetMs) || btwEntries.length === 0) return undefined;
     let bestTitle: string | undefined;
@@ -1930,7 +2218,9 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
       const rootId =
         parent.source === 'antigravity'
           ? resolveRootParentId(entry.parentSessionId, antigravityMeta.parentIds) || entry.parentSessionId
-          : entry.parentSessionId;
+          : parent.source === 'codex'
+            ? resolveRootParentId(entry.parentSessionId, codexMeta.parentIds) || entry.parentSessionId
+            : entry.parentSessionId;
       if (rootId !== parent.sessionId) continue;
       const diffMs = Math.abs(targetMs - entry.timestampMs);
       if (diffMs <= 180_000 && diffMs < bestDiff) {
