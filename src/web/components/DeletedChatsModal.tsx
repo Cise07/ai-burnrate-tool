@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   FolderGit2,
+  MessageSquare,
   RotateCcw,
   Search,
   ShieldCheck,
@@ -600,20 +601,31 @@ export function DeletedChatsModal({
                           </span>
                         </span>
                       ))}
-                      {chatSubagents.map((sub) => (
-                        <span
-                          key={sub.subagentId}
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-violet-950/35 border border-violet-500/30 text-[10px] font-mono text-violet-200"
-                          title={`Subagent: ${sub.subagentName} · ${sub.turns}t · ${fmtTokens(sub.totalTokens)} tok`}
-                        >
-                          <Bot className="w-2.5 h-2.5 text-violet-400 shrink-0" />
-                          <span>{sub.subagentName}</span>
-                          <span className="text-zinc-400">· {sub.turns}t</span>
-                          <span className="text-emerald-400">
-                            {formatMoney(sub.costUSD, currency)}
+                      {chatSubagents.map((sub) => {
+                        const isBtw = sub.subagentName === '/btw';
+                        return (
+                          <span
+                            key={sub.subagentId}
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono ${
+                              isBtw
+                                ? 'bg-sky-950/35 border border-sky-500/30 text-sky-200'
+                                : 'bg-violet-950/35 border border-violet-500/30 text-violet-200'
+                            }`}
+                            title={`${isBtw ? 'Side-chat' : 'Subagent'}: ${sub.subagentName} · ${sub.turns}t · ${fmtTokens(sub.totalTokens)} tok`}
+                          >
+                            {isBtw ? (
+                              <MessageSquare className="w-2.5 h-2.5 text-sky-400 shrink-0" />
+                            ) : (
+                              <Bot className="w-2.5 h-2.5 text-violet-400 shrink-0" />
+                            )}
+                            <span>{sub.subagentName}</span>
+                            <span className="text-zinc-400">· {sub.turns}t</span>
+                            <span className="text-emerald-400">
+                              {formatMoney(sub.costUSD, currency)}
+                            </span>
                           </span>
-                        </span>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>

@@ -84,6 +84,7 @@ export interface UsageTurn {
   estimated: boolean;
   subagentId?: string;
   subagentName?: string;
+  subagentTitle?: string;
 }
 
 export interface SessionStats {

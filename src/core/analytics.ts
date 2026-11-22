@@ -139,6 +139,21 @@ export interface SessionModelItem {
   cacheSavingsUSD: number;
 }
 
+export interface SessionSubagentRun {
+  runId: string;
+  title: string;
+  startedAt: string;
+  lastActiveAt: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  cacheSavingsUSD: number;
+  models: SessionModelItem[];
+}
+
 export interface SessionSubagentItem {
   subagentId: string;
   subagentName: string;
@@ -150,6 +165,7 @@ export interface SessionSubagentItem {
   costUSD: number;
   cacheSavingsUSD: number;
   models: SessionModelItem[];
+  runs?: SessionSubagentRun[];
 }
 
 export interface SessionSubagentSummary {
@@ -188,8 +204,8 @@ export function getSessionSubagentBreakdown(turnHistory: UsageTurn[]): SessionSu
       main.cacheSavingsUSD += t.cacheSavingsUSD;
       continue;
     }
-    const id = t.subagentId || t.subagentName || 'subagent';
-    const name = t.subagentName || id;
+    const name = t.subagentName || t.subagentId || 'subagent';
+    const id = name === '/btw' ? '/btw' : (t.subagentId || name);
     const entry = map.get(id) || { name, turns: [] };
     entry.turns.push(t);
     map.set(id, entry);
@@ -203,6 +219,7 @@ export function getSessionSubagentBreakdown(turnHistory: UsageTurn[]): SessionSu
     let totalTokens = 0;
     let costUSD = 0;
     let cacheSavingsUSD = 0;
+    const runBuckets = new Map<string, UsageTurn[]>();
     for (const t of info.turns) {
       inputTokens += t.inputTokens;
       outputTokens += t.outputTokens;
@@ -210,7 +227,53 @@ export function getSessionSubagentBreakdown(turnHistory: UsageTurn[]): SessionSu
       totalTokens += t.totalTokens;
       costUSD += t.costUSD;
       cacheSavingsUSD += t.cacheSavingsUSD;
+      const runKey = t.subagentId || subagentId;
+      const list = runBuckets.get(runKey) || [];
+      list.push(t);
+      runBuckets.set(runKey, list);
     }
+
+    const runs: SessionSubagentRun[] = [];
+    for (const [runId, runTurns] of runBuckets.entries()) {
+      let rIn = 0;
+      let rOut = 0;
+      let rCache = 0;
+      let rTot = 0;
+      let rCost = 0;
+      let rSav = 0;
+      let rStart = '';
+      let rEnd = '';
+      let rTitle = '';
+      for (const rt of runTurns) {
+        rIn += rt.inputTokens;
+        rOut += rt.outputTokens;
+        rCache += rt.cacheReadTokens;
+        rTot += rt.totalTokens;
+        rCost += rt.costUSD;
+        rSav += rt.cacheSavingsUSD;
+        if (!rTitle && rt.subagentTitle) rTitle = rt.subagentTitle;
+        if (rt.timestamp) {
+          if (!rStart || rt.timestamp < rStart) rStart = rt.timestamp;
+          if (!rEnd || rt.timestamp > rEnd) rEnd = rt.timestamp;
+        }
+      }
+      runs.push({
+        runId,
+        title: rTitle || info.name,
+        startedAt: rStart,
+        lastActiveAt: rEnd,
+        turns: runTurns.length,
+        inputTokens: rIn,
+        outputTokens: rOut,
+        cacheReadTokens: rCache,
+        totalTokens: rTot,
+        costUSD: rCost,
+        cacheSavingsUSD: rSav,
+        models: getSessionModelBreakdown(runTurns),
+      });
+    }
+    runs.sort((a, b) => (b.lastActiveAt > a.lastActiveAt ? 1 : b.lastActiveAt < a.lastActiveAt ? -1 : 0));
+
     subagents.push({
       subagentId,
       subagentName: info.name,
@@ -222,6 +285,7 @@ export function getSessionSubagentBreakdown(turnHistory: UsageTurn[]): SessionSu
       costUSD,
       cacheSavingsUSD,
       models: getSessionModelBreakdown(info.turns),
+      runs,
     });
   }
 

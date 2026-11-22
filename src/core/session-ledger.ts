@@ -144,6 +144,153 @@ function saveLedgerState(state: LedgerState): void {
   }
 }
 
+function countTaggedTurns(session: SessionStats | undefined): number {
+  if (!session || !Array.isArray(session.turnHistory)) return 0;
+  let count = 0;
+  for (const t of session.turnHistory) {
+    if (t.subagentId || t.subagentName) count++;
+  }
+  return count;
+}
+
+function countTitledSubagentTurns(session: SessionStats | undefined): number {
+  if (!session || !Array.isArray(session.turnHistory)) return 0;
+  let count = 0;
+  for (const t of session.turnHistory) {
+    if (t.subagentTitle) count++;
+  }
+  return count;
+}
+
+function isEphemeralSubagentTurn(t: SessionStats['turnHistory'][number]): boolean {
+  return Boolean(
+    t.subagentName === '/btw' || (typeof t.subagentId === 'string' && t.subagentId.startsWith('btw:'))
+  );
+}
+
+function turnSignature(t: SessionStats['turnHistory'][number]): string {
+  return `${t.timestamp}|${t.normalizedModel}|${t.totalTokens}|${t.subagentId || ''}`;
+}
+
+function recomputeSessionFromTurns(base: SessionStats, turns: SessionStats['turnHistory']): SessionStats {
+  const sorted = [...turns].sort((a, b) =>
+    a.timestamp > b.timestamp ? 1 : a.timestamp < b.timestamp ? -1 : 0
+  );
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let totalTokens = 0;
+  let costUSD = 0;
+  let cacheSavingsUSD = 0;
+  let estimatedTurns = 0;
+  let startedAt = base.startedAt;
+  let lastActiveAt = base.lastActiveAt;
+
+  const modelCounts = new Map<string, { label: string; count: number }>();
+  for (const t of sorted) {
+    inputTokens += t.inputTokens;
+    outputTokens += t.outputTokens;
+    cacheReadTokens += t.cacheReadTokens;
+    cacheWriteTokens += t.cacheWriteTokens;
+    totalTokens += t.totalTokens;
+    costUSD += t.costUSD;
+    cacheSavingsUSD += t.cacheSavingsUSD;
+    if (t.estimated) estimatedTurns++;
+    if (t.timestamp) {
+      if (!startedAt || t.timestamp < startedAt) startedAt = t.timestamp;
+      if (!lastActiveAt || t.timestamp > lastActiveAt) lastActiveAt = t.timestamp;
+    }
+    const existing = modelCounts.get(t.normalizedModel);
+    if (existing) existing.count += 1;
+    else modelCounts.set(t.normalizedModel, { label: t.modelLabel, count: 1 });
+  }
+
+  let primaryModel = base.primaryModel;
+  let primaryModelLabel = base.primaryModelLabel;
+  let maxCount = -1;
+  for (const [mKey, info] of modelCounts.entries()) {
+    if (info.count > maxCount) {
+      maxCount = info.count;
+      primaryModel = mKey;
+      primaryModelLabel = info.label;
+    }
+  }
+
+  return {
+    ...base,
+    startedAt,
+    lastActiveAt,
+    primaryModel,
+    primaryModelLabel,
+    turns: sorted.length,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    costUSD,
+    cacheSavingsUSD,
+    estimatedTurns,
+    turnHistory: sorted,
+  };
+}
+
+function mergePreservedEphemeralTurns(live: SessionStats, prev: SessionStats | undefined): SessionStats {
+  if (!prev || !Array.isArray(prev.turnHistory) || prev.turnHistory.length === 0) return live;
+
+  const liveSubIds = new Set<string>();
+  const liveSigs = new Set<string>();
+  for (const t of live.turnHistory) {
+    if (t.subagentId) liveSubIds.add(t.subagentId);
+    liveSigs.add(turnSignature(t));
+  }
+
+  const preserved: SessionStats['turnHistory'] = [];
+  for (const t of prev.turnHistory) {
+    if (!isEphemeralSubagentTurn(t)) continue;
+    // If this ephemeral subagent (/btw) is currently active on disk, live already has its freshest turns
+    if (t.subagentId && liveSubIds.has(t.subagentId)) continue;
+    const sig = turnSignature(t);
+    if (liveSigs.has(sig)) continue;
+    liveSigs.add(sig);
+    preserved.push(t);
+  }
+
+  if (preserved.length === 0) return live;
+  return recomputeSessionFromTurns(live, [...live.turnHistory, ...preserved]);
+}
+
+function absorbChildTurnsIntoParent(
+  parent: SessionStats,
+  childTurns: SessionStats['turnHistory'],
+  childSubagentId: string,
+  childSubagentName: string,
+  childSubagentTitle?: string
+): SessionStats {
+  if (childTurns.length === 0) return parent;
+  // Drop any stale copy of this exact childSubagentId from parent before adding the absorbed turns
+  const retained = parent.turnHistory.filter((t) => t.subagentId !== childSubagentId);
+  const existingSigs = new Set(retained.map(turnSignature));
+  const toAdd: SessionStats['turnHistory'] = [];
+  for (const t of childTurns) {
+    const resolvedTitle = t.subagentTitle || childSubagentTitle;
+    const tagged = {
+      ...t,
+      subagentId: t.subagentId || childSubagentId,
+      subagentName: t.subagentName || childSubagentName,
+      ...(resolvedTitle ? { subagentTitle: resolvedTitle } : {}),
+    };
+    const sig = turnSignature(tagged);
+    if (!existingSigs.has(sig)) {
+      existingSigs.add(sig);
+      toAdd.push(tagged);
+    }
+  }
+  if (toAdd.length === 0) return parent;
+  return recomputeSessionFromTurns(parent, [...retained, ...toAdd]);
+}
+
 function hasSessionChanged(prev: SessionStats | undefined, next: SessionStats): boolean {
   if (!prev) return true;
   if (Boolean(prev.deleted) !== Boolean(next.deleted)) return true;
@@ -157,6 +304,8 @@ function hasSessionChanged(prev: SessionStats | undefined, next: SessionStats): 
   if (prev.workspace !== next.workspace) return true;
   if (prev.primaryModelLabel !== next.primaryModelLabel) return true;
   if (prev.turnHistory.length !== next.turnHistory.length) return true;
+  if (countTaggedTurns(prev) !== countTaggedTurns(next)) return true;
+  if (countTitledSubagentTurns(prev) !== countTitledSubagentTurns(next)) return true;
   return false;
 }
 
@@ -175,25 +324,37 @@ function mergeOrphanedSession(prev: SessionStats | undefined, orphan: SessionSta
   };
 }
 
+export interface RolledUpParentResolution {
+  parentKey: string;
+  subagentId: string;
+  subagentName: string;
+  subagentTitle?: string;
+}
+
 export function reconcileSessionLedger(params: {
   liveSessions: SessionStats[];
   orphanedDeletedSessions: SessionStats[];
   mergedSubagentKeys?: Set<string>;
+  resolveRolledUpParent?: (session: SessionStats) => RolledUpParentResolution | null;
+  resolveBtwTurnTitle?: (parent: SessionStats, subagentId: string, earliestTimestamp: string) => string | undefined;
   geminiDirExists: boolean;
   claudeDirExists: boolean;
   codexDirExists?: boolean;
 }): {
   activeSessions: SessionStats[];
   deletedSessions: SessionStats[];
+  absorbedKeys: Set<string>;
 } {
   const ledgerState = loadLedgerState();
   const ledger = ledgerState.sessions;
   const nowIso = new Date().toISOString();
+  const absorbedKeys = new Set<string>();
   let dirty = false;
 
   // Purge obsolete separate entries for subagents now rolled up into their parent chat
   if (params.mergedSubagentKeys && params.mergedSubagentKeys.size > 0) {
     for (const subKey of params.mergedSubagentKeys) {
+      absorbedKeys.add(subKey);
       if (ledger.delete(subKey)) {
         dirty = true;
       }
@@ -221,6 +382,110 @@ export function reconcileSessionLedger(params: {
     }
   }
 
+  // 0. Preserve previously persisted ephemeral turns (/btw) on active sessions BEFORE checking absorbed entries
+  for (const [key, live] of liveMap.entries()) {
+    const prev = ledger.get(key);
+    const withPreserved = mergePreservedEphemeralTurns(live, prev);
+    if (withPreserved !== live) {
+      liveMap.set(key, withPreserved);
+    }
+  }
+
+  // 0b. Roll up orphaned-on-disk or previously-archived /btw & subagent entries into their parent chat
+  if (params.resolveRolledUpParent) {
+    const tryAbsorb = (key: string, candidate: SessionStats): boolean => {
+      if (candidate.untrackedHistory || candidate.turnHistory.length === 0) return false;
+      const target = params.resolveRolledUpParent!(candidate);
+      if (!target || target.parentKey === key) return false;
+
+      const liveParent = liveMap.get(target.parentKey);
+      if (liveParent) {
+        const updatedParent = absorbChildTurnsIntoParent(
+          liveParent,
+          candidate.turnHistory,
+          target.subagentId,
+          target.subagentName,
+          target.subagentTitle
+        );
+        liveMap.set(target.parentKey, updatedParent);
+        absorbedKeys.add(key);
+        if (ledger.delete(key)) dirty = true;
+        dirty = true;
+        return true;
+      }
+
+      const ledgerParent = ledger.get(target.parentKey);
+      if (ledgerParent && !ledgerParent.untrackedHistory) {
+        const updatedParent = absorbChildTurnsIntoParent(
+          ledgerParent,
+          candidate.turnHistory,
+          target.subagentId,
+          target.subagentName,
+          target.subagentTitle
+        );
+        ledger.set(target.parentKey, updatedParent);
+        absorbedKeys.add(key);
+        ledger.delete(key);
+        dirty = true;
+        return true;
+      }
+      return false;
+    };
+
+    for (const [key, orphan] of Array.from(orphanMap.entries())) {
+      if (tryAbsorb(key, orphan)) {
+        orphanMap.delete(key);
+      }
+    }
+    for (const [key, prev] of Array.from(ledger.entries())) {
+      if (liveMap.has(key) || orphanMap.has(key)) continue;
+      tryAbsorb(key, prev);
+    }
+  }
+
+  // 0c. Backfill missing subagentTitle on previously preserved /btw runs from history.jsonl
+  if (params.resolveBtwTurnTitle) {
+    const backfillSessionBtwTitles = (session: SessionStats): SessionStats => {
+      const untitledEarliest = new Map<string, string>();
+      for (const t of session.turnHistory) {
+        if (!isEphemeralSubagentTurn(t) || t.subagentTitle) continue;
+        const id = t.subagentId || '/btw';
+        const prevTs = untitledEarliest.get(id);
+        if (!prevTs || (t.timestamp && t.timestamp < prevTs)) {
+          untitledEarliest.set(id, t.timestamp || '');
+        }
+      }
+      if (untitledEarliest.size === 0) return session;
+      const resolved = new Map<string, string>();
+      for (const [subId, earliestTs] of untitledEarliest.entries()) {
+        const title = params.resolveBtwTurnTitle!(session, subId, earliestTs);
+        if (title) resolved.set(subId, title);
+      }
+      if (resolved.size === 0) return session;
+      return {
+        ...session,
+        turnHistory: session.turnHistory.map((t) => {
+          if (!isEphemeralSubagentTurn(t) || t.subagentTitle) return t;
+          const title = resolved.get(t.subagentId || '/btw');
+          return title ? { ...t, subagentTitle: title } : t;
+        }),
+      };
+    };
+
+    for (const [key, live] of liveMap.entries()) {
+      const updated = backfillSessionBtwTitles(live);
+      if (updated !== live) liveMap.set(key, updated);
+    }
+    for (const [key, prev] of ledger.entries()) {
+      if (liveMap.has(key)) continue;
+      const updated = backfillSessionBtwTitles(prev);
+      if (updated !== prev) {
+        ledger.set(key, updated);
+        dirty = true;
+      }
+    }
+  }
+
   // 1. Upsert active sessions (restoring previously deleted ones if they reappear on disk)
   for (const [key, live] of liveMap.entries()) {
     const prev = ledger.get(key);
@@ -233,7 +498,7 @@ export function reconcileSessionLedger(params: {
   // 2. Archive orphaned deleted sessions (e.g. Antigravity brain/ left behind after conversation DB removal)
   for (const [key, orphan] of orphanMap.entries()) {
     const prev = ledger.get(key);
-    const merged = mergeOrphanedSession(prev, orphan, nowIso);
+    const merged = mergeOrphanedSession(prev, mergePreservedEphemeralTurns(orphan, prev), nowIso);
     if (hasSessionChanged(prev, merged)) {
       ledger.set(key, merged);
       dirty = true;
@@ -281,21 +546,22 @@ export function reconcileSessionLedger(params: {
     return bKey > aKey ? 1 : -1;
   });
 
-  return { activeSessions, deletedSessions };
+  return { activeSessions, deletedSessions, absorbedKeys };
 }
 
 export function upsertSingleSessionToLedger(session: SessionStats): boolean {
   const ledgerState = loadLedgerState();
   const key = getSessionKey(session.source, session.sessionId);
   const prev = ledgerState.sessions.get(key);
+  const preservedSession = mergePreservedEphemeralTurns(session, prev);
 
   // Never downgrade an already richer snapshot in the ledger
-  if (prev && prev.turns > session.turns && prev.totalTokens >= session.totalTokens) {
+  if (prev && prev.turns > preservedSession.turns && prev.totalTokens >= preservedSession.totalTokens) {
     return false;
   }
 
   const cleanSession: SessionStats = {
-    ...session,
+    ...preservedSession,
     deleted: false,
   };
   delete cleanSession.deletedAt;

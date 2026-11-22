@@ -297,7 +297,15 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
         for (let j = 0; j < subSummary.subagents.length; j++) {
           const sub = subSummary.subagents[j];
           const subBranch = pc.dim(j === subSummary.subagents.length - 1 ? '└─' : '├─');
-          const subLabel = `${subPrefix}${subBranch} ${pc.magenta(truncateLabel(sub.subagentName, 21))}`;
+          const isBtw = sub.subagentName === '/btw';
+          const subTagCol = isBtw ? pc.cyan('[BTW]') : pc.magenta('[SUB]');
+          const singleBtwTitle =
+            isBtw && sub.runs && sub.runs.length === 1 && sub.runs[0].title !== '/btw'
+              ? `/btw: ${sub.runs[0].title}`
+              : isBtw && sub.runs && sub.runs.length > 1
+                ? `/btw (${sub.runs.length})`
+                : sub.subagentName;
+          const subLabel = `${subPrefix}${subBranch} ${(isBtw ? pc.cyan : pc.magenta)(truncateLabel(singleBtwTitle, 21))}`;
           const subModelStr = truncateLabel(
             sub.models.length > 1
               ? `${sub.models[0].modelLabel} +${sub.models.length - 1}`
@@ -305,8 +313,20 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
             17
           );
           console.log(
-            `  ${padRight(pc.magenta('[SUB]'), 13)} ${padRight(subLabel, 30)} ${padRight(pc.dim(subModelStr), 18)} ${padLeft(pc.dim(String(sub.turns)), 6)} ${padLeft(pc.dim(fmtTokens(sub.cacheReadTokens)), 8)} ${padLeft(pc.dim(fmtTokens(sub.outputTokens)), 8)} ${padLeft(pc.dim(formatMoney(sub.costUSD, currency)), 8)} ${padLeft(pc.dim(''), 11)}`
+            `  ${padRight(subTagCol, 13)} ${padRight(subLabel, 30)} ${padRight(pc.dim(subModelStr), 18)} ${padLeft(pc.dim(String(sub.turns)), 6)} ${padLeft(pc.dim(fmtTokens(sub.cacheReadTokens)), 8)} ${padLeft(pc.dim(fmtTokens(sub.outputTokens)), 8)} ${padLeft(pc.dim(formatMoney(sub.costUSD, currency)), 8)} ${padLeft(pc.dim(''), 11)}`
           );
+          if (isBtw && sub.runs && sub.runs.length > 1) {
+            const runPrefix = `${subPrefix}${j === subSummary.subagents.length - 1 ? '   ' : `${pc.dim('│')}  `}`;
+            for (let rIdx = 0; rIdx < sub.runs.length; rIdx++) {
+              const run = sub.runs[rIdx];
+              const runBranch = pc.dim(rIdx === sub.runs.length - 1 ? '└─' : '├─');
+              const runLabel = `${runPrefix}${runBranch} ${pc.dim(truncateLabel(run.title, 18))}`;
+              const runModelStr = truncateLabel(run.models[0]?.modelLabel || '-', 17);
+              console.log(
+                `  ${padRight('', 13)} ${padRight(runLabel, 30)} ${padRight(pc.dim(runModelStr), 18)} ${padLeft(pc.dim(String(run.turns)), 6)} ${padLeft(pc.dim(fmtTokens(run.cacheReadTokens)), 8)} ${padLeft(pc.dim(fmtTokens(run.outputTokens)), 8)} ${padLeft(pc.dim(formatMoney(run.costUSD, currency)), 8)} ${padLeft(pc.dim(''), 11)}`
+              );
+            }
+          }
         }
       }
     }

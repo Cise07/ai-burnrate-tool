@@ -437,6 +437,7 @@ export default function App() {
   const [sortDir, setSortDir] = useState<SortDirection>('desc');
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
   const [expandedChats, setExpandedChats] = useState<Set<string>>(new Set());
+  const [expandedBtwRows, setExpandedBtwRows] = useState<Set<string>>(new Set());
   const [isModelUsageExpanded, setIsModelUsageExpanded] = useState<boolean>(() => {
     return localStorage.getItem('burnrate_models_expanded') === 'true';
   });
@@ -2420,16 +2421,47 @@ export default function App() {
                                               {chat.sessionTitle || chat.sessionId}
                                             </span>
 
-                                            {subagentSummary.subagents.length > 0 && (
-                                              <span
-                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/30 text-[10px] font-mono text-violet-300 shrink-0"
-                                                title={`Includes ${subagentSummary.subagents.length} rolled-up subagent tool(s): ${subagentSummary.subagents.map((s) => s.subagentName).join(', ')}`}
-                                              >
-                                                <Bot className="w-2.5 h-2.5 shrink-0" />
-                                                +{subagentSummary.subagents.length}{' '}
-                                                {subagentSummary.subagents.length === 1 ? 'subagent' : 'subagents'}
-                                              </span>
-                                            )}
+                                            {(() => {
+                                              const regularSubs = subagentSummary.subagents.filter(
+                                                (s) => s.subagentName !== '/btw'
+                                              );
+                                              const btwEntry = subagentSummary.subagents.find(
+                                                (s) => s.subagentName === '/btw'
+                                              );
+                                              return (
+                                                <>
+                                                  {regularSubs.length > 0 && (
+                                                    <span
+                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/30 text-[10px] font-mono text-violet-300 shrink-0"
+                                                      title={`Includes ${regularSubs.length} rolled-up subagent tool(s): ${regularSubs.map((s) => s.subagentName).join(', ')}`}
+                                                    >
+                                                      <Bot className="w-2.5 h-2.5 shrink-0" />
+                                                      +{regularSubs.length}{' '}
+                                                      {regularSubs.length === 1 ? 'subagent' : 'subagents'}
+                                                    </span>
+                                                  )}
+                                                  {btwEntry && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleSetKey(setExpandedBtwRows, `${chatKey}::/btw`);
+                                                      }}
+                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-[10px] font-mono text-sky-300 shrink-0 transition-colors cursor-pointer"
+                                                      title={`Click to show /btw titles (${btwEntry.runs?.length || 1} side-chat${(btwEntry.runs?.length || 1) === 1 ? '' : 's'} · ${btwEntry.turns}t · ${formatTokens(btwEntry.totalTokens)} tok · ${formatMoney(btwEntry.costUSD, currency)})`}
+                                                    >
+                                                      <MessageSquare className="w-2.5 h-2.5 shrink-0" />
+                                                      +{(btwEntry.runs?.length || 0) > 1 ? `${btwEntry.runs!.length} ` : ''}/btw
+                                                      <ChevronRight
+                                                        className={`w-2.5 h-2.5 transition-transform duration-150 ${
+                                                          expandedBtwRows.has(`${chatKey}::/btw`) ? 'rotate-90' : ''
+                                                        }`}
+                                                      />
+                                                    </button>
+                                                  )}
+                                                </>
+                                              );
+                                            })()}
 
                                             <span className="text-[10.5px] font-mono text-zinc-500">
                                               {created.date} {created.time} →{' '}
@@ -2506,53 +2538,169 @@ export default function App() {
                                           })}
                                         </div>
 
-                                        {/* Rolled-up subagent tools with their individual consumption */}
-                                        {subagentSummary.subagents.length > 0 && (
-                                          <div className="flex flex-wrap items-center gap-1.5 pl-6">
-                                            <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-violet-300/90 mr-1">
-                                              <Bot className="w-3 h-3 text-violet-400" />
-                                              Subagents ({subagentSummary.subagents.length}):
-                                            </span>
-                                            {subagentSummary.subagents.map((sub) => {
-                                              const costShare =
-                                                chat.costUSD > 0 ? (sub.costUSD / chat.costUSD) * 100 : 0;
-                                              const primarySubModel = sub.models[0]?.modelLabel || '';
-                                              const extraSubModels = Math.max(0, sub.models.length - 1);
-                                              const modelsTooltip = sub.models
-                                                .map(
-                                                  (m) =>
-                                                    `${m.modelLabel} (${m.turns}t, ${formatMoney(m.costUSD, currency)})`
-                                                )
-                                                .join(' · ');
-                                              return (
-                                                <span
-                                                  key={sub.subagentId}
-                                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-violet-950/35 border border-violet-500/30 text-[10.5px] font-mono text-violet-100"
-                                                  title={`Subagent: ${sub.subagentName} (${sub.subagentId}) · Input: ${formatTokens(sub.inputTokens)} · Cache Read: ${formatTokens(sub.cacheReadTokens)} · Output: ${formatTokens(sub.outputTokens)} · Saved: ${formatMoney(sub.cacheSavingsUSD, currency)}${modelsTooltip ? ` · Models: ${modelsTooltip}` : ''}`}
-                                                >
-                                                  <span className="h-1.5 w-1.5 rounded-full bg-violet-400 shrink-0" />
-                                                  <span className="text-violet-200 font-medium">
-                                                    {sub.subagentName}
-                                                  </span>
-                                                  {primarySubModel && (
-                                                    <span className="text-zinc-400">
-                                                      [{primarySubModel}
-                                                      {extraSubModels > 0 ? ` +${extraSubModels}` : ''}]
-                                                    </span>
-                                                  )}
-                                                  <span className="text-zinc-500">· {sub.turns}t</span>
-                                                  <span className="text-zinc-400">
-                                                    · {formatTokens(sub.totalTokens)}
-                                                  </span>
-                                                  <span className="text-emerald-400 font-semibold">
-                                                    · {formatMoney(sub.costUSD, currency)}
-                                                  </span>
-                                                  <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
+                                        {/* Rolled-up subagent tools & /btw side-chats with their individual consumption */}
+                                        {subagentSummary.subagents.length > 0 && (() => {
+                                          const btwSub = subagentSummary.subagents.find(
+                                            (s) => s.subagentName === '/btw'
+                                          );
+                                          const btwRowKey = `${chatKey}::/btw`;
+                                          const isBtwExpanded = expandedBtwRows.has(btwRowKey);
+                                          return (
+                                            <div className="space-y-1.5 pl-6">
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-violet-300/90 mr-1">
+                                                  <Bot className="w-3 h-3 text-violet-400" />
+                                                  {btwSub
+                                                    ? subagentSummary.subagents.every((s) => s.subagentName === '/btw')
+                                                      ? 'Side Chats:'
+                                                      : `Subagents & /btw (${subagentSummary.subagents.length}):`
+                                                    : `Subagents (${subagentSummary.subagents.length}):`}
                                                 </span>
-                                              );
-                                            })}
-                                          </div>
-                                        )}
+                                                {subagentSummary.subagents.map((sub) => {
+                                                  const isBtw = sub.subagentName === '/btw';
+                                                  const costShare =
+                                                    chat.costUSD > 0 ? (sub.costUSD / chat.costUSD) * 100 : 0;
+                                                  const primarySubModel = sub.models[0]?.modelLabel || '';
+                                                  const extraSubModels = Math.max(0, sub.models.length - 1);
+                                                  const modelsTooltip = sub.models
+                                                    .map(
+                                                      (m) =>
+                                                        `${m.modelLabel} (${m.turns}t, ${formatMoney(m.costUSD, currency)})`
+                                                    )
+                                                    .join(' · ');
+                                                  const runCount = sub.runs?.length || 0;
+                                                  if (isBtw && runCount > 0) {
+                                                    return (
+                                                      <button
+                                                        key={sub.subagentId}
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          toggleSetKey(setExpandedBtwRows, btwRowKey);
+                                                        }}
+                                                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono bg-sky-950/35 hover:bg-sky-950/60 border border-sky-500/35 hover:border-sky-400/50 text-sky-100 transition-colors cursor-pointer"
+                                                        title={`Click to ${isBtwExpanded ? 'hide' : 'show'} /btw titles · Input: ${formatTokens(sub.inputTokens)} · Cache Read: ${formatTokens(sub.cacheReadTokens)} · Output: ${formatTokens(sub.outputTokens)} · Saved: ${formatMoney(sub.cacheSavingsUSD, currency)}${modelsTooltip ? ` · Models: ${modelsTooltip}` : ''}`}
+                                                      >
+                                                        <ChevronRight
+                                                          className={`w-3 h-3 text-sky-400 shrink-0 transition-transform duration-150 ${
+                                                            isBtwExpanded ? 'rotate-90' : ''
+                                                          }`}
+                                                        />
+                                                        <span className="font-medium text-sky-200">
+                                                          {sub.subagentName}
+                                                          {runCount > 1 ? ` (${runCount})` : ''}
+                                                        </span>
+                                                        {primarySubModel && (
+                                                          <span className="text-zinc-400">
+                                                            [{primarySubModel}
+                                                            {extraSubModels > 0 ? ` +${extraSubModels}` : ''}]
+                                                          </span>
+                                                        )}
+                                                        <span className="text-zinc-500">· {sub.turns}t</span>
+                                                        <span className="text-zinc-400">
+                                                          · {formatTokens(sub.totalTokens)}
+                                                        </span>
+                                                        <span className="text-emerald-400 font-semibold">
+                                                          · {formatMoney(sub.costUSD, currency)}
+                                                        </span>
+                                                        <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
+                                                      </button>
+                                                    );
+                                                  }
+                                                  return (
+                                                    <span
+                                                      key={sub.subagentId}
+                                                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono ${
+                                                        isBtw
+                                                          ? 'bg-sky-950/35 border border-sky-500/35 text-sky-100'
+                                                          : 'bg-violet-950/35 border border-violet-500/30 text-violet-100'
+                                                      }`}
+                                                      title={`${isBtw ? 'Side-chat /btw (preserved after Esc)' : `Subagent: ${sub.subagentName} (${sub.subagentId})`} · Input: ${formatTokens(sub.inputTokens)} · Cache Read: ${formatTokens(sub.cacheReadTokens)} · Output: ${formatTokens(sub.outputTokens)} · Saved: ${formatMoney(sub.cacheSavingsUSD, currency)}${modelsTooltip ? ` · Models: ${modelsTooltip}` : ''}`}
+                                                    >
+                                                      <span
+                                                        className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                                                          isBtw ? 'bg-sky-400' : 'bg-violet-400'
+                                                        }`}
+                                                      />
+                                                      <span
+                                                        className={`font-medium ${
+                                                          isBtw ? 'text-sky-200' : 'text-violet-200'
+                                                        }`}
+                                                      >
+                                                        {sub.subagentName}
+                                                      </span>
+                                                      {primarySubModel && (
+                                                        <span className="text-zinc-400">
+                                                          [{primarySubModel}
+                                                          {extraSubModels > 0 ? ` +${extraSubModels}` : ''}]
+                                                        </span>
+                                                      )}
+                                                      <span className="text-zinc-500">· {sub.turns}t</span>
+                                                      <span className="text-zinc-400">
+                                                        · {formatTokens(sub.totalTokens)}
+                                                      </span>
+                                                      <span className="text-emerald-400 font-semibold">
+                                                        · {formatMoney(sub.costUSD, currency)}
+                                                      </span>
+                                                      <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
+                                                    </span>
+                                                  );
+                                                })}
+                                              </div>
+
+                                              {btwSub && btwSub.runs && btwSub.runs.length > 0 && isBtwExpanded && (
+                                                <div
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  className="rounded-md bg-sky-950/20 border border-sky-500/25 px-2.5 py-2 space-y-1.5 cursor-default"
+                                                >
+                                                  <div className="text-[10px] font-mono uppercase tracking-wider text-sky-300/90 flex items-center gap-1.5">
+                                                    <MessageSquare className="w-3 h-3 text-sky-400" />
+                                                    <span>/btw Side Chats ({btwSub.runs.length})</span>
+                                                  </div>
+                                                  <div className="divide-y divide-sky-500/10">
+                                                    {btwSub.runs.map((run) => {
+                                                      const runDt = formatPreciseDateTime(run.lastActiveAt || run.startedAt);
+                                                      const runModel = run.models[0]?.modelLabel || '';
+                                                      return (
+                                                        <div
+                                                          key={run.runId}
+                                                          className="py-1 first:pt-0.5 last:pb-0 flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-mono"
+                                                        >
+                                                          <div className="flex items-center gap-1.5 min-w-0">
+                                                            <span className="text-sky-500/80 shrink-0">↳</span>
+                                                            <span
+                                                              className="text-sky-100 font-medium truncate max-w-[260px] sm:max-w-[440px]"
+                                                              title={run.title}
+                                                            >
+                                                              {run.title}
+                                                            </span>
+                                                            {runDt.date !== '—' && (
+                                                              <span className="text-[10px] text-zinc-500 shrink-0">
+                                                                ({runDt.date} {runDt.time})
+                                                              </span>
+                                                            )}
+                                                          </div>
+                                                          <div className="flex items-center gap-2 shrink-0 text-[10px]">
+                                                            {runModel && (
+                                                              <span className="text-zinc-400">[{runModel}]</span>
+                                                            )}
+                                                            <span className="text-zinc-400">{run.turns}t</span>
+                                                            <span className="text-zinc-300">
+                                                              {formatTokens(run.totalTokens)}
+                                                            </span>
+                                                            <span className="text-emerald-400 font-semibold">
+                                                              {formatMoney(run.costUSD, currency)}
+                                                            </span>
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
 
                                       <div
@@ -2694,47 +2842,140 @@ export default function App() {
                                                       </tr>
                                                     )}
                                                     {subagentSummary.subagents.map((sub) => {
+                                                      const isBtw = sub.subagentName === '/btw';
                                                       const subShare =
                                                         chat.costUSD > 0 ? (sub.costUSD / chat.costUSD) * 100 : 0;
+                                                      const subRowKey = `${chatKey}::${sub.subagentId}`;
+                                                      const canExpandRuns = isBtw && Boolean(sub.runs && sub.runs.length > 0);
+                                                      const isSubExpanded = canExpandRuns && expandedBtwRows.has(subRowKey);
                                                       return (
-                                                        <tr key={sub.subagentId} className="hover:bg-violet-500/5">
-                                                          <td className="py-1.5 px-2 font-mono font-medium text-violet-200 whitespace-nowrap">
-                                                            <div className="inline-flex items-center gap-1.5">
-                                                              <span className="text-violet-500/80">↳</span>
-                                                              <Bot className="w-3 h-3 text-violet-400 shrink-0" />
-                                                              <span title={sub.subagentId}>{sub.subagentName}</span>
-                                                              {sub.models.length > 0 && (
-                                                                <span className="text-[10px] font-normal text-zinc-400">
-                                                                  ({sub.models.map((m) => m.modelLabel).join(', ')})
+                                                        <React.Fragment key={sub.subagentId}>
+                                                          <tr
+                                                            onClick={
+                                                              canExpandRuns
+                                                                ? () => toggleSetKey(setExpandedBtwRows, subRowKey)
+                                                                : undefined
+                                                            }
+                                                            className={`${
+                                                              isBtw ? 'hover:bg-sky-500/5' : 'hover:bg-violet-500/5'
+                                                            } ${canExpandRuns ? 'cursor-pointer' : ''}`}
+                                                          >
+                                                            <td
+                                                              className={`py-1.5 px-2 font-mono font-medium whitespace-nowrap ${
+                                                                isBtw ? 'text-sky-200' : 'text-violet-200'
+                                                              }`}
+                                                            >
+                                                              <div className="inline-flex items-center gap-1.5">
+                                                                {canExpandRuns ? (
+                                                                  <ChevronRight
+                                                                    className={`w-3 h-3 text-sky-400 shrink-0 transition-transform duration-150 ${
+                                                                      isSubExpanded ? 'rotate-90' : ''
+                                                                    }`}
+                                                                  />
+                                                                ) : (
+                                                                  <span className={isBtw ? 'text-sky-500/80' : 'text-violet-500/80'}>
+                                                                    ↳
+                                                                  </span>
+                                                                )}
+                                                                {isBtw ? (
+                                                                  <MessageSquare className="w-3 h-3 text-sky-400 shrink-0" />
+                                                                ) : (
+                                                                  <Bot className="w-3 h-3 text-violet-400 shrink-0" />
+                                                                )}
+                                                                <span title={sub.subagentId}>
+                                                                  {sub.subagentName}
+                                                                  {canExpandRuns && sub.runs!.length > 1
+                                                                    ? ` (${sub.runs!.length})`
+                                                                    : ''}
                                                                 </span>
-                                                              )}
-                                                            </div>
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
-                                                            {sub.turns}
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
-                                                            {formatTokens(sub.inputTokens)}
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
-                                                            {formatTokens(sub.cacheReadTokens)}
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
-                                                            {formatTokens(sub.outputTokens)}
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
-                                                            {formatTokens(sub.totalTokens)}
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
-                                                            {formatMoney(sub.cacheSavingsUSD, currency)}
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
-                                                            {formatMoney(sub.costUSD, currency)}
-                                                          </td>
-                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
-                                                            {subShare.toFixed(1)}%
-                                                          </td>
-                                                        </tr>
+                                                                {sub.models.length > 0 && (
+                                                                  <span className="text-[10px] font-normal text-zinc-400">
+                                                                    ({sub.models.map((m) => m.modelLabel).join(', ')})
+                                                                  </span>
+                                                                )}
+                                                              </div>
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                              {sub.turns}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                              {formatTokens(sub.inputTokens)}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                              {formatTokens(sub.cacheReadTokens)}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                              {formatTokens(sub.outputTokens)}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
+                                                              {formatTokens(sub.totalTokens)}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                              {formatMoney(sub.cacheSavingsUSD, currency)}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                              {formatMoney(sub.costUSD, currency)}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                              {subShare.toFixed(1)}%
+                                                            </td>
+                                                          </tr>
+                                                          {isSubExpanded &&
+                                                            sub.runs!.map((run) => {
+                                                              const runShare =
+                                                                chat.costUSD > 0 ? (run.costUSD / chat.costUSD) * 100 : 0;
+                                                              const runDt = formatPreciseDateTime(
+                                                                run.lastActiveAt || run.startedAt
+                                                              );
+                                                              return (
+                                                                <tr
+                                                                  key={`${sub.subagentId}-${run.runId}`}
+                                                                  className="bg-sky-950/15 hover:bg-sky-500/10"
+                                                                >
+                                                                  <td className="py-1.5 pl-8 pr-2 font-mono text-[11px] text-sky-100">
+                                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                                      <span className="text-sky-500/70 shrink-0">↳</span>
+                                                                      <span
+                                                                        className="truncate max-w-[260px] lg:max-w-[360px]"
+                                                                        title={run.title}
+                                                                      >
+                                                                        {run.title}
+                                                                      </span>
+                                                                      {runDt.date !== '—' && (
+                                                                        <span className="text-[10px] text-zinc-500 shrink-0">
+                                                                          ({runDt.date} {runDt.time})
+                                                                        </span>
+                                                                      )}
+                                                                    </div>
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                                    {run.turns}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                                    {formatTokens(run.inputTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                                    {formatTokens(run.cacheReadTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                                    {formatTokens(run.outputTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-200 text-[11px]">
+                                                                    {formatTokens(run.totalTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                                    {formatMoney(run.cacheSavingsUSD, currency)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                                    {formatMoney(run.costUSD, currency)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                                    {runShare.toFixed(1)}%
+                                                                  </td>
+                                                                </tr>
+                                                              );
+                                                            })}
+                                                        </React.Fragment>
                                                       );
                                                     })}
                                                   </tbody>

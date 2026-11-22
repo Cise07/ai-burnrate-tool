@@ -459,6 +459,74 @@ export async function syncOfficialPricing(): Promise<{
           ],
         },
         {
+          ourKey: 'gpt-6.2-astra',
+          litellmKeys: ['gpt-6.2-astra', 'openai/gpt-6.2-astra', 'openai.gpt-6.2-astra', 'gpt-6.2-astra-law'],
+        },
+        {
+          ourKey: 'gpt-6.2-sol',
+          litellmKeys: ['gpt-6.2-sol', 'openai/gpt-6.2-sol', 'openai.gpt-6.2-sol'],
+        },
+        {
+          ourKey: 'gpt-6.1-sol',
+          litellmKeys: ['gpt-6.1-sol', 'openai/gpt-6.1-sol', 'global.openai.gpt-6.1-sol'],
+        },
+        {
+          ourKey: 'gpt-6.1-terra',
+          litellmKeys: ['gpt-6.1-terra', 'openai/gpt-6.1-terra', 'global.openai.gpt-6.1-terra'],
+        },
+        {
+          ourKey: 'gpt-6-astra',
+          litellmKeys: ['gpt-6-astra', 'openai/gpt-6-astra', 'global.openai.gpt-6-astra', 'gpt-6-astra-law'],
+        },
+        {
+          ourKey: 'gpt-6-sol',
+          litellmKeys: ['gpt-6-sol', 'openai/gpt-6-sol', 'openai.gpt-6-sol'],
+        },
+        {
+          ourKey: 'gpt-6-luna',
+          litellmKeys: ['gpt-6-luna', 'openai/gpt-6-luna', 'openai.gpt-6-luna'],
+        },
+        {
+          ourKey: 'gpt-6-cyber',
+          litellmKeys: ['gpt-6-cyber', 'openai/gpt-6-cyber'],
+        },
+        {
+          ourKey: 'gpt-6-rosalind',
+          litellmKeys: ['gpt-6-rosalind', 'openai/gpt-6-rosalind'],
+        },
+        {
+          ourKey: 'gpt-5.6-sol',
+          litellmKeys: ['gpt-5.6-sol', 'openai/gpt-5.6-sol', 'gpt-5.6', 'global.openai.gpt-5.6-sol'],
+        },
+        {
+          ourKey: 'gpt-5.6-terra',
+          litellmKeys: ['gpt-5.6-terra', 'openai/gpt-5.6-terra', 'global.openai.gpt-5.6-terra'],
+        },
+        {
+          ourKey: 'gpt-5.6-luna',
+          litellmKeys: ['gpt-5.6-luna', 'openai/gpt-5.6-luna', 'global.openai.gpt-5.6-luna'],
+        },
+        {
+          ourKey: 'gpt-5.6-cyber',
+          litellmKeys: ['gpt-5.6-cyber', 'openai/gpt-5.6-cyber'],
+        },
+        {
+          ourKey: 'gpt-5.5-pro',
+          litellmKeys: ['gpt-5.5-pro', 'openai/gpt-5.5-pro'],
+        },
+        {
+          ourKey: 'gpt-5.5-cyber',
+          litellmKeys: ['gpt-5.5-cyber', 'openai/gpt-5.5-cyber', 'gpt-5.5-cyber-preview'],
+        },
+        {
+          ourKey: 'gpt-5.5',
+          litellmKeys: ['gpt-5.5', 'openai/gpt-5.5'],
+        },
+        {
+          ourKey: 'gpt-5.4-pro',
+          litellmKeys: ['gpt-5.4-pro', 'openai/gpt-5.4-pro'],
+        },
+        {
           ourKey: 'gpt-5.4',
           litellmKeys: ['gpt-5.4', 'openai/gpt-5.4'],
         },
@@ -472,7 +540,11 @@ export async function syncOfficialPricing(): Promise<{
         },
         {
           ourKey: 'gpt-5.3-codex',
-          litellmKeys: ['gpt-5.3-codex', 'openai/gpt-5.3-codex'],
+          litellmKeys: ['gpt-5.3-codex', 'openai/gpt-5.3-codex', 'gpt-5.3-chat-latest'],
+        },
+        {
+          ourKey: 'gpt-5.2-pro',
+          litellmKeys: ['gpt-5.2-pro', 'openai/gpt-5.2-pro'],
         },
         {
           ourKey: 'gpt-5.2-codex',
@@ -480,7 +552,11 @@ export async function syncOfficialPricing(): Promise<{
         },
         {
           ourKey: 'gpt-5.1-codex',
-          litellmKeys: ['gpt-5.1-codex', 'openai/gpt-5.1-codex', 'gpt-5.1-codex-max'],
+          litellmKeys: ['gpt-5.1-codex', 'openai/gpt-5.1-codex', 'gpt-5.1-codex-max', 'gpt-5.1'],
+        },
+        {
+          ourKey: 'gpt-5-pro',
+          litellmKeys: ['gpt-5-pro', 'openai/gpt-5-pro'],
         },
         {
           ourKey: 'gpt-5-codex',
@@ -495,12 +571,24 @@ export async function syncOfficialPricing(): Promise<{
           litellmKeys: ['gpt-5-mini', 'openai/gpt-5-mini', 'gpt-5.1-codex-mini'],
         },
         {
+          ourKey: 'gpt-5-nano',
+          litellmKeys: ['gpt-5-nano', 'openai/gpt-5-nano'],
+        },
+        {
           ourKey: 'gpt-4.1',
           litellmKeys: ['gpt-4.1', 'openai/gpt-4.1'],
         },
         {
+          ourKey: 'o3-pro',
+          litellmKeys: ['o3-pro', 'openai/o3-pro'],
+        },
+        {
           ourKey: 'o3',
           litellmKeys: ['o3', 'openai/o3'],
+        },
+        {
+          ourKey: 'o3-mini',
+          litellmKeys: ['o3-mini', 'openai/o3-mini'],
         },
         {
           ourKey: 'o4-mini',
@@ -601,7 +689,11 @@ function getDefaultModelForSource(source: ToolSource, pricing: PricingConfig): s
   const fromConfig = pricing.defaults?.[source];
   if (fromConfig && pricing.models[fromConfig]) return fromConfig;
   if (source === 'claude') return 'claude-sonnet-4';
-  if (source === 'codex') return pricing.models['gpt-5.3-codex'] ? 'gpt-5.3-codex' : 'gpt-5';
+  if (source === 'codex') {
+    if (pricing.models['gpt-6.2-sol']) return 'gpt-6.2-sol';
+    if (pricing.models['gpt-5.3-codex']) return 'gpt-5.3-codex';
+    return 'gpt-5';
+  }
   return 'gemini-4-argon';
 }
 
@@ -613,7 +705,10 @@ export function resolveModelKey(
   const defaultKey = getDefaultModelForSource(source, pricing);
   if (!rawModel) return defaultKey;
 
-  const cleaned = rawModel.trim().toLowerCase();
+  const cleaned = rawModel
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:(?:global|us|eu|in|us-gov)\.)?openai[/.]/, '');
   if (
     !cleaned ||
     cleaned === 'auto' ||
@@ -628,46 +723,95 @@ export function resolveModelKey(
     return cleaned;
   }
 
-  if ((cleaned.includes('gpt-5.4') || cleaned.includes('gpt-5-4')) && cleaned.includes('nano')) {
-    return pricing.models['gpt-5.4-nano'] ? 'gpt-5.4-nano' : defaultKey;
+  const pick = (key: string) => (pricing.models[key] ? key : defaultKey);
+
+  // OpenAI GPT-6.2 family (Astra, Sol, + future variants)
+  if (/gpt[-_\s]?6[.\-_]2/.test(cleaned)) {
+    if (cleaned.includes('astra')) return pick('gpt-6.2-astra');
+    if (cleaned.includes('cyber')) return pick('gpt-6-cyber');
+    if (cleaned.includes('terra')) return pick('gpt-6.1-terra');
+    if (cleaned.includes('luna')) return pick('gpt-6-luna');
+    return pick('gpt-6.2-sol');
   }
-  if ((cleaned.includes('gpt-5.4') || cleaned.includes('gpt-5-4')) && cleaned.includes('mini')) {
-    return pricing.models['gpt-5.4-mini'] ? 'gpt-5.4-mini' : defaultKey;
+  // OpenAI GPT-6.1 family (Sol, Terra, + future variants)
+  if (/gpt[-_\s]?6[.\-_]1/.test(cleaned)) {
+    if (cleaned.includes('terra')) return pick('gpt-6.1-terra');
+    if (cleaned.includes('astra')) return pick('gpt-6.2-astra');
+    if (cleaned.includes('cyber')) return pick('gpt-6-cyber');
+    if (cleaned.includes('luna')) return pick('gpt-6-luna');
+    return pick('gpt-6.1-sol');
   }
-  if (cleaned.includes('gpt-5.4') || cleaned.includes('gpt-5-4')) {
-    return pricing.models['gpt-5.4'] ? 'gpt-5.4' : defaultKey;
+  // OpenAI GPT-6 family (Astra, Sol, Luna, Cyber, Rosalind, + generic GPT-6.x)
+  if (/gpt[-_\s]?6(?:$|[^0-9])/.test(cleaned)) {
+    if (cleaned.includes('cyber')) return pick('gpt-6-cyber');
+    if (cleaned.includes('rosalind')) return pick('gpt-6-rosalind');
+    if (cleaned.includes('astra')) return pick('gpt-6-astra');
+    if (cleaned.includes('terra')) return pick('gpt-6.1-terra');
+    if (cleaned.includes('luna')) return pick('gpt-6-luna');
+    return pick('gpt-6-sol');
   }
-  if (cleaned.includes('codex') && cleaned.includes('mini')) {
-    return pricing.models['gpt-5-mini'] ? 'gpt-5-mini' : defaultKey;
+  // OpenAI GPT-5.6 family (Sol, Terra, Luna, Cyber, + Daybreak Blue 5.6)
+  if (/gpt[-_\s]?(?:daybreak[-_\s]?blue[-_\s]?)?5[.\-_]6/.test(cleaned)) {
+    if (cleaned.includes('cyber')) return pick('gpt-5.6-cyber');
+    if (cleaned.includes('luna')) return pick('gpt-5.6-luna');
+    if (cleaned.includes('terra')) return pick('gpt-5.6-terra');
+    return pick('gpt-5.6-sol');
   }
-  if (cleaned.includes('5.3') && cleaned.includes('codex')) {
-    return pricing.models['gpt-5.3-codex'] ? 'gpt-5.3-codex' : defaultKey;
+  // OpenAI GPT-5.5 family (Pro, Cyber, Standard)
+  if (/gpt[-_\s]?5[.\-_]5/.test(cleaned)) {
+    if (cleaned.includes('cyber')) return pick('gpt-5.5-cyber');
+    if (cleaned.includes('pro')) return pick('gpt-5.5-pro');
+    return pick('gpt-5.5');
   }
-  if (cleaned.includes('5.2') || (cleaned.includes('5.2') && cleaned.includes('codex'))) {
-    if (cleaned.includes('gpt-5.2') || cleaned.includes('gpt-5-2')) {
-      return pricing.models['gpt-5.2-codex'] ? 'gpt-5.2-codex' : defaultKey;
-    }
+  // OpenAI GPT-5.4 family (Pro, Nano, Mini, Standard)
+  if (/gpt[-_\s]?5[.\-_]4/.test(cleaned)) {
+    if (cleaned.includes('pro')) return pick('gpt-5.4-pro');
+    if (cleaned.includes('nano')) return pick('gpt-5.4-nano');
+    if (cleaned.includes('mini')) return pick('gpt-5.4-mini');
+    return pick('gpt-5.4');
   }
-  if (cleaned.includes('5.1') && cleaned.includes('codex')) {
-    return pricing.models['gpt-5.1-codex'] ? 'gpt-5.1-codex' : defaultKey;
+  // OpenAI GPT-5.3 family (Codex, Spark, Chat)
+  if (/gpt[-_\s]?5[.\-_]3/.test(cleaned) || (cleaned.includes('5.3') && cleaned.includes('codex'))) {
+    return pick('gpt-5.3-codex');
   }
+  // OpenAI GPT-5.2 family (Pro, Codex, Standard)
+  if (/gpt[-_\s]?5[.\-_]2/.test(cleaned) || (cleaned.includes('5.2') && cleaned.includes('codex'))) {
+    if (cleaned.includes('pro')) return pick('gpt-5.2-pro');
+    return pick('gpt-5.2-codex');
+  }
+  // OpenAI GPT-5.1 family (Codex Mini, Codex Max, Codex, Standard)
+  if (/gpt[-_\s]?5[.\-_]1/.test(cleaned) || (cleaned.includes('5.1') && cleaned.includes('codex'))) {
+    if (cleaned.includes('mini')) return pick('gpt-5-mini');
+    if (cleaned.includes('nano')) return pick('gpt-5-nano');
+    return pick('gpt-5.1-codex');
+  }
+  // OpenAI GPT-5 family (Pro, Nano, Mini, Codex, Standard)
+  if (/gpt[-_\s]?5(?:$|[^0-9])/.test(cleaned)) {
+    if (cleaned.includes('pro')) return pick('gpt-5-pro');
+    if (cleaned.includes('nano')) return pick('gpt-5-nano');
+    if (cleaned.includes('mini')) return pick('gpt-5-mini');
+    if (cleaned.includes('codex')) return pick('gpt-5-codex');
+    return pick('gpt-5');
+  }
+  // Bare codex aliases (codex-mini-latest, codex)
   if (cleaned.includes('codex')) {
-    return pricing.models['gpt-5-codex'] ? 'gpt-5-codex' : defaultKey;
+    if (cleaned.includes('mini')) return pick('gpt-5-mini');
+    return pick('gpt-5-codex');
   }
-  if (cleaned.includes('gpt-5-mini') || cleaned.includes('gpt-5.1-mini') || cleaned.includes('gpt-5-nano')) {
-    return pricing.models['gpt-5-mini'] ? 'gpt-5-mini' : defaultKey;
-  }
-  if (cleaned.includes('gpt-5')) {
-    return pricing.models['gpt-5'] ? 'gpt-5' : defaultKey;
-  }
-  if (cleaned.includes('gpt-4.1') || cleaned.includes('gpt-4-1') || cleaned.includes('gpt-4o')) {
-    return pricing.models['gpt-4.1'] ? 'gpt-4.1' : defaultKey;
+  if (/gpt[-_\s]?4[.\-_]1/.test(cleaned) || cleaned.includes('gpt-4o')) {
+    return pick('gpt-4.1');
   }
   if (/(?:^|[^a-z0-9])o4[-_.\s]?mini/.test(cleaned)) {
-    return pricing.models['o4-mini'] ? 'o4-mini' : defaultKey;
+    return pick('o4-mini');
+  }
+  if (/(?:^|[^a-z0-9])o3[-_.\s]?pro/.test(cleaned)) {
+    return pick('o3-pro');
+  }
+  if (/(?:^|[^a-z0-9])o3[-_.\s]?mini/.test(cleaned)) {
+    return pick('o3-mini');
   }
   if (/(?:^|[^a-z0-9])o3(?:$|[^0-9])/.test(cleaned)) {
-    return pricing.models['o3'] ? 'o3' : defaultKey;
+    return pick('o3');
   }
 
   if (cleaned.includes('opus')) {
@@ -862,6 +1006,7 @@ export function calculateTurnCost(
 }
 
 const EFFORT_LABELS: Record<string, string> = {
+  max: 'Max',
   xhigh: 'XHigh',
   high: 'High',
   medium: 'Medium',
@@ -870,14 +1015,19 @@ const EFFORT_LABELS: Record<string, string> = {
 };
 
 function formatDisplayModel(raw: string, fallbackLabel: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length > 34) return fallbackLabel;
+  const trimmed = raw
+    .trim()
+    .replace(/^(?:(?:global|us|eu|in|us-gov)\.)?openai[/.]/i, '');
+  if (trimmed.length > 42) return fallbackLabel;
   if (trimmed.startsWith('Gemini ') || trimmed.startsWith('Orchestrator (')) return trimmed;
 
-  const effortMatch = trimmed.match(/(?:[-_\s]+|\()(xhigh|high|medium|low|minimal)\)?$/i);
+  // Avoid misinterpreting 'gpt-5.1-codex-max' model name as an effort suffix
+  if (/codex[-_\s]?max$/i.test(trimmed)) return fallbackLabel;
+
+  const effortMatch = trimmed.match(/(?:[-_\s]+|\()(max|xhigh|high|medium|low|minimal)\)?$/i);
   if (effortMatch) {
     const effort = EFFORT_LABELS[effortMatch[1].toLowerCase()];
-    if (effort && !/\((?:xhigh|high|medium|low|minimal)\)$/i.test(fallbackLabel)) {
+    if (effort && !/\((?:max|xhigh|high|medium|low|minimal)\)$/i.test(fallbackLabel)) {
       return `${fallbackLabel} (${effort})`;
     }
   }
