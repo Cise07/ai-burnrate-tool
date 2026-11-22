@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Bot,
   Check,
   ChevronDown,
   ChevronRight,
@@ -11,19 +12,18 @@ import {
   Database,
   DollarSign,
   Download,
-  Eye,
-  EyeOff,
   FolderGit2,
   Layers,
+  LayoutGrid,
   MessageSquare,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Terminal,
   Trash2,
   TrendingUp,
   X,
-  Zap,
 } from 'lucide-react';
 import {
   Area,
@@ -40,9 +40,19 @@ import {
 import {
   EUR_RATE,
   buildWorkspaceGroups,
+  computeDailyHeatmap,
+  computeMonthlyProjection,
+  computeTopWorkspaces,
+  convertMoney,
+  convertSubscriptionMoney,
   filterSessions,
+  filterSessionsInWindow,
   formatMoney,
+  formatSubscriptionMoney,
+  getPreviousWindowBounds,
   getSessionModelBreakdown,
+  getSessionSubagentBreakdown,
+  getTaxLabel,
   normalizeWorkspaceKey,
   sortWorkspaceGroups,
   workspacesToCsv,
@@ -53,7 +63,34 @@ import {
   type ToolFilter,
   type WorkspaceSortField,
 } from '../core/analytics';
-import type { BurnrateSnapshot, ModelRate, SessionStats, ToolSource } from '../core/types';
+import type {
+  BurnrateSnapshot,
+  DashboardSectionId,
+  ModelRate,
+  SessionStats,
+  ToolSource,
+  UserSettings,
+} from '../core/types';
+import { DeletedChatsModal } from './components/DeletedChatsModal';
+import { HeatmapAndWorkspaces } from './components/HeatmapAndWorkspaces';
+import { SettingsModal } from './components/SettingsModal';
+
+const DEFAULT_SECTION_ORDER: DashboardSectionId[] = [
+  'kpis',
+  'charts',
+  'modelUsage',
+  'heatmapWorkspaces',
+  'sessions',
+];
+
+const FALLBACK_SETTINGS: UserSettings = {
+  subscriptions: { antigravity: 19.99, claude: 20, codex: 0 },
+  includeDeletedInTotals: true,
+  layout: {
+    order: DEFAULT_SECTION_ORDER,
+    hidden: [],
+  },
+};
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -62,13 +99,53 @@ function formatTokens(n: number): string {
 }
 
 function formatRateMoney(usdAmount: number, currency: Currency): string {
-  const val = currency === 'EUR' ? usdAmount * EUR_RATE : usdAmount;
+  const val = convertMoney(usdAmount, currency);
   const sym = currency === 'EUR' ? '€' : '$';
   if (val === 0) return `${sym}0.00`;
   if (val < 1) {
     return `${sym}${val.toFixed(4).replace(/(\.\d{2}\d*?)0+$/, '$1')}`;
   }
   return `${sym}${val.toFixed(2)}`;
+}
+
+function DeltaPill({
+  deltaPct,
+  label,
+  higherIsBetter = false,
+}: {
+  deltaPct: number | null;
+  label?: string;
+  higherIsBetter?: boolean;
+}) {
+  if (deltaPct === null || !Number.isFinite(deltaPct)) return null;
+  const rounded = Math.round(deltaPct * 10) / 10;
+  if (Math.abs(rounded) < 0.1) {
+    return (
+      <span
+        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-800/80 text-zinc-400 border border-zinc-700/60"
+        title={label ? `Flat vs ${label}` : undefined}
+      >
+        0% {label ? `vs ${label}` : ''}
+      </span>
+    );
+  }
+  const isUp = rounded > 0;
+  const isPositiveTone = higherIsBetter ? isUp : !isUp;
+  const toneClass = isPositiveTone
+    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
+    : 'bg-amber-500/10 text-amber-300 border-amber-500/25';
+  const sign = isUp ? '+' : '';
+  const displayPct = Math.abs(rounded) >= 999 ? `${sign}999%+` : `${sign}${rounded.toFixed(1)}%`;
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border whitespace-nowrap ${toneClass}`}
+      title={label ? `Change vs ${label}` : undefined}
+    >
+      <span>{displayPct}</span>
+      {label ? <span className="opacity-75">vs {label}</span> : null}
+    </span>
+  );
 }
 
 function findModelRate(
@@ -95,12 +172,22 @@ function ToolBadge({ source, compact = false }: { source: ToolSource; compact?: 
       </span>
     );
   }
+  if (source === 'claude') {
+      return (
+      <span
+        className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25 whitespace-nowrap`}
+      >
+        <Sparkles className="w-3 h-3 shrink-0" />
+        Claude Code
+      </span>
+    );
+  }
     return (
     <span
-      className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25 whitespace-nowrap`}
+      className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/25 whitespace-nowrap`}
     >
-      <Sparkles className="w-3 h-3 shrink-0" />
-      Claude Code
+      <Terminal className="w-3 h-3 shrink-0" />
+      Codex CLI
     </span>
   );
 }
@@ -287,7 +374,9 @@ function parseCurrency(raw?: string | null): Currency | undefined {
 
 function parseToolFilter(raw?: string | null): ToolFilter | undefined {
   const lower = raw?.toLowerCase();
-  return lower === 'all' || lower === 'antigravity' || lower === 'claude' ? lower : undefined;
+  return lower === 'all' || lower === 'antigravity' || lower === 'claude' || lower === 'codex'
+    ? lower
+    : undefined;
 }
 
 function parseTimeRange(raw?: string | null): TimeRange | undefined {
@@ -352,9 +441,10 @@ export default function App() {
     return localStorage.getItem('burnrate_models_expanded') === 'true';
   });
   const [isDeletedModalOpen, setIsDeletedModalOpen] = useState<boolean>(false);
-  const [isDeletedModalRendered, setIsDeletedModalRendered] = useState<boolean>(false);
-  const [isDeletedModalVisible, setIsDeletedModalVisible] = useState<boolean>(false);
-  const [deletedSearchQuery, setDeletedSearchQuery] = useState<string>('');
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [dismissingLegacyKeys, setDismissingLegacyKeys] = useState<Set<string>>(new Set());
+  const [isClearingLegacyBulk, setIsClearingLegacyBulk] = useState<boolean>(false);
+  const [isRestoringLegacy, setIsRestoringLegacy] = useState<boolean>(false);
   const [hideLegacyDeleted, setHideLegacyDeleted] = useState<boolean>(() => {
     try {
       return localStorage.getItem('burnrate_hide_legacy_deleted') === 'true';
@@ -374,35 +464,6 @@ export default function App() {
       return next;
     });
   };
-
-  useEffect(() => {
-    if (isDeletedModalOpen) {
-      setIsDeletedModalRendered(true);
-      let raf2 = 0;
-      const raf1 = requestAnimationFrame(() => {
-        raf2 = requestAnimationFrame(() => setIsDeletedModalVisible(true));
-      });
-      return () => {
-        cancelAnimationFrame(raf1);
-        if (raf2) cancelAnimationFrame(raf2);
-      };
-    }
-    setIsDeletedModalVisible(false);
-    const timer = setTimeout(() => {
-      setIsDeletedModalRendered(false);
-      setDeletedSearchQuery('');
-    }, 220);
-    return () => clearTimeout(timer);
-  }, [isDeletedModalOpen]);
-
-  useEffect(() => {
-    if (!isDeletedModalOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsDeletedModalOpen(false);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isDeletedModalOpen]);
 
   const handleSortField = (field: WorkspaceSortField) => {
     if (sortBy === field) {
@@ -459,14 +520,30 @@ export default function App() {
     localStorage.setItem('burnrate_time_range', next);
     clearUrlOverrideParam('range');
   };
+  const userSettings: UserSettings = snapshot?.settings || FALLBACK_SETTINGS;
   const currencySymbol = currency === 'EUR' ? '€' : '$';
   const rateMultiplier = currency === 'EUR' ? EUR_RATE : 1;
+  const taxLabel = getTaxLabel(currency);
+
+  const sectionOrder = userSettings.layout?.order?.length
+    ? userSettings.layout.order
+    : DEFAULT_SECTION_ORDER;
+  const hiddenSections = useMemo(
+    () => new Set<DashboardSectionId>(userSettings.layout?.hidden || []),
+    [userSettings.layout?.hidden]
+  );
+  const getSectionOrderIndex = (id: DashboardSectionId): number => {
+    const idx = sectionOrder.indexOf(id);
+    return idx >= 0 ? idx : DEFAULT_SECTION_ORDER.indexOf(id);
+  };
+  const visibleSectionCount = DEFAULT_SECTION_ORDER.filter((id) => !hiddenSections.has(id)).length;
 
   const toolGroupRef = useRef<HTMLDivElement | null>(null);
   const toolBtnRefs = useRef<Record<ToolFilter, HTMLButtonElement | null>>({
     all: null,
     antigravity: null,
     claude: null,
+    codex: null,
   });
   const [toolPill, setToolPill] = useState<{ left: number; width: number; ready: boolean }>({
     left: 0,
@@ -577,11 +654,51 @@ export default function App() {
     }
   };
 
+  const saveSettings = async (next: UserSettings) => {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { snapshot?: BurnrateSnapshot };
+      if (data.snapshot) {
+        setSnapshot(data.snapshot);
+        setLastSyncTime(new Date().toLocaleTimeString());
+      }
+    }
+  };
+
+  const toggleIncludeDeletedInTotals = () => {
+    void saveSettings({
+      ...userSettings,
+      includeDeletedInTotals: !userSettings.includeDeletedInTotals,
+    });
+  };
+
+  const restoreDismissedLegacy = async () => {
+    setIsRestoringLegacy(true);
+    try {
+      const res = await fetch('/api/deleted-legacy/restore', { method: 'POST' });
+      if (res.ok) {
+        const data = (await res.json()) as { snapshot?: BurnrateSnapshot };
+        if (data.snapshot) {
+          setSnapshot(data.snapshot);
+          setLastSyncTime(new Date().toLocaleTimeString());
+        }
+      }
+    } catch {
+      // ignore network failure
+    } finally {
+      setIsRestoringLegacy(false);
+    }
+  };
+
   // Global KPIs & charts scoped to topbar toolFilter and timeRange
-  // Includes both active and deleted sessions so API spend never drops when chats are deleted.
   const analytics = useMemo(() => {
     if (!snapshot) return null;
 
+    const includeDeleted = userSettings.includeDeletedInTotals;
     const activeFilteredSessions: SessionStats[] = filterSessions(snapshot.sessions, {
       toolFilter,
       timeRange,
@@ -596,7 +713,9 @@ export default function App() {
     });
     const trackedDeletedSessions = deletedFilteredSessions.filter((s) => !s.untrackedHistory);
     const legacyDeletedCount = deletedFilteredSessions.length - trackedDeletedSessions.length;
-    const allFilteredSessions: SessionStats[] = [...activeFilteredSessions, ...trackedDeletedSessions];
+    const allFilteredSessions: SessionStats[] = includeDeleted
+      ? [...activeFilteredSessions, ...trackedDeletedSessions]
+      : [...activeFilteredSessions];
 
     let totalCostUSD = 0;
     let totalCacheSavingsUSD = 0;
@@ -610,13 +729,26 @@ export default function App() {
     let deletedCostUSD = 0;
     let deletedTokens = 0;
     let deletedCacheSavingsUSD = 0;
+    for (const d of trackedDeletedSessions) {
+      deletedCostUSD += d.costUSD;
+      deletedTokens += d.totalTokens;
+      deletedCacheSavingsUSD += d.cacheSavingsUSD;
+    }
 
     let antigravityCost = 0;
     let claudeCost = 0;
+    let codexCost = 0;
 
     const dailyMap = new Map<
       string,
-      { date: string; antigravityUSD: number; claudeUSD: number; totalUSD: number; tokens: number }
+      {
+        date: string;
+        antigravityUSD: number;
+        claudeUSD: number;
+        codexUSD: number;
+        totalUSD: number;
+        tokens: number;
+      }
     >();
     const modelMap = new Map<
       string,
@@ -653,17 +785,9 @@ export default function App() {
       totalTokens += session.totalTokens;
       totalTurns += session.turns;
 
-      if (session.deleted) {
-        deletedCostUSD += session.costUSD;
-        deletedTokens += session.totalTokens;
-        deletedCacheSavingsUSD += session.cacheSavingsUSD;
-      }
-
-      if (session.source === 'antigravity') {
-        antigravityCost += session.costUSD;
-      } else {
-        claudeCost += session.costUSD;
-      }
+      if (session.source === 'antigravity') antigravityCost += session.costUSD;
+      else if (session.source === 'claude') claudeCost += session.costUSD;
+      else codexCost += session.costUSD;
 
       for (const t of session.turnHistory) {
         const dayKey = (t.timestamp || session.lastActiveAt).slice(0, 10);
@@ -671,14 +795,13 @@ export default function App() {
           date: dayKey,
           antigravityUSD: 0,
           claudeUSD: 0,
+          codexUSD: 0,
           totalUSD: 0,
           tokens: 0,
         };
-        if (session.source === 'antigravity') {
-          dayEntry.antigravityUSD += t.costUSD;
-        } else {
-          dayEntry.claudeUSD += t.costUSD;
-        }
+        if (session.source === 'antigravity') dayEntry.antigravityUSD += t.costUSD;
+        else if (session.source === 'claude') dayEntry.claudeUSD += t.costUSD;
+        else dayEntry.codexUSD += t.costUSD;
         dayEntry.totalUSD += t.costUSD;
         dayEntry.tokens += t.totalTokens;
         dailyMap.set(dayKey, dayEntry);
@@ -722,6 +845,7 @@ export default function App() {
         ...d,
         antigravityUSD: Number(d.antigravityUSD.toFixed(3)),
         claudeUSD: Number(d.claudeUSD.toFixed(3)),
+        codexUSD: Number(d.codexUSD.toFixed(3)),
         totalUSD: Number(d.totalUSD.toFixed(3)),
       }));
 
@@ -739,12 +863,54 @@ export default function App() {
     const promptPool = totalInputTokens + totalCacheReadTokens;
     const cacheHitRate = promptPool > 0 ? (totalCacheReadTokens / promptPool) * 100 : 0;
 
+    // Period-over-period comparison (24h, 7d, 30d vs previous window)
+    const nowMs = Date.now();
+    const prevBounds = getPreviousWindowBounds(timeRange, nowMs);
+    let deltas: {
+      label: string;
+      costPct: number | null;
+      tokensPct: number | null;
+      savingsPct: number | null;
+      turnsPct: number | null;
+    } | null = null;
+
+    const fullTrackedPool: SessionStats[] = includeDeleted
+      ? [...snapshot.sessions, ...(snapshot.deletedSessions || []).filter((s) => !s.untrackedHistory)]
+      : [...snapshot.sessions];
+
+    if (prevBounds) {
+      const prevSessions = filterSessionsInWindow(fullTrackedPool, {
+        toolFilter,
+        startMs: prevBounds.startMs,
+        endMs: prevBounds.endMs,
+      });
+      const prevCost = prevSessions.reduce((a, s) => a + s.costUSD, 0);
+      const prevTokens = prevSessions.reduce((a, s) => a + s.totalTokens, 0);
+      const prevSavings = prevSessions.reduce((a, s) => a + s.cacheSavingsUSD, 0);
+      const prevTurns = prevSessions.reduce((a, s) => a + s.turns, 0);
+      const pct = (cur: number, prev: number): number | null => {
+        if (prev <= 0) return null;
+        return ((cur - prev) / prev) * 100;
+      };
+      deltas = {
+        label: prevBounds.label,
+        costPct: pct(totalCostUSD, prevCost),
+        tokensPct: pct(totalTokens, prevTokens),
+        savingsPct: pct(totalCacheSavingsUSD, prevSavings),
+        turnsPct: pct(totalTurns, prevTurns),
+      };
+    }
+
+    const toolScopedAllTime = filterSessions(fullTrackedPool, { toolFilter, timeRange: 'all' });
+    const projection = computeMonthlyProjection(toolScopedAllTime, nowMs);
+    const heatmapDays = computeDailyHeatmap(toolScopedAllTime, 13, nowMs);
+    const topWorkspaces = computeTopWorkspaces(allFilteredSessions, 7);
+
+    const subs = userSettings.subscriptions;
     const referenceSubUSD =
       toolFilter === 'all'
-        ? snapshot.pricing.subscriptions.combinedMonthlyUSD
-        : toolFilter === 'antigravity'
-          ? snapshot.pricing.subscriptions.antigravity_pro.monthlyUSD
-          : snapshot.pricing.subscriptions.claude_max.monthlyUSD;
+        ? subs.antigravity + subs.claude + subs.codex
+        : subs[toolFilter];
 
     return {
       totalCostUSD,
@@ -757,8 +923,13 @@ export default function App() {
       totalTurns,
       antigravityCost,
       claudeCost,
+      codexCost,
       cacheHitRate,
       referenceSubUSD,
+      deltas,
+      projection,
+      heatmapDays,
+      topWorkspaces,
       workspacesCount: workspaceSet.size,
       timelineData,
       modelData,
@@ -766,6 +937,7 @@ export default function App() {
       filteredSessions: activeFilteredSessions,
       totalSessionsCount: activeFilteredSessions.length,
       deletedSessions: deletedFilteredSessions,
+      trackedDeletedSessions,
       deletedSessionsCount: deletedFilteredSessions.length,
       trackedDeletedCount: trackedDeletedSessions.length,
       legacyDeletedCount,
@@ -774,7 +946,7 @@ export default function App() {
       deletedCacheSavingsUSD,
       totalAllSessionsCount: allFilteredSessions.length,
     };
-  }, [snapshot, toolFilter, timeRange]);
+  }, [snapshot, toolFilter, timeRange, userSettings]);
 
   const activeModelFilter =
     analytics && analytics.availableModels.includes(tableModelFilter) ? tableModelFilter : 'all';
@@ -792,62 +964,90 @@ export default function App() {
     };
   }, [analytics, searchQuery, activeModelFilter, sortBy, sortDir]);
 
-  const visibleDeletedSessions = useMemo(() => {
-    if (!analytics) return [];
-    const base = hideLegacyDeleted
-      ? analytics.deletedSessions.filter((chat) => !chat.untrackedHistory)
-      : analytics.deletedSessions;
-    const q = deletedSearchQuery.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter(
-      (chat) =>
-        (chat.sessionTitle || '').toLowerCase().includes(q) ||
-        chat.workspaceName.toLowerCase().includes(q) ||
-        chat.workspace.toLowerCase().includes(q) ||
-        chat.sessionId.toLowerCase().includes(q) ||
-        chat.source.toLowerCase().includes(q) ||
-        chat.primaryModelLabel.toLowerCase().includes(q) ||
-        chat.turnHistory.some(
-          (t) =>
-            t.modelLabel.toLowerCase().includes(q) ||
-            t.normalizedModel.toLowerCase().includes(q) ||
-            t.model.toLowerCase().includes(q)
-        )
-    );
-  }, [analytics, deletedSearchQuery, hideLegacyDeleted]);
+  const dismissLegacyChats = async (chats: SessionStats[], isBulk = false) => {
+    const legacyOnly = chats.filter((chat) => Boolean(chat.untrackedHistory));
+    if (legacyOnly.length === 0) return;
+
+    const keys = legacyOnly.map((chat) => `${chat.source}:${chat.sessionId}`);
+    if (isBulk) {
+      setIsClearingLegacyBulk(true);
+    }
+    setDismissingLegacyKeys((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) next.add(k);
+      return next;
+    });
+
+    try {
+      const res = await fetch('/api/deleted-legacy/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: legacyOnly.map((chat) => ({
+            source: chat.source,
+            sessionId: chat.sessionId,
+          })),
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { snapshot?: BurnrateSnapshot };
+        if (data.snapshot) {
+          setSnapshot(data.snapshot);
+          setLastSyncTime(new Date().toLocaleTimeString());
+        }
+      }
+    } catch {
+      // ignore network failure
+    } finally {
+      if (isBulk) setIsClearingLegacyBulk(false);
+      setDismissingLegacyKeys((prev) => {
+        const next = new Set(prev);
+        for (const k of keys) next.delete(k);
+        return next;
+      });
+    }
+  };
 
   if (!snapshot || !analytics) {
       return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-          <p className="text-sm text-zinc-400 font-mono">Scanning ~/.gemini & ~/.claude logs...</p>
+          <p className="text-sm text-zinc-400 font-mono">Scanning ~/.gemini, ~/.claude &amp; ~/.codex logs...</p>
         </div>
       </div>
     );
   }
 
+  const displayedSpend = convertMoney(analytics.totalCostUSD, currency);
+  const displayedSub = convertSubscriptionMoney(analytics.referenceSubUSD, currency);
   const subPercentage =
-    analytics.referenceSubUSD > 0 ? Math.min(100, (analytics.totalCostUSD / analytics.referenceSubUSD) * 100) : 0;
+    displayedSub > 0 ? Math.min(100, (displayedSpend / displayedSub) * 100) : 0;
   const subMultiplier =
-    analytics.referenceSubUSD > 0 ? (analytics.totalCostUSD / analytics.referenceSubUSD).toFixed(1) : '0.0';
+    displayedSub > 0 ? (displayedSpend / displayedSub).toFixed(1) : '0.0';
 
   const hasTableFilters = activeModelFilter !== 'all' || searchQuery.trim().length > 0;
 
   const exportReport = (format: 'csv' | 'json') => {
     const dateStamp = new Date().toISOString().slice(0, 10);
     const filename = `burnrate-${toolFilter}-${timeRange}-${dateStamp}.${format}`;
+    const exportDeleted = userSettings.includeDeletedInTotals ? analytics.trackedDeletedSessions : [];
     const content =
       format === 'csv'
-        ? workspacesToCsv(tableData.workspaces, currency)
-        : workspacesToJson(tableData.workspaces, currency, {
-            toolFilter,
-            timeRange,
-            modelFilter: activeModelFilter,
-            searchQuery,
-            sortBy,
-            sortDir,
-          });
+        ? workspacesToCsv(tableData.workspaces, currency, exportDeleted)
+        : workspacesToJson(
+            tableData.workspaces,
+            currency,
+            {
+              toolFilter,
+              timeRange,
+              modelFilter: activeModelFilter,
+              searchQuery,
+              sortBy,
+              sortDir,
+            },
+            exportDeleted
+          );
     const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -891,7 +1091,7 @@ export default function App() {
               {promoActive && (
                 <span
                   className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
-                  title={m.rate?.promoNote || 'Tariffa promozionale attiva'}
+                  title={m.rate?.promoNote || 'Active promotional rate'}
                 >
                   <Sparkles className="w-2.5 h-2.5 text-amber-400" />
                   PROMO
@@ -901,10 +1101,16 @@ export default function App() {
                 className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
                   m.source === 'antigravity'
                     ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
-                    : 'bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20'
+                    : m.source === 'claude'
+                      ? 'bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20'
+                      : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
                 }`}
               >
-                {m.source === 'antigravity' ? 'AGY' : 'Claude'}
+                {m.source === 'antigravity'
+                  ? 'AGY'
+                  : m.source === 'claude'
+                    ? 'Claude'
+                    : 'Codex'}
               </span>
             </div>
           </div>
@@ -955,11 +1161,11 @@ export default function App() {
         {m.rate && (
           <div className="pt-2.5 border-t border-zinc-800/70 flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-zinc-400">Tariffa per 1M tok:</span>
+              <span className="text-zinc-400">Rate per 1M tok:</span>
               {promoActive && (
                 <span className="text-[10px] font-semibold text-amber-400 flex items-center gap-1">
                   <Sparkles className="w-2.5 h-2.5 text-amber-400" />
-                  In Promozione
+                  Promo Active
                 </span>
               )}
             </div>
@@ -1085,12 +1291,14 @@ export default function App() {
         <div className="max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] mx-auto px-3 sm:px-6 py-2.5 md:py-0 md:h-16 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 md:overflow-x-auto md:whitespace-nowrap">
           {/* Brand & Live Status */}
           <div className="flex items-center gap-2.5 shrink-0 group">
-            <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shadow-inner shrink-0 transition-all duration-200 group-hover:border-emerald-500/40 group-hover:shadow-[0_0_16px_-4px_rgba(16,185,129,0.45)]">
-              <Zap className="w-4 h-4 text-emerald-400 transition-transform duration-200 group-hover:scale-110" />
-            </div>
+            <img
+              src="/logo.svg"
+              alt="ai-burnrate-tool"
+              className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg border border-zinc-800/90 shadow-inner shrink-0 transition-all duration-200 group-hover:border-emerald-500/45 group-hover:shadow-[0_0_16px_-4px_rgba(16,185,129,0.45)] group-hover:scale-105"
+            />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold tracking-tight text-zinc-100 text-sm sm:text-base transition-colors duration-200 group-hover:text-white">ai-burnrate</span>
+                <span className="font-bold tracking-tight text-zinc-100 text-sm sm:text-base transition-colors duration-200 group-hover:text-white">ai-burnrate-tool</span>
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 transition-colors duration-200">
                   <span className="relative flex h-2 w-2">
                     <span
@@ -1107,18 +1315,21 @@ export default function App() {
                   {sseConnected ? 'LIVE' : 'SYNC'}
                 </span>
               </div>
-              <p className="text-[11px] text-zinc-500 font-mono hidden xl:block transition-colors duration-200">
-                Watching ~/.gemini & ~/.claude {lastSyncTime && `• Synced ${lastSyncTime}`}
+              <p
+                className="text-[11px] text-zinc-500 font-mono hidden xl:block max-w-[260px] 2xl:max-w-[380px] truncate transition-colors duration-200"
+                title={`Watching ${snapshot.watchedPaths.join(' & ')}`}
+              >
+                Watching {snapshot.watchedPaths.join(' & ')} {lastSyncTime && `• Synced ${lastSyncTime}`}
               </p>
             </div>
           </div>
 
-          {/* Controls: Tool Filter, Time Selector, Currency, Rescan */}
+          {/* Controls: Tool Filter, Time Selector, Currency, Settings, Rescan */}
           <div className="flex flex-wrap md:flex-nowrap items-center justify-between sm:justify-start gap-1.5 sm:gap-2.5 w-full md:w-auto md:shrink-0">
             {/* Tool Filter (with smooth sliding indicator) */}
             <div
               ref={toolGroupRef}
-              className="relative inline-flex items-center gap-0.5 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs shrink-0 select-none"
+              className="relative inline-flex items-center gap-0.5 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs shrink-0 select-none overflow-x-auto max-w-full"
             >
               {toolPill.ready && (
                 <span
@@ -1128,7 +1339,9 @@ export default function App() {
                       ? 'bg-cyan-500/20 border-cyan-500/30'
                       : toolFilter === 'claude'
                         ? 'bg-fuchsia-500/20 border-fuchsia-500/30'
-                        : 'bg-zinc-800 border-zinc-700/70 shadow-sm'
+                        : toolFilter === 'codex'
+                          ? 'bg-amber-500/20 border-amber-500/30'
+                          : 'bg-zinc-800 border-zinc-700/70 shadow-sm'
                   }`}
                   style={{
                     width: `${toolPill.width}px`,
@@ -1173,6 +1386,19 @@ export default function App() {
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-fuchsia-400 shrink-0" />
                 <span>Claude</span>
+              </button>
+              <button
+                ref={(el) => {
+                  toolBtnRefs.current.codex = el;
+                }}
+                type="button"
+                onClick={() => selectToolFilter('codex')}
+                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-500/50 flex items-center gap-1.5 ${
+                  toolFilter === 'codex' ? 'text-amber-300' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                <span>Codex</span>
               </button>
             </div>
 
@@ -1233,12 +1459,23 @@ export default function App() {
               </button>
             </div>
 
+            {/* Plans & Layout Settings */}
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              title="Subscription plans, dashboard layout & settings"
+              aria-label="Open plans and layout settings"
+              className="group p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-300 hover:text-emerald-300 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 select-none shrink-0 cursor-pointer"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+
             {/* Manual Rescan */}
             <button
               type="button"
               onClick={triggerManualRescan}
               title="Force Rescan Logs"
-              className="group p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-300 hover:text-emerald-300 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 select-none shrink-0"
+              className="group p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-300 hover:text-emerald-300 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 select-none shrink-0 cursor-pointer"
             >
               <RefreshCw
                 className={`w-4 h-4 ${
@@ -1253,10 +1490,13 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
+      <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 flex flex-col gap-4 sm:gap-6">
         {/* Live Event Banner if a file just updated */}
         {lastChangedFile && (
-          <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300 animate-burn-expand">
+          <div
+            style={{ order: -1 }}
+            className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300 animate-burn-expand"
+          >
             <span className="truncate">
               ● Live update received from: <span className="text-emerald-200">{lastChangedFile}</span>
             </span>
@@ -1270,56 +1510,88 @@ export default function App() {
         )}
 
         {/* 4 KPI Cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-burn-fade-up">
-          {/* Card 1: Estimated API Spend & Subscription Comparison */}
+        {!hiddenSections.has('kpis') && (
+        <section
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-burn-fade-up"
+          style={{ order: getSectionOrderIndex('kpis') }}
+        >
+          {/* Card 1: Estimated API Spend, Plan Comparison & Monthly Projection */}
           <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between relative overflow-hidden transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                 API Equivalent Spend
               </span>
-              <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+              <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
                 <DollarSign className="w-4 h-4" />
               </div>
             </div>
 
             <div className="my-3">
-              <div className="text-3xl font-bold font-mono tracking-tight text-white">
-                {formatMoney(analytics.totalCostUSD, currency)}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400">
-                <span className="text-cyan-400 font-mono">
-                  AGY: {formatMoney(analytics.antigravityCost, currency)}
-                </span>
-                <span>•</span>
-                <span className="text-fuchsia-400 font-mono">
-                  Claude: {formatMoney(analytics.claudeCost, currency)}
-                </span>
-                {analytics.deletedCostUSD > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setIsDeletedModalOpen(true)}
-                    title="View deleted chats included in total API spend"
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 hover:bg-rose-500/20 font-mono text-[10px] transition-colors cursor-pointer"
-                  >
-                    <Trash2 className="w-2.5 h-2.5" />
-                    incl. {formatMoney(analytics.deletedCostUSD, currency)} deleted
-                  </button>
+              <div className="flex flex-wrap items-baseline gap-2">
+                <div className="text-3xl font-bold font-mono tracking-tight text-white">
+                  {formatMoney(analytics.totalCostUSD, currency)}
+                </div>
+                {analytics.deltas && (
+                  <DeltaPill deltaPct={analytics.deltas.costPct} label={analytics.deltas.label} />
                 )}
               </div>
+              {(toolFilter === 'all' ||
+                (analytics.deletedCostUSD > 0 && userSettings.includeDeletedInTotals)) && (
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400">
+                  {toolFilter === 'all' && (
+                    <>
+                      <span className="text-cyan-400 font-mono">
+                        AGY: {formatMoney(analytics.antigravityCost, currency)}
+                      </span>
+                      <span>•</span>
+                      <span className="text-fuchsia-400 font-mono">
+                        Claude: {formatMoney(analytics.claudeCost, currency)}
+                      </span>
+                      <span>•</span>
+                      <span className="text-amber-400 font-mono">
+                        Codex: {formatMoney(analytics.codexCost, currency)}
+                      </span>
+                    </>
+                  )}
+                  {analytics.deletedCostUSD > 0 && userSettings.includeDeletedInTotals && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDeletedModalOpen(true)}
+                      title="View deleted chats included in total API spend"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 hover:bg-rose-500/20 font-mono text-[10px] transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-2.5 h-2.5" />
+                      incl. {formatMoney(analytics.deletedCostUSD, currency)} deleted
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">
-                  vs {formatMoney(analytics.referenceSubUSD, currency)}/mo Plan
+              <div className="flex items-center justify-between text-xs gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  title={`Includes ${taxLabel} · Customize your monthly subscription plans & dashboard layout`}
+                  className="text-zinc-400 hover:text-zinc-200 underline decoration-dotted underline-offset-2 transition-colors cursor-pointer text-left truncate"
+                >
+                  vs {formatSubscriptionMoney(analytics.referenceSubUSD, currency)}/mo Plan
+                </button>
+                <span className="font-mono font-semibold text-emerald-400 shrink-0">
+                  {analytics.referenceSubUSD > 0 ? `${subMultiplier}x value` : 'Pay-as-you-go'}
                 </span>
-                <span className="font-mono font-semibold text-emerald-400">{subMultiplier}x value</span>
               </div>
               <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-500"
                   style={{ width: `${Math.max(4, subPercentage)}%` }}
                 />
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-1 pt-0.5 text-[10.5px] font-mono">
+                <span className="text-zinc-500">
+                  Today {formatMoney(analytics.projection.todayUSD, currency)}
+                </span>
               </div>
             </div>
           </div>
@@ -1336,8 +1608,13 @@ export default function App() {
             </div>
 
             <div className="my-3">
-              <div className="text-3xl font-bold font-mono tracking-tight text-white">
-                {formatTokens(analytics.totalTokens)}
+              <div className="flex flex-wrap items-baseline gap-2">
+                <div className="text-3xl font-bold font-mono tracking-tight text-white">
+                  {formatTokens(analytics.totalTokens)}
+                </div>
+                {analytics.deltas && (
+                  <DeltaPill deltaPct={analytics.deltas.tokensPct} label={analytics.deltas.label} />
+                )}
               </div>
               <div className="mt-1 text-xs text-zinc-400 font-mono">
                 Across {analytics.totalTurns.toLocaleString()} LLM turns
@@ -1372,8 +1649,13 @@ export default function App() {
             </div>
 
             <div className="my-3">
-              <div className="text-3xl font-bold font-mono tracking-tight text-fuchsia-400">
-                {formatMoney(analytics.totalCacheSavingsUSD, currency)}
+              <div className="flex flex-wrap items-baseline gap-2">
+                <div className="text-3xl font-bold font-mono tracking-tight text-fuchsia-400">
+                  {formatMoney(analytics.totalCacheSavingsUSD, currency)}
+                </div>
+                {analytics.deltas && (
+                  <DeltaPill deltaPct={analytics.deltas.savingsPct} label={analytics.deltas.label} higherIsBetter />
+                )}
               </div>
               <div className="mt-1 text-xs text-zinc-400">
                 Saved via context caching
@@ -1408,7 +1690,7 @@ export default function App() {
             </div>
 
             <div className="my-3">
-              <div className="flex items-baseline gap-2">
+              <div className="flex flex-wrap items-baseline gap-2">
                 <span className="text-3xl font-bold font-mono tracking-tight text-white">
                   {analytics.totalSessionsCount}
                 </span>
@@ -1422,6 +1704,9 @@ export default function App() {
                     <Trash2 className="w-2.5 h-2.5" />
                     +{analytics.deletedSessionsCount} deleted
                   </button>
+                )}
+                {analytics.deltas && (
+                  <DeltaPill deltaPct={analytics.deltas.turnsPct} label={`${analytics.deltas.label} turns`} />
                 )}
               </div>
               <div className="mt-1 text-xs text-zinc-400">
@@ -1442,12 +1727,17 @@ export default function App() {
             </div>
           </div>
         </section>
+        )}
 
         {/* Charts Row */}
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-burn-fade-up" style={{ animationDelay: '50ms' }}>
+        {!hiddenSections.has('charts') && (
+        <section
+          className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-burn-fade-up"
+          style={{ order: getSectionOrderIndex('charts'), animationDelay: '50ms' }}
+        >
           {/* Daily Burn Rate Timeline (2 cols) */}
           <div className="lg:col-span-2 rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col transition-colors duration-200 hover:border-zinc-700/80">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-emerald-400" />
@@ -1455,21 +1745,30 @@ export default function App() {
                 </h2>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   {toolFilter === 'all'
-                    ? 'Equivalent API spend over time across Antigravity CLI and Claude Code'
-                    : toolFilter === 'antigravity'
-                      ? 'Equivalent API spend over time for Antigravity CLI'
-                      : 'Equivalent API spend over time for Claude Code'}
+                    ? 'Independent equivalent API spend curves across Antigravity, Claude Code & Codex CLI'
+                    : `Equivalent API spend over time for ${
+                        toolFilter === 'antigravity'
+                          ? 'Antigravity CLI'
+                          : toolFilter === 'claude'
+                            ? 'Claude Code'
+                            : 'Codex CLI'
+                      }`}
                 </p>
               </div>
-              <div className="flex items-center gap-4 text-xs font-mono">
-                {toolFilter !== 'claude' && (
+              <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
+                {(toolFilter === 'all' || toolFilter === 'antigravity') && (
                   <span className="flex items-center gap-1.5 text-cyan-300">
                     <span className="h-2 w-2 rounded-full bg-cyan-400" /> Antigravity
                   </span>
                 )}
-                {toolFilter !== 'antigravity' && (
+                {(toolFilter === 'all' || toolFilter === 'claude') && (
                   <span className="flex items-center gap-1.5 text-fuchsia-300">
                     <span className="h-2 w-2 rounded-full bg-fuchsia-400" /> Claude Code
+                  </span>
+                )}
+                {(toolFilter === 'all' || toolFilter === 'codex') && (
+                  <span className="flex items-center gap-1.5 text-amber-300">
+                    <span className="h-2 w-2 rounded-full bg-amber-400" /> Codex CLI
                   </span>
                 )}
               </div>
@@ -1491,6 +1790,10 @@ export default function App() {
                       <linearGradient id="colorClaude" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#d946ef" stopOpacity={0.32} />
                         <stop offset="95%" stopColor="#d946ef" stopOpacity={0.0} />
+                      </linearGradient>
+                      <linearGradient id="colorCodex" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.32} />
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
@@ -1520,10 +1823,14 @@ export default function App() {
                       labelStyle={{ color: '#e4e4e7', fontWeight: 600, marginBottom: '2px' }}
                       formatter={(val: number, name: string) => [
                         formatMoney(Number(val), currency),
-                        name === 'antigravityUSD' ? 'Antigravity CLI' : 'Claude Code',
+                        name === 'antigravityUSD'
+                          ? 'Antigravity CLI'
+                          : name === 'claudeUSD'
+                            ? 'Claude Code'
+                            : 'Codex CLI',
                       ]}
                     />
-                    {toolFilter !== 'claude' && (
+                    {(toolFilter === 'all' || toolFilter === 'antigravity') && (
                       <Area
                         type="monotone"
                         dataKey="antigravityUSD"
@@ -1533,7 +1840,7 @@ export default function App() {
                         fill="url(#colorAgy)"
                       />
                     )}
-                    {toolFilter !== 'antigravity' && (
+                    {(toolFilter === 'all' || toolFilter === 'claude') && (
                       <Area
                         type="monotone"
                         dataKey="claudeUSD"
@@ -1541,6 +1848,16 @@ export default function App() {
                         strokeWidth={2}
                         fillOpacity={1}
                         fill="url(#colorClaude)"
+                      />
+                    )}
+                    {(toolFilter === 'all' || toolFilter === 'codex') && (
+                      <Area
+                        type="monotone"
+                        dataKey="codexUSD"
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorCodex)"
                       />
                     )}
                   </AreaChart>
@@ -1557,7 +1874,7 @@ export default function App() {
                 Cost by Model ({currency})
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Distribution across Gemini & Claude models
+                Distribution across Gemini, Claude & Codex models
               </p>
             </div>
 
@@ -1619,11 +1936,13 @@ export default function App() {
             </div>
           </div>
         </section>
+        )}
 
         {/* Central Widget: Total Token Usage per Model */}
+        {!hiddenSections.has('modelUsage') && (
         <section
           className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 overflow-hidden animate-burn-fade-up transition-colors duration-200 hover:border-zinc-700/80"
-          style={{ animationDelay: '90ms' }}
+          style={{ order: getSectionOrderIndex('modelUsage'), animationDelay: '90ms' }}
         >
           {canCollapseModels ? (
             <button
@@ -1698,9 +2017,26 @@ export default function App() {
             )}
           </div>
         </section>
+        )}
+
+        {/* Activity Heatmap & Top Workspaces */}
+        {!hiddenSections.has('heatmapWorkspaces') && (
+          <div style={{ order: getSectionOrderIndex('heatmapWorkspaces') }}>
+            <HeatmapAndWorkspaces
+              heatmapDays={analytics.heatmapDays}
+              topWorkspaces={analytics.topWorkspaces}
+              currency={currency}
+              onSelectWorkspace={(wsName) => setSearchQuery(wsName)}
+            />
+          </div>
+        )}
 
         {/* Live Sessions / Workspaces Table */}
-        <section className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 animate-burn-fade-up" style={{ animationDelay: '130ms' }}>
+        {!hiddenSections.has('sessions') && (
+        <section
+          className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 animate-burn-fade-up"
+          style={{ order: getSectionOrderIndex('sessions'), animationDelay: '130ms' }}
+        >
           <div className="relative z-20 p-4 sm:p-5 border-b border-zinc-800/80 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
@@ -1796,7 +2132,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => setIsDeletedModalOpen(true)}
@@ -2018,7 +2354,7 @@ export default function App() {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-zinc-400">
                                   <span>
-                                    Creato:{' '}
+                                    Created:{' '}
                                     <span className="text-zinc-200">
                                       {formatPreciseDateTime(ws.startedAt).date}{' '}
                                       {formatPreciseDateTime(ws.startedAt).time}
@@ -2026,7 +2362,7 @@ export default function App() {
                                   </span>
                                   <span>•</span>
                                   <span>
-                                    Ultima modifica:{' '}
+                                    Last modified:{' '}
                                     <span className="text-emerald-400">
                                       {formatPreciseDateTime(ws.lastActiveAt).date}{' '}
                                       {formatPreciseDateTime(ws.lastActiveAt).time}
@@ -2040,6 +2376,7 @@ export default function App() {
                                   const chatKey = `${chat.source}-${chat.filePath}`;
                                   const isChatExpanded = expandedChats.has(chatKey);
                                   const chatModels = getSessionModelBreakdown(chat.turnHistory);
+                                  const subagentSummary = getSessionSubagentBreakdown(chat.turnHistory);
                                   const created = formatPreciseDateTime(chat.startedAt);
                                   const modified = formatPreciseDateTime(chat.lastActiveAt);
 
@@ -2063,8 +2400,8 @@ export default function App() {
                                               className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition shrink-0 select-none"
                                               title={
                                                 isChatExpanded
-                                                  ? 'Hide detailed model metrics'
-                                                  : 'Show detailed model metrics'
+                                                  ? 'Hide detailed model & subagent metrics'
+                                                  : 'Show detailed model & subagent metrics'
                                               }
                                             >
                                               <ChevronRight
@@ -2082,6 +2419,17 @@ export default function App() {
                                             >
                                               {chat.sessionTitle || chat.sessionId}
                                             </span>
+
+                                            {subagentSummary.subagents.length > 0 && (
+                                              <span
+                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/30 text-[10px] font-mono text-violet-300 shrink-0"
+                                                title={`Includes ${subagentSummary.subagents.length} rolled-up subagent tool(s): ${subagentSummary.subagents.map((s) => s.subagentName).join(', ')}`}
+                                              >
+                                                <Bot className="w-2.5 h-2.5 shrink-0" />
+                                                +{subagentSummary.subagents.length}{' '}
+                                                {subagentSummary.subagents.length === 1 ? 'subagent' : 'subagents'}
+                                              </span>
+                                            )}
 
                                             <span className="text-[10.5px] font-mono text-zinc-500">
                                               {created.date} {created.time} →{' '}
@@ -2142,7 +2490,7 @@ export default function App() {
                                                 {isPromoActive(modelRate) && (
                                                   <span
                                                     className="px-1 py-0 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                                                    title={modelRate?.promoNote || 'Tariffa promozionale attiva'}
+                                                    title={modelRate?.promoNote || 'Active promotional rate'}
                                                   >
                                                     PROMO
                                                   </span>
@@ -2157,6 +2505,54 @@ export default function App() {
                                             );
                                           })}
                                         </div>
+
+                                        {/* Rolled-up subagent tools with their individual consumption */}
+                                        {subagentSummary.subagents.length > 0 && (
+                                          <div className="flex flex-wrap items-center gap-1.5 pl-6">
+                                            <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-violet-300/90 mr-1">
+                                              <Bot className="w-3 h-3 text-violet-400" />
+                                              Subagents ({subagentSummary.subagents.length}):
+                                            </span>
+                                            {subagentSummary.subagents.map((sub) => {
+                                              const costShare =
+                                                chat.costUSD > 0 ? (sub.costUSD / chat.costUSD) * 100 : 0;
+                                              const primarySubModel = sub.models[0]?.modelLabel || '';
+                                              const extraSubModels = Math.max(0, sub.models.length - 1);
+                                              const modelsTooltip = sub.models
+                                                .map(
+                                                  (m) =>
+                                                    `${m.modelLabel} (${m.turns}t, ${formatMoney(m.costUSD, currency)})`
+                                                )
+                                                .join(' · ');
+                                              return (
+                                                <span
+                                                  key={sub.subagentId}
+                                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-violet-950/35 border border-violet-500/30 text-[10.5px] font-mono text-violet-100"
+                                                  title={`Subagent: ${sub.subagentName} (${sub.subagentId}) · Input: ${formatTokens(sub.inputTokens)} · Cache Read: ${formatTokens(sub.cacheReadTokens)} · Output: ${formatTokens(sub.outputTokens)} · Saved: ${formatMoney(sub.cacheSavingsUSD, currency)}${modelsTooltip ? ` · Models: ${modelsTooltip}` : ''}`}
+                                                >
+                                                  <span className="h-1.5 w-1.5 rounded-full bg-violet-400 shrink-0" />
+                                                  <span className="text-violet-200 font-medium">
+                                                    {sub.subagentName}
+                                                  </span>
+                                                  {primarySubModel && (
+                                                    <span className="text-zinc-400">
+                                                      [{primarySubModel}
+                                                      {extraSubModels > 0 ? ` +${extraSubModels}` : ''}]
+                                                    </span>
+                                                  )}
+                                                  <span className="text-zinc-500">· {sub.turns}t</span>
+                                                  <span className="text-zinc-400">
+                                                    · {formatTokens(sub.totalTokens)}
+                                                  </span>
+                                                  <span className="text-emerald-400 font-semibold">
+                                                    · {formatMoney(sub.costUSD, currency)}
+                                                  </span>
+                                                  <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
                                       </div>
 
                                       <div
@@ -2168,7 +2564,7 @@ export default function App() {
                                         }`}
                                       >
                                         <div className="overflow-hidden min-h-0">
-                                          <div className="border-t border-zinc-800/80 bg-zinc-900/40 px-3 py-2.5 overflow-x-auto">
+                                          <div className="border-t border-zinc-800/80 bg-zinc-900/40 px-3 py-2.5 overflow-x-auto space-y-3">
                                             <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
                                               <thead>
                                                 <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
@@ -2201,7 +2597,7 @@ export default function App() {
                                                           <span
                                                             className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
                                                             title={
-                                                              modelRate?.promoNote || 'Tariffa promozionale attiva'
+                                                              modelRate?.promoNote || 'Active promotional rate'
                                                             }
                                                           >
                                                             PROMO
@@ -2237,6 +2633,114 @@ export default function App() {
                                                 })}
                                               </tbody>
                                             </table>
+
+                                            {subagentSummary.subagents.length > 0 && (
+                                              <div className="pt-2.5 border-t border-zinc-800/80">
+                                                <div className="flex items-center gap-1.5 mb-1.5 px-2 text-[10px] font-mono uppercase tracking-wider text-violet-300">
+                                                  <Bot className="w-3 h-3 text-violet-400" />
+                                                  <span>Main Chat vs Subagent Tools Consumption</span>
+                                                </div>
+                                                <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
+                                                  <thead>
+                                                    <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
+                                                      <th className="py-1.5 px-2">Agent / Tool</th>
+                                                      <th className="py-1.5 px-2 text-right">Turns</th>
+                                                      <th className="py-1.5 px-2 text-right">Input</th>
+                                                      <th className="py-1.5 px-2 text-right">Cache Read</th>
+                                                      <th className="py-1.5 px-2 text-right">Output</th>
+                                                      <th className="py-1.5 px-2 text-right">Total Tokens</th>
+                                                      <th className="py-1.5 px-2 text-right">Cache Saved</th>
+                                                      <th className="py-1.5 px-2 text-right">API Cost</th>
+                                                      <th className="py-1.5 px-2 text-right">Cost Share</th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody className="divide-y divide-zinc-800/50">
+                                                    {subagentSummary.main.turns > 0 && (
+                                                      <tr className="hover:bg-zinc-800/20">
+                                                        <td className="py-1.5 px-2 font-mono font-medium text-zinc-200 whitespace-nowrap">
+                                                          <span className="inline-flex items-center gap-1.5">
+                                                            <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
+                                                            <span>Main Chat</span>
+                                                          </span>
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                          {subagentSummary.main.turns}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                          {formatTokens(subagentSummary.main.inputTokens)}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                          {formatTokens(subagentSummary.main.cacheReadTokens)}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                          {formatTokens(subagentSummary.main.outputTokens)}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
+                                                          {formatTokens(subagentSummary.main.totalTokens)}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                          {formatMoney(subagentSummary.main.cacheSavingsUSD, currency)}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                          {formatMoney(subagentSummary.main.costUSD, currency)}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                          {(chat.costUSD > 0
+                                                            ? (subagentSummary.main.costUSD / chat.costUSD) * 100
+                                                            : 0
+                                                          ).toFixed(1)}
+                                                          %
+                                                        </td>
+                                                      </tr>
+                                                    )}
+                                                    {subagentSummary.subagents.map((sub) => {
+                                                      const subShare =
+                                                        chat.costUSD > 0 ? (sub.costUSD / chat.costUSD) * 100 : 0;
+                                                      return (
+                                                        <tr key={sub.subagentId} className="hover:bg-violet-500/5">
+                                                          <td className="py-1.5 px-2 font-mono font-medium text-violet-200 whitespace-nowrap">
+                                                            <div className="inline-flex items-center gap-1.5">
+                                                              <span className="text-violet-500/80">↳</span>
+                                                              <Bot className="w-3 h-3 text-violet-400 shrink-0" />
+                                                              <span title={sub.subagentId}>{sub.subagentName}</span>
+                                                              {sub.models.length > 0 && (
+                                                                <span className="text-[10px] font-normal text-zinc-400">
+                                                                  ({sub.models.map((m) => m.modelLabel).join(', ')})
+                                                                </span>
+                                                              )}
+                                                            </div>
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                            {sub.turns}
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                            {formatTokens(sub.inputTokens)}
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                            {formatTokens(sub.cacheReadTokens)}
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                            {formatTokens(sub.outputTokens)}
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
+                                                            {formatTokens(sub.totalTokens)}
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                            {formatMoney(sub.cacheSavingsUSD, currency)}
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                            {formatMoney(sub.costUSD, currency)}
+                                                          </td>
+                                                          <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                            {subShare.toFixed(1)}%
+                                                          </td>
+                                                        </tr>
+                                                      );
+                                                    })}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            )}
                                           </div>
                                         </div>
                                       </div>
@@ -2265,310 +2769,86 @@ export default function App() {
             </table>
           </div>
         </section>
+        )}
+
+        {visibleSectionCount === 0 ? (
+          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-10 text-center space-y-3 animate-burn-fade-up">
+            <LayoutGrid className="w-7 h-7 text-zinc-500 mx-auto" />
+            <p className="text-sm font-semibold text-zinc-200">All dashboard sections are currently hidden</p>
+            <p className="text-xs text-zinc-400">
+              Re-enable sections or restore the default order from Settings.
+            </p>
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  void saveSettings({
+                    ...userSettings,
+                    layout: { order: DEFAULT_SECTION_ORDER, hidden: [] },
+                  })
+                }
+                className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs font-mono transition-colors cursor-pointer"
+              >
+                Restore Default Layout
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(true)}
+                className="h-8 px-3 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs font-mono text-zinc-200 transition-colors cursor-pointer"
+              >
+                Open Settings
+              </button>
+            </div>
+          </div>
+        ) : hiddenSections.size > 0 ? (
+          <div style={{ order: 99 }} className="flex justify-center pt-1">
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-800/90 bg-zinc-900/50 hover:bg-zinc-800/70 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+            >
+              <LayoutGrid className="w-3.5 h-3.5 text-cyan-400" />
+              <span>
+                {hiddenSections.size} {hiddenSections.size === 1 ? 'section' : 'sections'} hidden · Customize layout
+              </span>
+            </button>
+          </div>
+        ) : null}
       </main>
 
       {/* Deleted Chats Popup Modal */}
-      {isDeletedModalRendered && (
-        <div
-          className={`fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-200 ease-out motion-reduce:transition-none ${
-            isDeletedModalVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
-          }`}
-          onClick={() => setIsDeletedModalOpen(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Deleted Chats Archive"
-        >
-          <div
-            className={`w-full max-w-2xl max-h-[82vh] flex flex-col rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden transition-all duration-200 ease-out motion-reduce:transition-none ${
-              isDeletedModalVisible
-                ? 'opacity-100 translate-y-0 scale-100'
-                : 'opacity-0 translate-y-2 scale-[0.985]'
-            }`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="px-5 py-4 border-b border-zinc-800/90 flex items-start justify-between gap-3 bg-zinc-950/60 animate-burn-header">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-400 mt-0.5 shrink-0">
-                  <Trash2 className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-100">
-                    Deleted Chats & Preserved API Spend
-                  </h3>
-                  <p className="text-xs text-zinc-400 mt-0.5">
-                    Chats removed from Antigravity or Claude Code stay hidden from active workspaces, while their API spend remains counted in your totals.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsDeletedModalOpen(false)}
-                aria-label="Close deleted chats popup"
-                className="group p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors duration-200 cursor-pointer shrink-0"
-              >
-                <X className="w-4 h-4 transition-transform duration-200 group-hover:rotate-90 motion-reduce:transition-none" />
-              </button>
-            </div>
+      <DeletedChatsModal
+        isOpen={isDeletedModalOpen}
+        onClose={() => setIsDeletedModalOpen(false)}
+        deletedSessions={analytics.deletedSessions}
+        trackedDeletedCount={analytics.trackedDeletedCount}
+        legacyDeletedCount={analytics.legacyDeletedCount}
+        deletedCostUSD={analytics.deletedCostUSD}
+        deletedTokens={analytics.deletedTokens}
+        deletedCacheSavingsUSD={analytics.deletedCacheSavingsUSD}
+        dismissedLegacyCount={snapshot.dismissedLegacyCount || 0}
+        includeDeletedInTotals={userSettings.includeDeletedInTotals}
+        hooksStatus={snapshot.hooksStatus}
+        currency={currency}
+        hideLegacyDeleted={hideLegacyDeleted}
+        onToggleHideLegacy={toggleHideLegacyDeleted}
+        onToggleIncludeInTotals={toggleIncludeDeletedInTotals}
+        onDismissLegacy={dismissLegacyChats}
+        onRestoreLegacy={restoreDismissedLegacy}
+        dismissingLegacyKeys={dismissingLegacyKeys}
+        isClearingLegacyBulk={isClearingLegacyBulk}
+        isRestoringLegacy={isRestoringLegacy}
+      />
 
-            {/* Summary Strip */}
-            <div
-              className="grid grid-cols-3 gap-3 px-5 py-3.5 border-b border-zinc-800/80 bg-zinc-950/30 animate-burn-fade-up"
-              style={{ animationDelay: '40ms' }}
-            >
-              <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/75 px-3 py-2 transition-colors duration-200">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
-                  Deleted Chats
-                </div>
-                <div className="text-lg font-bold font-mono text-zinc-100 mt-0.5 flex items-baseline gap-1.5">
-                  <span>{analytics.deletedSessionsCount}</span>
-                  {analytics.legacyDeletedCount > 0 && (
-                    <span className="text-[10px] font-normal text-zinc-500">
-                      ({analytics.trackedDeletedCount} tracked · {analytics.legacyDeletedCount} legacy)
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/75 px-3 py-2 transition-colors duration-200">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
-                  API Cost Preserved
-                </div>
-                <div className="text-lg font-bold font-mono text-emerald-400 mt-0.5">
-                  {formatMoney(analytics.deletedCostUSD, currency)}
-                </div>
-              </div>
-              <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/75 px-3 py-2 transition-colors duration-200">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
-                  Tokens / Cache Saved
-                </div>
-                <div className="text-sm font-semibold font-mono text-zinc-200 mt-1 truncate">
-                  {formatTokens(analytics.deletedTokens)}{' '}
-                  <span className="text-fuchsia-400 text-xs">
-                    ({formatMoney(analytics.deletedCacheSavingsUSD, currency)})
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {analytics.legacyDeletedCount > 0 && (
-              <div
-                aria-hidden={hideLegacyDeleted}
-                className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
-                  hideLegacyDeleted ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'
-                }`}
-              >
-                <div className="overflow-hidden">
-                  <div className="px-5 py-2.5 border-b border-zinc-800/70 bg-amber-500/5 text-[11px] text-amber-200/90 font-mono">
-                    {analytics.legacyDeletedCount} older deleted chat(s) were removed before burnrate archived their token logs: shown as N/A so real totals stay accurate. Any chat deleted from now on preserves exact API cost automatically.
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Search Bar & Legacy Toggle */}
-            {analytics.deletedSessionsCount > 0 && (
-              <div
-                className="px-5 py-3 border-b border-zinc-800/80 bg-zinc-950/40 flex flex-wrap items-center gap-2 animate-burn-fade-up"
-                style={{ animationDelay: '70ms' }}
-              >
-                <div className="relative flex-1 min-w-[180px]">
-                  <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={deletedSearchQuery}
-                    onChange={(e) => setDeletedSearchQuery(e.target.value)}
-                    placeholder="Search deleted chat, workspace, model..."
-                    className="w-full h-8 pl-8 pr-7 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono transition-colors duration-200"
-                  />
-                  {deletedSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setDeletedSearchQuery('')}
-                      aria-label="Clear deleted chats search"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-                {analytics.legacyDeletedCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={toggleHideLegacyDeleted}
-                    aria-pressed={hideLegacyDeleted}
-                    title={
-                      hideLegacyDeleted
-                        ? `Show ${analytics.legacyDeletedCount} legacy deleted chats without token logs`
-                        : `Hide ${analytics.legacyDeletedCount} legacy deleted chats without token logs`
-                    }
-                    className={`h-8 px-2.5 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] motion-reduce:transition-none cursor-pointer select-none shrink-0 ${
-                      hideLegacyDeleted
-                        ? 'bg-amber-500/15 border-amber-500/35 text-amber-200 hover:bg-amber-500/25'
-                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/80 hover:text-white'
-                    }`}
-                  >
-                    {hideLegacyDeleted ? (
-                      <Eye className="w-3.5 h-3.5 text-amber-300 transition-transform duration-200" />
-                    ) : (
-                      <EyeOff className="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" />
-                    )}
-                    <span>{hideLegacyDeleted ? 'Show Legacy' : 'Hide Legacy'}</span>
-                    <span className="text-[10px] opacity-75">({analytics.legacyDeletedCount})</span>
-                  </button>
-                )}
-                {(deletedSearchQuery.trim() || hideLegacyDeleted) && (
-                  <span className="text-[11px] font-mono text-zinc-400 shrink-0 animate-burn-expand">
-                    {visibleDeletedSessions.length}/{analytics.deletedSessionsCount}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Deleted Chats List */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5">
-              {analytics.deletedSessions.length === 0 ? (
-                <div className="py-12 text-center space-y-2 animate-burn-fade-up">
-                  <div className="w-10 h-10 rounded-full bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center mx-auto text-zinc-500">
-                    <Trash2 className="w-4 h-4" />
-                  </div>
-                  <p className="text-xs font-medium text-zinc-300">
-                    No deleted chats in this filter
-                  </p>
-                  <p className="text-[11px] text-zinc-500 max-w-sm mx-auto">
-                    Whenever you delete a chat in Antigravity or Claude Code, it disappears from your active table and its spent API cost is archived here automatically.
-                  </p>
-                </div>
-              ) : visibleDeletedSessions.length === 0 ? (
-                <div className="py-10 text-center space-y-2 animate-burn-expand">
-                  <p className="text-xs font-mono text-zinc-400">
-                    {deletedSearchQuery.trim()
-                      ? `No deleted chats matching "${deletedSearchQuery.trim()}".`
-                      : 'No tracked deleted chats yet (legacy chats are hidden).'}
-                  </p>
-                  <div className="flex items-center justify-center gap-3">
-                    {deletedSearchQuery.trim() && (
-                      <button
-                        type="button"
-                        onClick={() => setDeletedSearchQuery('')}
-                        className="text-[11px] font-mono text-emerald-400 hover:text-emerald-300 underline underline-offset-2 transition-colors cursor-pointer"
-                      >
-                        Clear search
-                      </button>
-                    )}
-                    {hideLegacyDeleted && analytics.legacyDeletedCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={toggleHideLegacyDeleted}
-                        className="text-[11px] font-mono text-amber-300 hover:text-amber-200 underline underline-offset-2 transition-colors cursor-pointer"
-                      >
-                        Show legacy ({analytics.legacyDeletedCount})
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                visibleDeletedSessions.map((chat, idx) => {
-                  const delTs = formatPreciseDateTime(chat.deletedAt || chat.lastActiveAt);
-                  const chatModels = getSessionModelBreakdown(chat.turnHistory);
-                  const isLegacy = Boolean(chat.untrackedHistory);
-                  return (
-                    <div
-                      key={`${chat.source}:${chat.sessionId}`}
-                      style={{ animationDelay: `${Math.min(idx, 10) * 24}ms` }}
-                      className={`rounded-xl border p-3.5 transition-colors duration-200 animate-burn-fade-up ${
-                        isLegacy
-                          ? 'bg-zinc-950/45 border-zinc-800/60 hover:border-zinc-700/75 hover:bg-zinc-900/50'
-                          : 'bg-zinc-950/75 border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/65'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className="text-xs font-semibold text-zinc-100 truncate max-w-[320px]"
-                              title={chat.sessionTitle || chat.sessionId}
-                            >
-                              {chat.sessionTitle || chat.sessionId}
-                            </span>
-                            <ToolBadge source={chat.source} compact />
-                            {isLegacy && (
-                              <span
-                                className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/25"
-                                title="Deleted before burnrate archived its .jsonl token log"
-                              >
-                                Legacy · no token log
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] font-mono text-zinc-400">
-                            <span className="inline-flex items-center gap-1 text-zinc-300" title={chat.workspace}>
-                              <FolderGit2 className="w-3 h-3 text-zinc-500 shrink-0" />
-                              {chat.workspaceName}
-                            </span>
-                            <span className="text-zinc-600">•</span>
-                            <span>
-                              {chat.turns} {isLegacy ? 'prompts' : 'turns'}
-                            </span>
-                            {!isLegacy && (
-                              <>
-                                <span className="text-zinc-600">•</span>
-                                <span>{formatTokens(chat.totalTokens)} tok</span>
-                              </>
-                            )}
-                            <span className="text-zinc-600">•</span>
-                            <span
-                              className="text-rose-300/90"
-                              title={`${isLegacy ? 'Last active' : 'Deleted'} ${delTs.date} ${delTs.time}`}
-                            >
-                              {isLegacy ? 'Last seen' : 'Deleted'} {formatRelativeTime(chat.deletedAt || chat.lastActiveAt)} ({delTs.date})
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          {isLegacy ? (
-                            <div
-                              className="text-xs font-mono text-zinc-500"
-                              title="Token log was removed before burnrate ledger tracking"
-                            >
-                              N/A
-                            </div>
-                          ) : (
-                            <>
-                              <div className="text-sm font-bold font-mono text-emerald-400">
-                                {formatMoney(chat.costUSD, currency)}
-                              </div>
-                              {chat.cacheSavingsUSD > 0 && (
-                                <div className="text-[10px] font-mono text-fuchsia-400">
-                                  +{formatMoney(chat.cacheSavingsUSD, currency)} saved
-                                </div>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      {chatModels.length > 0 && (
-                        <div className="mt-2.5 pt-2 border-t border-zinc-800/70 flex flex-wrap items-center gap-1.5">
-                          {chatModels.map((m) => (
-                            <span
-                              key={m.modelLabel}
-                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-[10px] font-mono text-zinc-300"
-                            >
-                              <span>{m.modelLabel}</span>
-                              <span className="text-emerald-400">{formatMoney(m.costUSD, currency)}</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Subscription Plans, Layout & Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={userSettings}
+        hooksStatus={snapshot.hooksStatus}
+        currency={currency}
+        onSave={saveSettings}
+      />
     </div>
   );
 }

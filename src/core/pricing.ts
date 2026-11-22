@@ -92,6 +92,9 @@ export function loadPricing(forceReload = false): PricingConfig {
           }
         }
       }
+      if (bundled.defaults) {
+        ledger.defaults = { ...bundled.defaults, ...(ledger.defaults || {}) };
+      }
       if (migrated) {
         saveUserLedger(ledger);
       }
@@ -455,6 +458,54 @@ export async function syncOfficialPricing(): Promise<{
             'gemini/gemini-flash-lite-latest',
           ],
         },
+        {
+          ourKey: 'gpt-5.4',
+          litellmKeys: ['gpt-5.4', 'openai/gpt-5.4'],
+        },
+        {
+          ourKey: 'gpt-5.4-mini',
+          litellmKeys: ['gpt-5.4-mini', 'openai/gpt-5.4-mini'],
+        },
+        {
+          ourKey: 'gpt-5.4-nano',
+          litellmKeys: ['gpt-5.4-nano', 'openai/gpt-5.4-nano'],
+        },
+        {
+          ourKey: 'gpt-5.3-codex',
+          litellmKeys: ['gpt-5.3-codex', 'openai/gpt-5.3-codex'],
+        },
+        {
+          ourKey: 'gpt-5.2-codex',
+          litellmKeys: ['gpt-5.2-codex', 'openai/gpt-5.2-codex', 'gpt-5.2', 'openai/gpt-5.2'],
+        },
+        {
+          ourKey: 'gpt-5.1-codex',
+          litellmKeys: ['gpt-5.1-codex', 'openai/gpt-5.1-codex', 'gpt-5.1-codex-max'],
+        },
+        {
+          ourKey: 'gpt-5-codex',
+          litellmKeys: ['gpt-5-codex', 'openai/gpt-5-codex'],
+        },
+        {
+          ourKey: 'gpt-5',
+          litellmKeys: ['gpt-5', 'openai/gpt-5'],
+        },
+        {
+          ourKey: 'gpt-5-mini',
+          litellmKeys: ['gpt-5-mini', 'openai/gpt-5-mini', 'gpt-5.1-codex-mini'],
+        },
+        {
+          ourKey: 'gpt-4.1',
+          litellmKeys: ['gpt-4.1', 'openai/gpt-4.1'],
+        },
+        {
+          ourKey: 'o3',
+          litellmKeys: ['o3', 'openai/o3'],
+        },
+        {
+          ourKey: 'o4-mini',
+          litellmKeys: ['o4-mini', 'openai/o4-mini'],
+        },
       ];
 
       for (const { ourKey, litellmKeys } of mapping) {
@@ -472,11 +523,13 @@ export async function syncOfficialPricing(): Promise<{
             const cacheReadPer1M =
               typeof entry.cache_read_input_token_cost === 'number'
                 ? round4(entry.cache_read_input_token_cost * 1_000_000)
-                : round4(inputPer1M * (existing.provider === 'anthropic' ? 0.1 : 0.25));
+                : existing.provider === 'openai'
+                  ? existing.cacheRead
+                  : round4(inputPer1M * (existing.provider === 'anthropic' ? 0.1 : 0.25));
             const cacheWritePer1M =
               typeof entry.cache_creation_input_token_cost === 'number' && entry.cache_creation_input_token_cost > 0
                 ? round4(entry.cache_creation_input_token_cost * 1_000_000)
-                : existing.provider === 'google'
+                : existing.provider === 'google' || existing.provider === 'openai'
                   ? inputPer1M
                   : existing.cacheWrite;
 
@@ -544,13 +597,20 @@ export async function syncOfficialPricing(): Promise<{
   return { updated: false };
 }
 
+function getDefaultModelForSource(source: ToolSource, pricing: PricingConfig): string {
+  const fromConfig = pricing.defaults?.[source];
+  if (fromConfig && pricing.models[fromConfig]) return fromConfig;
+  if (source === 'claude') return 'claude-sonnet-4';
+  if (source === 'codex') return pricing.models['gpt-5.3-codex'] ? 'gpt-5.3-codex' : 'gpt-5';
+  return 'gemini-4-argon';
+}
+
 export function resolveModelKey(
   rawModel: string | undefined | null,
   source: ToolSource,
   pricing: PricingConfig
 ): string {
-  const defaultKey =
-    pricing.defaults[source] || (source === 'claude' ? 'claude-sonnet-4' : 'gemini-4-argon');
+  const defaultKey = getDefaultModelForSource(source, pricing);
   if (!rawModel) return defaultKey;
 
   const cleaned = rawModel.trim().toLowerCase();
@@ -566,6 +626,48 @@ export function resolveModelKey(
 
   if (pricing.models[cleaned]) {
     return cleaned;
+  }
+
+  if ((cleaned.includes('gpt-5.4') || cleaned.includes('gpt-5-4')) && cleaned.includes('nano')) {
+    return pricing.models['gpt-5.4-nano'] ? 'gpt-5.4-nano' : defaultKey;
+  }
+  if ((cleaned.includes('gpt-5.4') || cleaned.includes('gpt-5-4')) && cleaned.includes('mini')) {
+    return pricing.models['gpt-5.4-mini'] ? 'gpt-5.4-mini' : defaultKey;
+  }
+  if (cleaned.includes('gpt-5.4') || cleaned.includes('gpt-5-4')) {
+    return pricing.models['gpt-5.4'] ? 'gpt-5.4' : defaultKey;
+  }
+  if (cleaned.includes('codex') && cleaned.includes('mini')) {
+    return pricing.models['gpt-5-mini'] ? 'gpt-5-mini' : defaultKey;
+  }
+  if (cleaned.includes('5.3') && cleaned.includes('codex')) {
+    return pricing.models['gpt-5.3-codex'] ? 'gpt-5.3-codex' : defaultKey;
+  }
+  if (cleaned.includes('5.2') || (cleaned.includes('5.2') && cleaned.includes('codex'))) {
+    if (cleaned.includes('gpt-5.2') || cleaned.includes('gpt-5-2')) {
+      return pricing.models['gpt-5.2-codex'] ? 'gpt-5.2-codex' : defaultKey;
+    }
+  }
+  if (cleaned.includes('5.1') && cleaned.includes('codex')) {
+    return pricing.models['gpt-5.1-codex'] ? 'gpt-5.1-codex' : defaultKey;
+  }
+  if (cleaned.includes('codex')) {
+    return pricing.models['gpt-5-codex'] ? 'gpt-5-codex' : defaultKey;
+  }
+  if (cleaned.includes('gpt-5-mini') || cleaned.includes('gpt-5.1-mini') || cleaned.includes('gpt-5-nano')) {
+    return pricing.models['gpt-5-mini'] ? 'gpt-5-mini' : defaultKey;
+  }
+  if (cleaned.includes('gpt-5')) {
+    return pricing.models['gpt-5'] ? 'gpt-5' : defaultKey;
+  }
+  if (cleaned.includes('gpt-4.1') || cleaned.includes('gpt-4-1') || cleaned.includes('gpt-4o')) {
+    return pricing.models['gpt-4.1'] ? 'gpt-4.1' : defaultKey;
+  }
+  if (/(?:^|[^a-z0-9])o4[-_.\s]?mini/.test(cleaned)) {
+    return pricing.models['o4-mini'] ? 'o4-mini' : defaultKey;
+  }
+  if (/(?:^|[^a-z0-9])o3(?:$|[^0-9])/.test(cleaned)) {
+    return pricing.models['o3'] ? 'o3' : defaultKey;
   }
 
   if (cleaned.includes('opus')) {
@@ -660,7 +762,7 @@ export function getHistoricalRate(
   turnTimestamp: string | undefined,
   pricing: PricingConfig
 ): ModelRate {
-  const fallbackKey = pricing.defaults[source];
+  const fallbackKey = getDefaultModelForSource(source, pricing);
   const history = pricing.history;
 
   let baseRate: ModelRate =

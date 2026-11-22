@@ -5,29 +5,126 @@ export type TimeRange = '24h' | '7d' | '30d' | 'all';
 export type Currency = 'USD' | 'EUR';
 
 export const EUR_RATE = 0.92;
+export const EUR_TAX_RATE = 0.22; // 22% VAT (IVA) on subscriptions
+export const USD_TAX_RATE = 0.075; // ~7.5% average US sales tax on subscriptions
 
-export function convertMoney(usdAmount: number, currency: Currency): number {
-  return currency === 'EUR' ? usdAmount * EUR_RATE : usdAmount;
+export function getTaxRate(currency: Currency): number {
+  return currency === 'EUR' ? EUR_TAX_RATE : USD_TAX_RATE;
 }
 
-export function formatMoney(usdAmount: number, currency: Currency): string {
-  const val = convertMoney(usdAmount, currency);
+export function getTaxLabel(currency: Currency): string {
+  return currency === 'EUR' ? 'IVA 22%' : 'Tax 7.5%';
+}
+
+export function convertMoney(usdAmount: number, currency: Currency, eurRate = EUR_RATE): number {
+  return currency === 'EUR' ? usdAmount * eurRate : usdAmount;
+}
+
+export function formatMoney(usdAmount: number, currency: Currency, eurRate = EUR_RATE): string {
+  const val = convertMoney(usdAmount, currency, eurRate);
   const sym = currency === 'EUR' ? '€' : '$';
   if (val > 0 && val < 0.01) return `<${sym}0.01`;
   return `${sym}${val.toFixed(2)}`;
 }
 
-export function getCutoffMs(timeRange: TimeRange, now = Date.now()): number {
+export function getSubscriptionMultiplier(currency: Currency, eurRate = EUR_RATE): number {
+  return currency === 'EUR' ? eurRate * (1 + EUR_TAX_RATE) : 1 + USD_TAX_RATE;
+}
+
+export function convertSubscriptionMoney(usdAmount: number, currency: Currency, eurRate = EUR_RATE): number {
+  return usdAmount * getSubscriptionMultiplier(currency, eurRate);
+}
+
+export function formatSubscriptionMoney(usdAmount: number, currency: Currency, eurRate = EUR_RATE): string {
+  const val = convertSubscriptionMoney(usdAmount, currency, eurRate);
+  const sym = currency === 'EUR' ? '€' : '$';
+  if (val > 0 && val < 0.01) return `<${sym}0.01`;
+  return `${sym}${val.toFixed(2)}`;
+}
+
+export function getWindowDurationMs(timeRange: TimeRange): number {
   switch (timeRange) {
     case '24h':
-      return now - 24 * 3600 * 1000;
+      return 24 * 3600 * 1000;
     case '7d':
-      return now - 7 * 24 * 3600 * 1000;
+      return 7 * 24 * 3600 * 1000;
     case '30d':
-      return now - 30 * 24 * 3600 * 1000;
+      return 30 * 24 * 3600 * 1000;
     case 'all':
       return 0;
   }
+}
+
+export function getCutoffMs(timeRange: TimeRange, now = Date.now()): number {
+  const duration = getWindowDurationMs(timeRange);
+  return duration > 0 ? now - duration : 0;
+}
+
+export function getPreviousWindowBounds(
+  timeRange: TimeRange,
+  now = Date.now()
+): { startMs: number; endMs: number; label: string } | null {
+  const duration = getWindowDurationMs(timeRange);
+  if (duration <= 0) return null;
+  return {
+    startMs: now - duration * 2,
+    endMs: now - duration,
+    label: `prev ${timeRange}`,
+  };
+}
+
+export function filterSessionsInWindow(
+  sessions: SessionStats[],
+  options: {
+    toolFilter?: ToolFilter;
+    startMs: number;
+    endMs: number;
+  }
+): SessionStats[] {
+  const { toolFilter = 'all', startMs, endMs } = options;
+  const filtered: SessionStats[] = [];
+
+  for (const session of sessions) {
+    if (toolFilter !== 'all' && session.source !== toolFilter) continue;
+    if (session.untrackedHistory) continue;
+
+    const validTurns = session.turnHistory.filter((t) => {
+      const ts = new Date(t.timestamp).getTime();
+      return !Number.isNaN(ts) && ts >= startMs && ts < endMs;
+    });
+    if (validTurns.length === 0) continue;
+
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
+    let totalTokens = 0;
+    let costUSD = 0;
+    let cacheSavingsUSD = 0;
+    for (const t of validTurns) {
+      inputTokens += t.inputTokens;
+      outputTokens += t.outputTokens;
+      cacheReadTokens += t.cacheReadTokens;
+      cacheWriteTokens += t.cacheWriteTokens;
+      totalTokens += t.totalTokens;
+      costUSD += t.costUSD;
+      cacheSavingsUSD += t.cacheSavingsUSD;
+    }
+
+    filtered.push({
+      ...session,
+      turns: validTurns.length,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens,
+      costUSD,
+      cacheSavingsUSD,
+      turnHistory: validTurns,
+    });
+  }
+  return filtered;
 }
 
 export interface SessionModelItem {
@@ -40,6 +137,96 @@ export interface SessionModelItem {
   totalTokens: number;
   costUSD: number;
   cacheSavingsUSD: number;
+}
+
+export interface SessionSubagentItem {
+  subagentId: string;
+  subagentName: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  cacheSavingsUSD: number;
+  models: SessionModelItem[];
+}
+
+export interface SessionSubagentSummary {
+  main: {
+    turns: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    totalTokens: number;
+    costUSD: number;
+    cacheSavingsUSD: number;
+  };
+  subagents: SessionSubagentItem[];
+}
+
+export function getSessionSubagentBreakdown(turnHistory: UsageTurn[]): SessionSubagentSummary {
+  const main = {
+    turns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: 0,
+    costUSD: 0,
+    cacheSavingsUSD: 0,
+  };
+  const map = new Map<string, { name: string; turns: UsageTurn[] }>();
+
+  for (const t of turnHistory) {
+    if (!t.subagentId && !t.subagentName) {
+      main.turns += 1;
+      main.inputTokens += t.inputTokens;
+      main.outputTokens += t.outputTokens;
+      main.cacheReadTokens += t.cacheReadTokens;
+      main.totalTokens += t.totalTokens;
+      main.costUSD += t.costUSD;
+      main.cacheSavingsUSD += t.cacheSavingsUSD;
+      continue;
+    }
+    const id = t.subagentId || t.subagentName || 'subagent';
+    const name = t.subagentName || id;
+    const entry = map.get(id) || { name, turns: [] };
+    entry.turns.push(t);
+    map.set(id, entry);
+  }
+
+  const subagents: SessionSubagentItem[] = [];
+  for (const [subagentId, info] of map.entries()) {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let totalTokens = 0;
+    let costUSD = 0;
+    let cacheSavingsUSD = 0;
+    for (const t of info.turns) {
+      inputTokens += t.inputTokens;
+      outputTokens += t.outputTokens;
+      cacheReadTokens += t.cacheReadTokens;
+      totalTokens += t.totalTokens;
+      costUSD += t.costUSD;
+      cacheSavingsUSD += t.cacheSavingsUSD;
+    }
+    subagents.push({
+      subagentId,
+      subagentName: info.name,
+      turns: info.turns.length,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      totalTokens,
+      costUSD,
+      cacheSavingsUSD,
+      models: getSessionModelBreakdown(info.turns),
+    });
+  }
+
+  subagents.sort((a, b) => b.costUSD - a.costUSD || b.turns - a.turns);
+  return { main, subagents };
 }
 
 export function getSessionModelBreakdown(turnHistory: UsageTurn[]): SessionModelItem[] {
@@ -219,7 +406,8 @@ export function filterSessions(
           (t) =>
             t.modelLabel.toLowerCase().includes(query) ||
             t.normalizedModel.toLowerCase().includes(query) ||
-            t.model.toLowerCase().includes(query)
+            t.model.toLowerCase().includes(query) ||
+            (t.subagentName || '').toLowerCase().includes(query)
         );
       if (!matchesQuery) continue;
     }
@@ -318,6 +506,7 @@ export function buildWorkspaceGroups(sessions: SessionStats[]): WorkspaceGroup[]
     const sources: ToolSource[] = [];
     if (entry.sourceSet.has('antigravity')) sources.push('antigravity');
     if (entry.sourceSet.has('claude')) sources.push('claude');
+    if (entry.sourceSet.has('codex')) sources.push('codex');
 
     groups.push({
       workspaceKey: entry.workspaceKey,
@@ -433,8 +622,14 @@ function escapeCsvCell(value: string | number): string {
   return str;
 }
 
-export function workspacesToCsv(workspaces: WorkspaceGroup[], currency: Currency): string {
+export function workspacesToCsv(
+  workspaces: WorkspaceGroup[],
+  currency: Currency,
+  deletedSessions: SessionStats[] = [],
+  eurRate = EUR_RATE
+): string {
   const headers = [
+    'Status',
     'Workspace',
     'Workspace Path',
     'Chat Title',
@@ -462,6 +657,7 @@ export function workspacesToCsv(workspaces: WorkspaceGroup[], currency: Currency
         .join(' | ');
       lines.push(
         [
+          'active',
           ws.workspaceName,
           ws.workspace,
           chat.sessionTitle || chat.sessionId,
@@ -474,8 +670,8 @@ export function workspacesToCsv(workspaces: WorkspaceGroup[], currency: Currency
           chat.cacheReadTokens,
           chat.outputTokens,
           chat.totalTokens,
-          convertMoney(chat.cacheSavingsUSD, currency).toFixed(4),
-          convertMoney(chat.costUSD, currency).toFixed(4),
+          convertMoney(chat.cacheSavingsUSD, currency, eurRate).toFixed(4),
+          convertMoney(chat.costUSD, currency, eurRate).toFixed(4),
           chat.startedAt,
           chat.lastActiveAt,
         ]
@@ -483,6 +679,36 @@ export function workspacesToCsv(workspaces: WorkspaceGroup[], currency: Currency
           .join(',')
       );
     }
+  }
+
+  for (const chat of deletedSessions) {
+    if (chat.untrackedHistory) continue;
+    const models = getSessionModelBreakdown(chat.turnHistory)
+      .map((m) => m.modelLabel)
+      .join(' | ');
+    lines.push(
+      [
+        'deleted',
+        chat.workspaceName,
+        chat.workspace,
+        chat.sessionTitle || chat.sessionId,
+        chat.sessionId,
+        chat.source,
+        chat.primaryModelLabel,
+        models,
+        chat.turns,
+        chat.inputTokens,
+        chat.cacheReadTokens,
+        chat.outputTokens,
+        chat.totalTokens,
+        convertMoney(chat.cacheSavingsUSD, currency, eurRate).toFixed(4),
+        convertMoney(chat.costUSD, currency, eurRate).toFixed(4),
+        chat.startedAt,
+        chat.deletedAt || chat.lastActiveAt,
+      ]
+        .map(escapeCsvCell)
+        .join(',')
+    );
   }
 
   return lines.join('\r\n');
@@ -499,7 +725,8 @@ export function workspacesToJson(
     sortBy?: WorkspaceSortField;
     sortDir?: SortDirection;
   } = {},
-  deletedSessions: SessionStats[] = []
+  deletedSessions: SessionStats[] = [],
+  eurRate = EUR_RATE
 ): string {
   let chats = 0;
   let turns = 0;
@@ -540,12 +767,12 @@ export function workspacesToJson(
     deletedCacheSavingsUSD += d.cacheSavingsUSD;
   }
 
-  const roundMoney = (usd: number) => Number(convertMoney(usd, currency).toFixed(4));
+  const roundMoney = (usd: number) => Number(convertMoney(usd, currency, eurRate).toFixed(4));
 
   const payload = {
     exportedAt: new Date().toISOString(),
     currency,
-    eurRate: EUR_RATE,
+    eurRate,
     filters: {
       tool: filters.toolFilter || 'all',
       range: filters.timeRange || 'all',
@@ -582,31 +809,50 @@ export function workspacesToJson(
       apiCost: roundMoney(ws.costUSD),
       startedAt: ws.startedAt,
       lastActiveAt: ws.lastActiveAt,
-      chats: ws.chats.map((c) => ({
-        sessionId: c.sessionId,
-        sessionTitle: c.sessionTitle || c.sessionId,
-        source: c.source,
-        primaryModel: c.primaryModelLabel,
-        turns: c.turns,
-        inputTokens: c.inputTokens,
-        cacheReadTokens: c.cacheReadTokens,
-        outputTokens: c.outputTokens,
-        totalTokens: c.totalTokens,
-        cacheSavings: roundMoney(c.cacheSavingsUSD),
-        apiCost: roundMoney(c.costUSD),
-        startedAt: c.startedAt,
-        lastActiveAt: c.lastActiveAt,
-        models: getSessionModelBreakdown(c.turnHistory).map((m) => ({
-          model: m.modelLabel,
-          turns: m.turns,
-          inputTokens: m.inputTokens,
-          cacheReadTokens: m.cacheReadTokens,
-          outputTokens: m.outputTokens,
-          totalTokens: m.totalTokens,
-          cacheSavings: roundMoney(m.cacheSavingsUSD),
-          apiCost: roundMoney(m.costUSD),
-        })),
-      })),
+      chats: ws.chats.map((c) => {
+        const subagentSummary = getSessionSubagentBreakdown(c.turnHistory);
+        return {
+          sessionId: c.sessionId,
+          sessionTitle: c.sessionTitle || c.sessionId,
+          source: c.source,
+          primaryModel: c.primaryModelLabel,
+          turns: c.turns,
+          inputTokens: c.inputTokens,
+          cacheReadTokens: c.cacheReadTokens,
+          outputTokens: c.outputTokens,
+          totalTokens: c.totalTokens,
+          cacheSavings: roundMoney(c.cacheSavingsUSD),
+          apiCost: roundMoney(c.costUSD),
+          startedAt: c.startedAt,
+          lastActiveAt: c.lastActiveAt,
+          models: getSessionModelBreakdown(c.turnHistory).map((m) => ({
+            model: m.modelLabel,
+            turns: m.turns,
+            inputTokens: m.inputTokens,
+            cacheReadTokens: m.cacheReadTokens,
+            outputTokens: m.outputTokens,
+            totalTokens: m.totalTokens,
+            cacheSavings: roundMoney(m.cacheSavingsUSD),
+            apiCost: roundMoney(m.costUSD),
+          })),
+          ...(subagentSummary.subagents.length > 0
+            ? {
+                subagents: subagentSummary.subagents.map((sub) => ({
+                  subagentId: sub.subagentId,
+                  subagentName: sub.subagentName,
+                  turns: sub.turns,
+                  inputTokens: sub.inputTokens,
+                  cacheReadTokens: sub.cacheReadTokens,
+                  outputTokens: sub.outputTokens,
+                  totalTokens: sub.totalTokens,
+                  cacheSavings: roundMoney(sub.cacheSavingsUSD),
+                  apiCost: roundMoney(sub.costUSD),
+                  models: sub.models.map((m) => m.modelLabel),
+                })),
+              }
+            : {}),
+        };
+      }),
     })),
     ...(deletedSessions.length > 0
       ? {
@@ -629,4 +875,158 @@ export function workspacesToJson(
   };
 
   return JSON.stringify(payload, null, 2);
+}
+
+export interface MonthlyProjection {
+  todayUSD: number;
+  last7dUSD: number;
+  last30dUSD: number;
+  dailyAvgUSD: number;
+  projectedMonthlyUSD: number;
+  sampleDays: number;
+}
+
+export function computeMonthlyProjection(sessions: SessionStats[], now = Date.now()): MonthlyProjection {
+  const dayMs = 24 * 3600 * 1000;
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const todayStartMs = startOfToday.getTime();
+  const sevenDaysAgoMs = now - 7 * dayMs;
+  const thirtyDaysAgoMs = now - 30 * dayMs;
+
+  let todayUSD = 0;
+  let last7dUSD = 0;
+  let last30dUSD = 0;
+  let earliestTurnMs = Infinity;
+
+  for (const s of sessions) {
+    if (s.untrackedHistory) continue;
+    for (const t of s.turnHistory) {
+      const ts = new Date(t.timestamp).getTime();
+      if (Number.isNaN(ts)) continue;
+      if (ts < earliestTurnMs) earliestTurnMs = ts;
+      if (ts >= todayStartMs) todayUSD += t.costUSD;
+      if (ts >= sevenDaysAgoMs) last7dUSD += t.costUSD;
+      if (ts >= thirtyDaysAgoMs) last30dUSD += t.costUSD;
+    }
+  }
+
+  const spanDays = Number.isFinite(earliestTurnMs)
+    ? Math.max(1, Math.min(7, Math.ceil((now - earliestTurnMs) / dayMs)))
+    : 1;
+  const dailyAvgUSD = last7dUSD / spanDays;
+  const projectedMonthlyUSD = dailyAvgUSD * 30;
+
+  return {
+    todayUSD,
+    last7dUSD,
+    last30dUSD,
+    dailyAvgUSD,
+    projectedMonthlyUSD,
+    sampleDays: spanDays,
+  };
+}
+
+export interface HeatmapDay {
+  date: string;
+  dayOfWeek: number; // 0 = Mon .. 6 = Sun
+  weekIndex: number;
+  costUSD: number;
+  tokens: number;
+  turns: number;
+  level: 0 | 1 | 2 | 3 | 4;
+}
+
+export function computeDailyHeatmap(sessions: SessionStats[], weeks = 13, now = Date.now()): HeatmapDay[] {
+  const dailyMap = new Map<string, { costUSD: number; tokens: number; turns: number }>();
+
+  for (const s of sessions) {
+    if (s.untrackedHistory) continue;
+    for (const t of s.turnHistory) {
+      if (!t.timestamp) continue;
+      const dayKey = t.timestamp.slice(0, 10);
+      const prev = dailyMap.get(dayKey) || { costUSD: 0, tokens: 0, turns: 0 };
+      prev.costUSD += t.costUSD;
+      prev.tokens += t.totalTokens;
+      prev.turns += 1;
+      dailyMap.set(dayKey, prev);
+    }
+  }
+
+  // Align end date to the Sunday of the current week or today, starting on a Monday `weeks` weeks back
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const jsDow = today.getDay(); // 0=Sun..6=Sat
+  const monDow = (jsDow + 6) % 7; // 0=Mon..6=Sun
+  const totalDays = (weeks - 1) * 7 + monDow + 1;
+
+  const startDate = new Date(today.getTime() - (totalDays - 1) * 24 * 3600 * 1000);
+  const rawDays: Array<{
+    date: string;
+    dayOfWeek: number;
+    weekIndex: number;
+    costUSD: number;
+    tokens: number;
+    turns: number;
+  }> = [];
+
+  let maxCost = 0;
+  for (let i = 0; i < totalDays; i++) {
+    const d = new Date(startDate.getTime() + i * 24 * 3600 * 1000);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const key = `${yyyy}-${mm}-${dd}`;
+    const stats = dailyMap.get(key) || { costUSD: 0, tokens: 0, turns: 0 };
+    if (stats.costUSD > maxCost) maxCost = stats.costUSD;
+    rawDays.push({
+      date: key,
+      dayOfWeek: i % 7,
+      weekIndex: Math.floor(i / 7),
+      ...stats,
+    });
+  }
+
+  return rawDays.map((d) => {
+    let level: 0 | 1 | 2 | 3 | 4 = 0;
+    if (d.costUSD > 0 && maxCost > 0) {
+      const ratio = d.costUSD / maxCost;
+      if (ratio >= 0.72) level = 4;
+      else if (ratio >= 0.42) level = 3;
+      else if (ratio >= 0.16) level = 2;
+      else level = 1;
+    }
+    return { ...d, level };
+  });
+}
+
+export interface TopWorkspaceItem {
+  workspaceKey: string;
+  workspaceName: string;
+  workspace: string;
+  sources: ToolSource[];
+  chats: number;
+  turns: number;
+  tokens: number;
+  costUSD: number;
+  sharePct: number;
+}
+
+export function computeTopWorkspaces(sessions: SessionStats[], limit = 7): TopWorkspaceItem[] {
+  const groups = buildWorkspaceGroups(sessions.filter((s) => !s.untrackedHistory));
+  const totalCost = groups.reduce((acc, g) => acc + g.costUSD, 0);
+  return groups
+    .sort((a, b) => b.costUSD - a.costUSD)
+    .slice(0, limit)
+    .map((g) => ({
+      workspaceKey: g.workspaceKey,
+      workspaceName: g.workspaceName,
+      workspace: g.workspace,
+      sources: g.sources,
+      chats: g.chats.length,
+      turns: g.turns,
+      tokens: g.totalTokens,
+      costUSD: g.costUSD,
+      sharePct: totalCost > 0 ? (g.costUSD / totalCost) * 100 : 0,
+    }));
 }

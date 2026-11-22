@@ -3,8 +3,16 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getHooksStatus } from './hooks.js';
 import { calculateTurnCost, loadPricing } from './pricing.js';
-import { getSessionKey, reconcileSessionLedger } from './session-ledger.js';
+import {
+  getDismissedLegacyCount,
+  getDismissedLegacyKeys,
+  getSessionKey,
+  reconcileSessionLedger,
+  upsertSingleSessionToLedger,
+} from './session-ledger.js';
+import { loadUserSettings } from './settings.js';
 import type { BurnrateSnapshot, PricingConfig, SessionStats, ToolSource, UsageTurn } from './types.js';
 
 const require = createRequire(import.meta.url);
@@ -27,6 +35,8 @@ interface StaleSummaryRecord {
 interface AntigravityMetadata {
   titles: Map<string, string>;
   workspaces: Map<string, string>;
+  parentIds: Map<string, string>;
+  agentNames: Map<string, string>;
   appStores: Map<string, AntigravityAppStore>;
   allActiveConversationFileIds: Set<string>;
   staleSummaries: Map<string, StaleSummaryRecord>;
@@ -75,6 +85,8 @@ function normalizeIsoTimestamp(raw: string | number | undefined): string {
 function loadAntigravityMetadata(geminiDir: string): AntigravityMetadata {
   const titles = new Map<string, string>();
   const workspaces = new Map<string, string>();
+  const parentIds = new Map<string, string>();
+  const agentNames = new Map<string, string>();
   const appStores = new Map<string, AntigravityAppStore>();
   const allActiveConversationFileIds = new Set<string>();
   const staleSummaries = new Map<string, StaleSummaryRecord>();
@@ -125,17 +137,28 @@ function loadAntigravityMetadata(geminiDir: string): AntigravityMetadata {
       let db: any = null;
       try {
         db = new DatabaseSync(dbPath, { readOnly: true });
-        const rows = db
-          .prepare(
-            'SELECT conversation_id, title, step_count, workspace_uris, last_modified_time FROM conversation_summaries'
-          )
-          .all() as Array<{
+        let rows: Array<{
           conversation_id?: string;
           title?: string;
           step_count?: number;
           workspace_uris?: string;
           last_modified_time?: string;
+          agent_name?: string;
+          parent_conversation_id?: string;
         }>;
+        try {
+          rows = db
+            .prepare(
+              'SELECT conversation_id, title, step_count, workspace_uris, last_modified_time, agent_name, parent_conversation_id FROM conversation_summaries'
+            )
+            .all();
+        } catch {
+          rows = db
+            .prepare(
+              'SELECT conversation_id, title, step_count, workspace_uris, last_modified_time FROM conversation_summaries'
+            )
+            .all();
+        }
         store.hasSummaryDb = true;
         for (const row of rows) {
           if (!row.conversation_id) continue;
@@ -148,6 +171,14 @@ function loadAntigravityMetadata(geminiDir: string): AntigravityMetadata {
           const wsPath = parseFirstWorkspaceUri(row.workspace_uris);
           if (wsPath && !workspaces.has(id)) {
             workspaces.set(id, wsPath);
+          }
+          const agentName = row.agent_name?.trim() || '';
+          if (agentName && !agentNames.has(id)) {
+            agentNames.set(id, agentName);
+          }
+          const parentId = row.parent_conversation_id?.trim() || '';
+          if (parentId && parentId !== id && !parentIds.has(id)) {
+            parentIds.set(id, parentId);
           }
           const stepCount = Number(row.step_count ?? 0);
           if (
@@ -165,6 +196,20 @@ function loadAntigravityMetadata(geminiDir: string): AntigravityMetadata {
             });
           }
         }
+        try {
+          const parentRows = db
+            .prepare('SELECT conversation_id, parent_id FROM conversation_parents')
+            .all() as Array<{ conversation_id?: string; parent_id?: string }>;
+          for (const pr of parentRows) {
+            const cid = pr.conversation_id?.trim() || '';
+            const pid = pr.parent_id?.trim() || '';
+            if (cid && pid && cid !== pid && !parentIds.has(cid)) {
+              parentIds.set(cid, pid);
+            }
+          }
+        } catch {
+          // conversation_parents table may not exist on older DBs
+        }
       } catch {
         // Ignore locked or incompatible SQLite DB
       } finally {
@@ -181,7 +226,7 @@ function loadAntigravityMetadata(geminiDir: string): AntigravityMetadata {
     }
   }
 
-  return { titles, workspaces, appStores, allActiveConversationFileIds, staleSummaries };
+  return { titles, workspaces, parentIds, agentNames, appStores, allActiveConversationFileIds, staleSummaries };
 }
 
 function collectLegacyDeletedSessions(
@@ -195,7 +240,13 @@ function collectLegacyDeletedSessions(
   // 1. Stale Antigravity summary DB rows whose conversation file & brain logs were deleted before tracking
   for (const [id, rec] of antigravityMeta.staleSummaries.entries()) {
     const key = getSessionKey('antigravity', id);
-    if (knownKeys.has(key) || antigravityMeta.allActiveConversationFileIds.has(id)) continue;
+    if (
+      knownKeys.has(key) ||
+      antigravityMeta.allActiveConversationFileIds.has(id) ||
+      antigravityMeta.parentIds.has(id)
+    ) {
+      continue;
+    }
     const relWs = toRelativeHomePath(rec.workspace || 'Global / CLI');
     const ts = rec.lastModifiedTime || new Date(0).toISOString();
     recovered.set(key, {
@@ -457,15 +508,23 @@ interface CachedFileEntry {
 
 const fileCache = new Map<string, CachedFileEntry>();
 
-export function getWatchRoots(): { geminiDir: string; claudeDir: string } {
+export function getWatchRoots(): {
+  geminiDir: string;
+  claudeDir: string;
+  codexDir: string;
+} {
   const home = os.homedir();
+  const geminiDir = process.env.BURNRATE_GEMINI_DIR
+    ? path.resolve(process.env.BURNRATE_GEMINI_DIR)
+    : path.join(home, '.gemini');
   return {
-    geminiDir: process.env.BURNRATE_GEMINI_DIR
-      ? path.resolve(process.env.BURNRATE_GEMINI_DIR)
-      : path.join(home, '.gemini'),
+    geminiDir,
     claudeDir: process.env.BURNRATE_CLAUDE_DIR
       ? path.resolve(process.env.BURNRATE_CLAUDE_DIR)
       : path.join(home, '.claude'),
+    codexDir: process.env.BURNRATE_CODEX_DIR
+      ? path.resolve(process.env.BURNRATE_CODEX_DIR)
+      : path.join(home, '.codex'),
   };
 }
 
@@ -486,12 +545,21 @@ function shouldSkipJsonlFile(filePath: string, source: ToolSource): boolean {
   const base = path.basename(normalized);
 
   if (source === 'antigravity') {
-    if (base === 'transcript_full.jsonl') return true;
+    if (base === 'transcript_full.jsonl') {
+      // Allow fallback to transcript_full.jsonl only if sibling transcript.jsonl is missing
+      const siblingCompact = path.join(path.dirname(filePath), 'transcript.jsonl');
+      if (fs.existsSync(siblingCompact)) return true;
+    }
     if (normalized.includes('/.system_generated/logs/chunks/')) return true;
+    if (normalized.includes('/tmp/')) return true;
   }
 
   if (source === 'claude') {
     if (base === 'history.jsonl' && !normalized.includes('/projects/')) return true;
+  }
+
+  if (source === 'codex') {
+    if (!normalized.includes('/sessions/') && !normalized.includes('/archived_sessions/')) return true;
   }
 
   return false;
@@ -767,6 +835,12 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
   const turnMap = new Map<string, UsageTurn>();
   let fallbackCounter = 0;
 
+  const normalizedClaudePath = filePath.replace(/\\/g, '/');
+  const claudeSubagentMatch = normalizedClaudePath.match(/\/projects\/[^/]+\/([^/]+)\/subagents\/([^/]+)\.jsonl$/i);
+  const claudeSubagentParentId = claudeSubagentMatch ? claudeSubagentMatch[1] : null;
+  const claudeSubagentId = claudeSubagentMatch ? claudeSubagentMatch[2] : null;
+  let claudeSubagentName = claudeSubagentId || '';
+
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line.startsWith('{')) continue;
@@ -776,6 +850,15 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
       obj = JSON.parse(line);
     } catch {
       continue;
+    }
+
+    if (claudeSubagentId) {
+      const candidateName =
+        (typeof obj.agentName === 'string' && obj.agentName.trim()) ||
+        (typeof obj.subagent_type === 'string' && obj.subagent_type.trim()) ||
+        (typeof obj.agentType === 'string' && obj.agentType.trim()) ||
+        '';
+      if (candidateName) claudeSubagentName = candidateName;
     }
 
     if (typeof obj.sessionId === 'string' && obj.sessionId) {
@@ -901,9 +984,18 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
     }
   }
 
-  const turnHistory = Array.from(turnMap.values());
+  const turnHistory = Array.from(turnMap.values()).map((turn) =>
+    claudeSubagentId
+      ? {
+          ...turn,
+          subagentId: claudeSubagentId,
+          subagentName: claudeSubagentName || 'subagent',
+        }
+      : turn
+  );
   if (turnHistory.length === 0) return null;
 
+  const resolvedSessionId = claudeSubagentParentId || sessionId;
   const resolvedWs = workspace || decodeClaudeProjectFolder(filePath);
   const sessionTitle =
     customTitle ||
@@ -911,13 +1003,199 @@ function parseClaudeFile(filePath: string, stat: fs.Stats, pricing: PricingConfi
     firstUserTitle ||
     (slugTitle ? formatSlugTitle(slugTitle) : '') ||
     fallbackSlashTitle ||
-    sessionId;
+    (claudeSubagentId ? `Subagent: ${claudeSubagentName || claudeSubagentId}` : resolvedSessionId);
 
   return summarizeSession({
-    sessionId,
+    sessionId: resolvedSessionId,
     sessionTitle,
     source: 'claude',
     workspace: toRelativeHomePath(resolvedWs),
+    filePath: toRelativeHomePath(filePath),
+    startedAt: startedAt || new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
+    lastActiveAt: lastActiveAt || new Date(stat.mtimeMs).toISOString(),
+    turnHistory,
+  });
+}
+
+function extractCodexMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== 'object') return '';
+        if (typeof part.text === 'string') return part.text;
+        if (typeof part.input_text === 'string') return part.input_text;
+        return '';
+      })
+      .filter(Boolean)
+      .join(' ');
+  }
+  return '';
+}
+
+function parseCodexFile(filePath: string, stat: fs.Stats, pricing: PricingConfig): SessionStats | null {
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+
+  const lines = content.split(/\r?\n/);
+  let sessionId = path.basename(filePath, '.jsonl');
+  let workspace = 'Global / CLI';
+  let currentModel = 'gpt-5.3-codex';
+  let firstUserTitle = '';
+  let startedAt = '';
+  let lastActiveAt = '';
+
+  const turnHistory: UsageTurn[] = [];
+  let prevTotalTokensSig = '';
+  let prevTotalInput = 0;
+  let prevTotalCached = 0;
+  let prevTotalOutput = 0;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line.startsWith('{')) continue;
+
+    let obj: Record<string, any>;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    const timestamp: string =
+      typeof obj.timestamp === 'string' && obj.timestamp
+        ? obj.timestamp
+        : new Date(stat.mtimeMs).toISOString();
+
+    if (timestamp) {
+      if (!startedAt || timestamp < startedAt) startedAt = timestamp;
+      if (!lastActiveAt || timestamp > lastActiveAt) lastActiveAt = timestamp;
+    }
+
+    const payload = obj.payload && typeof obj.payload === 'object' ? obj.payload : obj;
+
+    if (obj.type === 'session_meta') {
+      if (typeof payload.id === 'string' && payload.id.trim()) sessionId = payload.id.trim();
+      if (typeof payload.cwd === 'string' && payload.cwd.trim()) workspace = payload.cwd.trim();
+      if (typeof payload.model === 'string' && payload.model.trim()) currentModel = payload.model.trim();
+      continue;
+    }
+
+    if (obj.type === 'turn_context') {
+      if (typeof payload.model === 'string' && payload.model.trim()) currentModel = payload.model.trim();
+      if (typeof payload.cwd === 'string' && payload.cwd.trim() && workspace === 'Global / CLI') {
+        workspace = payload.cwd.trim();
+      }
+      continue;
+    }
+
+    if (
+      !firstUserTitle &&
+      obj.type === 'response_item' &&
+      (payload.role === 'user' || payload.type === 'message') &&
+      payload.role === 'user'
+    ) {
+      const candidate = cleanChatTitle(extractCodexMessageText(payload.content));
+      if (candidate && !candidate.startsWith('# AGENTS.md') && !candidate.startsWith('<environment_context')) {
+        firstUserTitle = candidate;
+      }
+      continue;
+    }
+
+    if (obj.type === 'event_msg' && payload.type === 'user_message' && !firstUserTitle) {
+      const candidate = cleanChatTitle(String(payload.message || payload.text || ''));
+      if (candidate) firstUserTitle = candidate;
+      continue;
+    }
+
+    if (obj.type === 'event_msg' && payload.type === 'token_count') {
+      const info = payload.info;
+      if (!info || typeof info !== 'object') continue;
+
+      const totalUsage = info.total_token_usage;
+      const lastUsage = info.last_token_usage;
+
+      if (totalUsage && typeof totalUsage === 'object') {
+        const sig = `${totalUsage.input_tokens ?? 0}:${totalUsage.cached_input_tokens ?? 0}:${totalUsage.output_tokens ?? 0}:${totalUsage.total_tokens ?? 0}`;
+        if (sig === prevTotalTokensSig) continue;
+        prevTotalTokensSig = sig;
+      }
+
+      let rawInput = 0;
+      let cachedInput = 0;
+      let outputTokens = 0;
+
+      if (lastUsage && typeof lastUsage === 'object') {
+        rawInput = Math.max(0, Number(lastUsage.input_tokens ?? 0));
+        cachedInput = Math.max(0, Number(lastUsage.cached_input_tokens ?? lastUsage.cache_read_input_tokens ?? 0));
+        outputTokens = Math.max(0, Number(lastUsage.output_tokens ?? 0));
+        if (totalUsage && typeof totalUsage === 'object') {
+          prevTotalInput = Math.max(prevTotalInput, Number(totalUsage.input_tokens ?? 0));
+          prevTotalCached = Math.max(prevTotalCached, Number(totalUsage.cached_input_tokens ?? 0));
+          prevTotalOutput = Math.max(prevTotalOutput, Number(totalUsage.output_tokens ?? 0));
+        }
+      } else if (totalUsage && typeof totalUsage === 'object') {
+        const curIn = Math.max(0, Number(totalUsage.input_tokens ?? 0));
+        const curCached = Math.max(0, Number(totalUsage.cached_input_tokens ?? totalUsage.cache_read_input_tokens ?? 0));
+        const curOut = Math.max(0, Number(totalUsage.output_tokens ?? 0));
+        rawInput = Math.max(0, curIn - prevTotalInput);
+        cachedInput = Math.max(0, curCached - prevTotalCached);
+        outputTokens = Math.max(0, curOut - prevTotalOutput);
+        prevTotalInput = curIn;
+        prevTotalCached = curCached;
+        prevTotalOutput = curOut;
+      } else {
+        continue;
+      }
+
+      const nonCachedInput = rawInput >= cachedInput ? rawInput - cachedInput : rawInput;
+      const totalTokens = nonCachedInput + cachedInput + outputTokens;
+      if (totalTokens <= 0) continue;
+
+      const turnModel =
+        typeof info.model === 'string' && info.model.trim() ? info.model.trim() : currentModel;
+
+      const costCalc = calculateTurnCost(
+        {
+          rawModel: turnModel,
+          source: 'codex',
+          timestamp,
+          inputTokens: nonCachedInput,
+          outputTokens,
+          cacheReadTokens: cachedInput,
+          cacheWriteTokens: 0,
+        },
+        pricing
+      );
+
+      turnHistory.push({
+        timestamp,
+        model: turnModel,
+        normalizedModel: costCalc.normalizedModel,
+        modelLabel: costCalc.modelLabel,
+        inputTokens: nonCachedInput,
+        outputTokens,
+        cacheReadTokens: cachedInput,
+        cacheWriteTokens: 0,
+        totalTokens,
+        costUSD: costCalc.costUSD,
+        cacheSavingsUSD: costCalc.cacheSavingsUSD,
+        estimated: false,
+      });
+    }
+  }
+
+  if (turnHistory.length === 0) return null;
+
+  return summarizeSession({
+    sessionId,
+    sessionTitle: firstUserTitle || sessionId,
+    source: 'codex',
+    workspace: toRelativeHomePath(workspace),
     filePath: toRelativeHomePath(filePath),
     startedAt: startedAt || new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
     lastActiveAt: lastActiveAt || new Date(stat.mtimeMs).toISOString(),
@@ -1043,7 +1321,9 @@ export function parseSingleFile(
   const session =
     source === 'antigravity'
       ? parseAntigravityFile(filePath, stat, pricing, resolvedTitles, resolvedWorkspaces)
-      : parseClaudeFile(filePath, stat, pricing);
+      : source === 'claude'
+        ? parseClaudeFile(filePath, stat, pricing)
+        : parseCodexFile(filePath, stat, pricing);
 
   fileCache.set(filePath, {
     mtimeMs: stat.mtimeMs,
@@ -1054,28 +1334,269 @@ export function parseSingleFile(
   return session;
 }
 
+export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> | null): boolean {
+  const { geminiDir, claudeDir, codexDir } = getWatchRoots();
+  const pricing = loadPricing(false);
+
+  const rawTranscriptPath =
+    (typeof hookPayload?.transcriptPath === 'string' && hookPayload.transcriptPath.trim()) ||
+    (typeof hookPayload?.transcript_path === 'string' && hookPayload.transcript_path.trim()) ||
+    '';
+
+  const conversationId =
+    (typeof hookPayload?.conversationId === 'string' && hookPayload.conversationId.trim()) ||
+    (typeof hookPayload?.session_id === 'string' && hookPayload.session_id.trim()) ||
+    '';
+
+  const candidates: Array<{ filePath: string; source: ToolSource }> = [];
+
+  if (rawTranscriptPath) {
+    const norm = path.resolve(rawTranscriptPath).replace(/\\/g, '/').toLowerCase();
+    const normClaude = normalizePathKey(claudeDir);
+    const normCodex = normalizePathKey(codexDir);
+    const normGemini = normalizePathKey(geminiDir);
+    const isSnakeCaseClaudeHook =
+      typeof hookPayload?.transcript_path === 'string' && typeof hookPayload?.transcriptPath !== 'string';
+
+    const detectedSource: ToolSource =
+      norm.startsWith(`${normClaude}/`) || norm.includes('/.claude/')
+        ? 'claude'
+        : norm.startsWith(`${normCodex}/`) || norm.includes('/.codex/')
+          ? 'codex'
+          : norm.startsWith(`${normGemini}/`) || norm.includes('/.gemini/')
+            ? 'antigravity'
+            : isSnakeCaseClaudeHook
+              ? 'claude'
+              : 'antigravity';
+    if (fs.existsSync(rawTranscriptPath)) {
+      candidates.push({ filePath: rawTranscriptPath, source: detectedSource });
+    }
+  }
+
+  if (candidates.length === 0 && conversationId) {
+    for (const sub of ['antigravity-cli', 'antigravity', 'antigravity-ide']) {
+      for (const name of ['transcript.jsonl', 'transcript_full.jsonl']) {
+        const p = path.join(geminiDir, sub, 'brain', conversationId, '.system_generated', 'logs', name);
+        if (fs.existsSync(p)) {
+          candidates.push({ filePath: p, source: 'antigravity' });
+          break;
+        }
+      }
+      if (candidates.length > 0) break;
+    }
+  }
+
+  if (candidates.length > 0) {
+    const { filePath, source } = candidates[0];
+    const antigravityMeta = source === 'antigravity' ? loadAntigravityMetadata(geminiDir) : null;
+    const session = parseSingleFile(
+      filePath,
+      source,
+      pricing,
+      antigravityMeta?.titles,
+      antigravityMeta?.workspaces
+    );
+    if (session) {
+      let requiresParentSubagentMerge = false;
+      if (source === 'antigravity' && antigravityMeta) {
+        if (antigravityMeta.parentIds.has(session.sessionId)) {
+          requiresParentSubagentMerge = true;
+        } else {
+          for (const parentId of antigravityMeta.parentIds.values()) {
+            if (parentId === session.sessionId) {
+              requiresParentSubagentMerge = true;
+              break;
+            }
+          }
+        }
+      } else if (source === 'claude') {
+        const normPath = filePath.replace(/\\/g, '/');
+        if (
+          normPath.includes('/subagents/') ||
+          session.turnHistory.some((t) => Boolean(t.subagentId)) ||
+          fs.existsSync(path.join(path.dirname(filePath), session.sessionId, 'subagents'))
+        ) {
+          requiresParentSubagentMerge = true;
+        }
+      }
+
+      if (!requiresParentSubagentMerge) {
+        const hintWorkspace =
+          (Array.isArray(hookPayload?.workspacePaths) && typeof hookPayload.workspacePaths[0] === 'string'
+            ? hookPayload.workspacePaths[0]
+            : undefined) ||
+          (typeof hookPayload?.cwd === 'string' ? hookPayload.cwd : undefined);
+
+        if (hintWorkspace && session.workspace === 'Global / CLI') {
+          const rel = toRelativeHomePath(hintWorkspace);
+          session.workspace = rel;
+          session.workspaceName = formatWorkspaceName(rel);
+        }
+        return upsertSingleSessionToLedger(session);
+      }
+    }
+  }
+
+  // Fallback: full lightweight reconciliation updates all current sessions in ledger
+  scanAllLogs(false);
+  return true;
+}
+
+function resolveRootParentId(sessionId: string, parentIds: Map<string, string>): string | null {
+  let cur = parentIds.get(sessionId);
+  if (!cur) return null;
+  const visited = new Set<string>([sessionId]);
+  while (cur && !visited.has(cur)) {
+    visited.add(cur);
+    const next = parentIds.get(cur);
+    if (!next) return cur;
+    cur = next;
+  }
+  return null;
+}
+
+function mergeSessionsAndSubagents(
+  rawSessions: SessionStats[],
+  antigravityMeta: AntigravityMetadata
+): {
+  merged: SessionStats[];
+  mergedSubagentKeys: Set<string>;
+} {
+  const byKey = new Map<string, SessionStats>();
+  const subagentBuckets = new Map<string, UsageTurn[]>();
+  const mergedSubagentKeys = new Set<string>();
+
+  // Separate root sessions from child/subagent sessions (Antigravity parentIds & Claude subagents sharing parent sessionId)
+  const pendingChildren: Array<{ parentKey: string; session: SessionStats; subagentName: string }> = [];
+
+  for (const s of rawSessions) {
+    const key = getSessionKey(s.source, s.sessionId);
+
+    // 1. Antigravity subagent detected via conversation_summaries.parent_conversation_id / conversation_parents
+    if (s.source === 'antigravity') {
+      const rootParentId = resolveRootParentId(s.sessionId, antigravityMeta.parentIds);
+      if (rootParentId) {
+        const subName = antigravityMeta.agentNames.get(s.sessionId) || 'subagent';
+        pendingChildren.push({
+          parentKey: getSessionKey('antigravity', rootParentId),
+          session: s,
+          subagentName: subName,
+        });
+        continue;
+      }
+    }
+
+    // 2. Claude subagent file (already carries parent sessionId and turns tagged with subagentId)
+    const isClaudeSubagentFile =
+      s.source === 'claude' &&
+      s.turnHistory.length > 0 &&
+      s.turnHistory.every((t) => Boolean(t.subagentId));
+
+    if (isClaudeSubagentFile) {
+      const existing = subagentBuckets.get(key) || [];
+      existing.push(...s.turnHistory);
+      subagentBuckets.set(key, existing);
+      continue;
+    }
+
+    const existing = byKey.get(key);
+    if (!existing || s.turns >= existing.turns) {
+      byKey.set(key, { ...s, turnHistory: [...s.turnHistory] });
+    }
+  }
+
+  // Attach Antigravity subagents to their parent session when parent exists; otherwise give clean readable title
+  for (const child of pendingChildren) {
+    const parent = byKey.get(child.parentKey);
+    if (parent) {
+      const taggedTurns = child.session.turnHistory.map((t) => ({
+        ...t,
+        subagentId: t.subagentId || child.session.sessionId,
+        subagentName: t.subagentName || child.subagentName,
+      }));
+      const bucket = subagentBuckets.get(child.parentKey) || [];
+      bucket.push(...taggedTurns);
+      subagentBuckets.set(child.parentKey, bucket);
+      mergedSubagentKeys.add(getSessionKey(child.session.source, child.session.sessionId));
+    } else {
+      // Standalone subagent whose parent is no longer present: show readable title instead of raw UUID
+      const childKey = getSessionKey(child.session.source, child.session.sessionId);
+      const hasUuidTitle =
+        !child.session.sessionTitle || child.session.sessionTitle === child.session.sessionId;
+      byKey.set(childKey, {
+        ...child.session,
+        sessionTitle: hasUuidTitle ? `Subagent: ${child.subagentName}` : child.session.sessionTitle,
+      });
+    }
+  }
+
+  // Re-summarize any parent sessions that absorbed subagent turns
+  const merged: SessionStats[] = [];
+  for (const [key, base] of byKey.entries()) {
+    const extraTurns = subagentBuckets.get(key);
+    if (!extraTurns || extraTurns.length === 0) {
+      merged.push(base);
+      continue;
+    }
+    const combinedTurns = [...base.turnHistory, ...extraTurns].sort((a, b) =>
+      a.timestamp > b.timestamp ? 1 : a.timestamp < b.timestamp ? -1 : 0
+    );
+    let startedAt = base.startedAt;
+    let lastActiveAt = base.lastActiveAt;
+    for (const t of extraTurns) {
+      if (t.timestamp) {
+        if (!startedAt || t.timestamp < startedAt) startedAt = t.timestamp;
+        if (!lastActiveAt || t.timestamp > lastActiveAt) lastActiveAt = t.timestamp;
+      }
+    }
+    merged.push(
+      summarizeSession({
+        sessionId: base.sessionId,
+        sessionTitle: base.sessionTitle,
+        source: base.source,
+        workspace: base.workspace,
+        filePath: base.filePath,
+        startedAt,
+        lastActiveAt,
+        turnHistory: combinedTurns,
+      })
+    );
+  }
+
+  return { merged, mergedSubagentKeys };
+}
+
 export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
   if (forceClearCache) {
     fileCache.clear();
   }
 
   const pricing = loadPricing(forceClearCache);
-  const { geminiDir, claudeDir } = getWatchRoots();
+  const { geminiDir, claudeDir, codexDir } = getWatchRoots();
   const antigravityMeta = loadAntigravityMetadata(geminiDir);
 
   const geminiFiles = collectJsonlFiles(geminiDir, 'antigravity');
   const claudeFiles = collectJsonlFiles(claudeDir, 'claude');
+  const codexLiveDir = path.join(codexDir, 'sessions');
+  const codexArchivedDir = path.join(codexDir, 'archived_sessions');
+  const codexLiveFiles = collectJsonlFiles(codexLiveDir, 'codex');
+  const codexArchivedFiles = collectJsonlFiles(codexArchivedDir, 'codex');
 
   // Purge stale entries from fileCache for files deleted from disk
-  const seenFiles = new Set<string>([...geminiFiles, ...claudeFiles]);
+  const seenFiles = new Set<string>([
+    ...geminiFiles,
+    ...claudeFiles,
+    ...codexLiveFiles,
+    ...codexArchivedFiles,
+  ]);
   for (const cachedPath of fileCache.keys()) {
     if (!seenFiles.has(cachedPath)) {
       fileCache.delete(cachedPath);
     }
   }
 
-  const liveSessions: SessionStats[] = [];
-  const orphanedDeletedSessions: SessionStats[] = [];
+  const rawLiveSessions: SessionStats[] = [];
+  const rawOrphanedDeletedSessions: SessionStats[] = [];
 
   for (const file of geminiFiles) {
     const session = parseSingleFile(
@@ -1087,27 +1608,51 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
     );
     if (!session) continue;
     if (isOrphanedAntigravitySession(file, session.sessionId, antigravityMeta)) {
-      orphanedDeletedSessions.push(session);
+      rawOrphanedDeletedSessions.push(session);
     } else {
-      liveSessions.push(session);
+      rawLiveSessions.push(session);
     }
   }
 
   for (const file of claudeFiles) {
     const session = parseSingleFile(file, 'claude', pricing);
-    if (session) liveSessions.push(session);
+    if (session) rawLiveSessions.push(session);
   }
+
+  for (const file of codexLiveFiles) {
+    const session = parseSingleFile(file, 'codex', pricing);
+    if (session) rawLiveSessions.push(session);
+  }
+
+  for (const file of codexArchivedFiles) {
+    const session = parseSingleFile(file, 'codex', pricing);
+    if (session) rawOrphanedDeletedSessions.push(session);
+  }
+
+  const { merged: liveSessions, mergedSubagentKeys: liveMergedSubKeys } = mergeSessionsAndSubagents(
+    rawLiveSessions,
+    antigravityMeta
+  );
+  const { merged: orphanedDeletedSessions, mergedSubagentKeys: orphanMergedSubKeys } =
+    mergeSessionsAndSubagents(rawOrphanedDeletedSessions, antigravityMeta);
+
+  const mergedSubagentKeys = new Set<string>([...liveMergedSubKeys, ...orphanMergedSubKeys]);
+  const codexDirExists = fs.existsSync(codexDir);
 
   const { activeSessions, deletedSessions: ledgerDeleted } = reconcileSessionLedger({
     liveSessions,
     orphanedDeletedSessions,
+    mergedSubagentKeys,
     geminiDirExists: fs.existsSync(geminiDir),
     claudeDirExists: fs.existsSync(claudeDir),
+    codexDirExists,
   });
 
   const knownKeys = new Set<string>();
   for (const s of activeSessions) knownKeys.add(getSessionKey(s.source, s.sessionId));
   for (const s of ledgerDeleted) knownKeys.add(getSessionKey(s.source, s.sessionId));
+  for (const key of mergedSubagentKeys) knownKeys.add(key);
+  for (const key of getDismissedLegacyKeys()) knownKeys.add(key);
 
   const legacyDeleted = collectLegacyDeletedSessions(geminiDir, claudeDir, antigravityMeta, knownKeys);
   const deletedSessions = [...ledgerDeleted, ...legacyDeleted].sort((a, b) => {
@@ -1116,11 +1661,17 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
     return bKey > aKey ? 1 : -1;
   });
 
+  const watchedPaths = [toRelativeHomePath(geminiDir), toRelativeHomePath(claudeDir)];
+  if (codexDirExists) watchedPaths.push(toRelativeHomePath(codexDir));
+
   return {
     generatedAt: new Date().toISOString(),
-    watchedPaths: [toRelativeHomePath(geminiDir), toRelativeHomePath(claudeDir)],
+    watchedPaths,
     pricing,
     sessions: activeSessions,
     deletedSessions,
+    dismissedLegacyCount: getDismissedLegacyCount(),
+    settings: loadUserSettings(),
+    hooksStatus: getHooksStatus(),
   };
 }

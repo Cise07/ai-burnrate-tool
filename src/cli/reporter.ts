@@ -1,9 +1,14 @@
 import pc from 'picocolors';
 import {
   buildWorkspaceGroups,
+  convertMoney,
+  convertSubscriptionMoney,
   filterSessions,
   formatMoney,
+  formatSubscriptionMoney,
   getSessionModelBreakdown,
+  getSessionSubagentBreakdown,
+  getTaxLabel,
   workspacesToJson,
   type Currency,
   type TimeRange,
@@ -47,15 +52,23 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   const currency: Currency = options.currency || 'USD';
   const toolFilter: ToolFilter = options.toolFilter || 'all';
   const timeRange: TimeRange = options.timeRange || 'all';
+  const includeDeleted = snapshot.settings?.includeDeletedInTotals ?? true;
 
   const activeSessions = filterSessions(snapshot.sessions, { toolFilter, timeRange });
   const deletedSessions = filterSessions(snapshot.deletedSessions || [], { toolFilter, timeRange });
   const trackedDeletedSessions = deletedSessions.filter((s) => !s.untrackedHistory);
-  const allSessions = [...activeSessions, ...trackedDeletedSessions];
+  const allSessions = includeDeleted ? [...activeSessions, ...trackedDeletedSessions] : [...activeSessions];
   const workspaceGroups = buildWorkspaceGroups(activeSessions);
 
   if (options.json) {
-    console.log(workspacesToJson(workspaceGroups, currency, { toolFilter, timeRange }, deletedSessions));
+    console.log(
+      workspacesToJson(
+        workspaceGroups,
+        currency,
+        { toolFilter, timeRange },
+        includeDeleted ? deletedSessions : []
+      )
+    );
     return;
   }
 
@@ -70,6 +83,7 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   const byTool = {
     antigravity: { sessions: 0, turns: 0, input: 0, cache: 0, output: 0, tokens: 0, cost: 0, savings: 0 },
     claude: { sessions: 0, turns: 0, input: 0, cache: 0, output: 0, tokens: 0, cost: 0, savings: 0 },
+    codex: { sessions: 0, turns: 0, input: 0, cache: 0, output: 0, tokens: 0, cost: 0, savings: 0 },
   };
 
   const byModel = new Map<
@@ -120,7 +134,9 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   }
 
   const subMonthly = snapshot.pricing.subscriptions.combinedMonthlyUSD || 40;
-  const subRatio = subMonthly > 0 ? ((totalCost / subMonthly) * 100).toFixed(0) : '0';
+  const displayedCost = convertMoney(totalCost, currency);
+  const displayedSub = convertSubscriptionMoney(subMonthly, currency);
+  const subRatio = displayedSub > 0 ? ((displayedCost / displayedSub) * 100).toFixed(0) : '0';
   const activeFilters: string[] = [];
   if (toolFilter !== 'all') activeFilters.push(`Tool: ${toolFilter}`);
   if (timeRange !== 'all') activeFilters.push(`Range: ${timeRange}`);
@@ -128,7 +144,7 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
 
   console.log('');
   console.log(
-    `${pc.bgGreen(pc.black(pc.bold(' AI-BURNRATE ')))} ${pc.bold('Local Token & API Equivalent Cost Report')}${
+    `${pc.bgGreen(pc.black(pc.bold(' AI-BURNRATE-TOOL ')))} ${pc.bold('Local Token & API Equivalent Cost Report')}${
       activeFilters.length > 0 ? `  ${pc.dim(`[${activeFilters.join(' • ')}]`)}` : ''
     }`
   );
@@ -136,7 +152,7 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   console.log(pc.dim('─'.repeat(104)));
 
   console.log(
-    `  ${pc.bold('API Equiv. Spend:')} ${pc.green(pc.bold(formatMoney(totalCost, currency)))} ${pc.dim(`(${subRatio}% of ${formatMoney(subMonthly, currency)}/mo sub)`)}   ` +
+    `  ${pc.bold('API Equiv. Spend:')} ${pc.green(pc.bold(formatMoney(totalCost, currency)))} ${pc.dim(`(${subRatio}% of ${formatSubscriptionMoney(subMonthly, currency)}/mo sub incl. ${getTaxLabel(currency)})`)}   ` +
       `${pc.bold('Cache Saved:')} ${pc.cyan(pc.bold(formatMoney(totalCacheSavings, currency)))}   ` +
       `${pc.bold('Total Tokens:')} ${pc.yellow(pc.bold(fmtTokens(totalTokens)))}   ` +
       `${pc.bold('Workspaces:')} ${pc.white(pc.bold(String(workspaceGroups.length)))}   ` +
@@ -165,6 +181,7 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   const toolRows: Array<{ label: string; data: typeof byTool.antigravity }> = [
     { label: pc.cyan('Antigravity CLI'), data: byTool.antigravity },
     { label: pc.magenta('Claude Code'), data: byTool.claude },
+    { label: pc.yellow('Codex CLI'), data: byTool.codex },
   ];
 
   for (const row of toolRows) {
@@ -197,7 +214,7 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
       );
     }
     if (hasPromo) {
-      console.log(`  ${pc.yellow('★')} ${pc.dim('Modelli con tariffe promozionali Google AI Studio attive.')}`);
+      console.log(`  ${pc.yellow('★')} ${pc.dim('Models with active Google AI Studio promotional rates.')}`);
     }
   }
 
@@ -212,12 +229,22 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   const maxChatsPerWorkspace = 4;
 
   for (const ws of workspaceGroups.slice(0, maxWorkspaces)) {
+    const formatToolShort = (src: string) =>
+      src === 'antigravity'
+        ? pc.cyan('AGY')
+        : src === 'claude'
+          ? pc.magenta('CLD')
+          : pc.yellow('CDX');
+    const formatToolLong = (src: string) =>
+      src === 'antigravity'
+        ? pc.cyan('Antigravity')
+        : src === 'claude'
+          ? pc.magenta('Claude Code')
+          : pc.yellow('Codex CLI');
     const wsToolLabel =
       ws.sources.length > 1
-        ? `${pc.cyan('AGY')}${pc.dim('+')}${pc.magenta('CLD')}`
-        : ws.sources[0] === 'antigravity'
-          ? pc.cyan('Antigravity')
-          : pc.magenta('Claude Code');
+        ? ws.sources.map(formatToolShort).join(pc.dim('+'))
+        : formatToolLong(ws.sources[0]);
     const wsLabel = `${truncateLabel(ws.workspaceName, 21, true)} ${pc.dim(`(${ws.chats.length})`)}`;
     const extraModelCount = Math.max(0, ws.distinctModels.length - 1);
     const wsModel = truncateLabel(
@@ -241,10 +268,17 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
         ws.sources.length > 1
           ? chat.source === 'antigravity'
             ? pc.cyan('[AGY]')
-            : pc.magenta('[CLD]')
+            : chat.source === 'claude'
+              ? pc.magenta('[CLD]')
+              : pc.yellow('[CDX]')
           : '';
       const rawTitle = chat.sessionTitle || chat.sessionId;
-      const chatTitle = `${branch} ${truncateLabel(rawTitle, 26)}`;
+      const subSummary = getSessionSubagentBreakdown(chat.turnHistory);
+      const subTag =
+        subSummary.subagents.length > 0
+          ? ` ${pc.magenta(`+${subSummary.subagents.length}sub`)}`
+          : '';
+      const chatTitle = `${branch} ${truncateLabel(rawTitle, subSummary.subagents.length > 0 ? 20 : 26)}${subTag}`;
       const chatModels = getSessionModelBreakdown(chat.turnHistory);
       const chatModelStr = truncateLabel(
         chatModels.length > 1
@@ -257,6 +291,24 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
       console.log(
         `  ${padRight(chatSourceTag, 13)} ${padRight(chatTitle, 30)} ${padRight(pc.dim(chatModelStr), 18)} ${padLeft(pc.dim(String(chat.turns)), 6)} ${padLeft(pc.dim(fmtTokens(chat.cacheReadTokens)), 8)} ${padLeft(pc.dim(fmtTokens(chat.outputTokens)), 8)} ${padLeft(pc.dim(formatMoney(chat.costUSD, currency)), 8)} ${padLeft(pc.dim(chatDate), 11)}`
       );
+
+      if (subSummary.subagents.length > 0) {
+        const subPrefix = isLastLine ? '   ' : `${pc.dim('│')}  `;
+        for (let j = 0; j < subSummary.subagents.length; j++) {
+          const sub = subSummary.subagents[j];
+          const subBranch = pc.dim(j === subSummary.subagents.length - 1 ? '└─' : '├─');
+          const subLabel = `${subPrefix}${subBranch} ${pc.magenta(truncateLabel(sub.subagentName, 21))}`;
+          const subModelStr = truncateLabel(
+            sub.models.length > 1
+              ? `${sub.models[0].modelLabel} +${sub.models.length - 1}`
+              : sub.models[0]?.modelLabel || '-',
+            17
+          );
+          console.log(
+            `  ${padRight(pc.magenta('[SUB]'), 13)} ${padRight(subLabel, 30)} ${padRight(pc.dim(subModelStr), 18)} ${padLeft(pc.dim(String(sub.turns)), 6)} ${padLeft(pc.dim(fmtTokens(sub.cacheReadTokens)), 8)} ${padLeft(pc.dim(fmtTokens(sub.outputTokens)), 8)} ${padLeft(pc.dim(formatMoney(sub.costUSD, currency)), 8)} ${padLeft(pc.dim(''), 11)}`
+          );
+        }
+      }
     }
 
     if (hiddenChats > 0) {
@@ -277,7 +329,12 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
     );
     console.log(`  ${pc.dim('─'.repeat(106))}`);
     for (const chat of deletedSessions.slice(0, 8)) {
-      const toolLabel = chat.source === 'antigravity' ? pc.cyan('Antigravity') : pc.magenta('Claude Code');
+      const toolLabel =
+        chat.source === 'antigravity'
+          ? pc.cyan('Antigravity')
+          : chat.source === 'claude'
+            ? pc.magenta('Claude Code')
+            : pc.yellow('Codex CLI');
       const title = truncateLabel(chat.sessionTitle || chat.sessionId, 29);
       const ws = truncateLabel(chat.workspaceName, 19, true);
       const delDate = (chat.deletedAt || chat.lastActiveAt || '').slice(0, 10) || '-';

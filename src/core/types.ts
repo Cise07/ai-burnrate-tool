@@ -1,4 +1,31 @@
-export type ToolSource = 'antigravity' | 'claude';
+export type ToolSource = 'antigravity' | 'claude' | 'codex';
+
+export type DashboardSectionId =
+  | 'kpis'
+  | 'charts'
+  | 'modelUsage'
+  | 'heatmapWorkspaces'
+  | 'sessions';
+
+export interface DashboardLayoutSettings {
+  order: DashboardSectionId[];
+  hidden: DashboardSectionId[];
+}
+
+export interface UserSettings {
+  subscriptions: {
+    antigravity: number;
+    claude: number;
+    codex: number;
+  };
+  includeDeletedInTotals: boolean;
+  layout: DashboardLayoutSettings;
+}
+
+export interface HooksStatus {
+  antigravity: boolean;
+  claude: boolean;
+}
 
 export interface ModelRate {
   label: string;
@@ -30,6 +57,7 @@ export interface PricingConfig {
   subscriptions: {
     claude_max: { name: string; monthlyUSD: number };
     antigravity_pro: { name: string; monthlyUSD: number };
+    codex_plus?: { name: string; monthlyUSD: number };
     combinedMonthlyUSD: number;
   };
   models: Record<string, ModelRate>;
@@ -37,6 +65,7 @@ export interface PricingConfig {
   defaults: {
     claude: string;
     antigravity: string;
+    codex?: string;
   };
 }
 
@@ -53,6 +82,8 @@ export interface UsageTurn {
   costUSD: number;
   cacheSavingsUSD: number;
   estimated: boolean;
+  subagentId?: string;
+  subagentName?: string;
 }
 
 export interface SessionStats {
@@ -87,4 +118,7 @@ export interface BurnrateSnapshot {
   pricing: PricingConfig;
   sessions: SessionStats[];
   deletedSessions?: SessionStats[];
+  dismissedLegacyCount?: number;
+  settings?: UserSettings;
+  hooksStatus?: HooksStatus;
 }

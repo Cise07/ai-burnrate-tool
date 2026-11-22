@@ -30,6 +30,9 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
+      - name: Type-check project
+        run: npx tsc --noEmit
+
       - name: Build project
         run: npm run build
 

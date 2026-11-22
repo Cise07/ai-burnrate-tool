@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="ai-burnrate logo">
+  <defs>
+    <!-- Deep obsidian background with subtle emerald radial aura -->
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="48%" fx="50%" fy="50%">
+      <stop offset="0%" stop-color="#0a2923"/>
+      <stop offset="48%" stop-color="#061918"/>
+      <stop offset="82%" stop-color="#050b0e"/>
+      <stop offset="100%" stop-color="#06070b"/>
+    </radialGradient>
+
+    <!-- Bar 1: Emerald -->
+    <linearGradient id="bar1Grad" x1="0%" y1="0%" x2="10%" y2="100%">
+      <stop offset="0%" stop-color="#3ce89e"/>
+      <stop offset="100%" stop-color="#19b080"/>
+    </linearGradient>
+
+    <!-- Bar 2: Emerald to Teal -->
+    <linearGradient id="bar2Grad" x1="0%" y1="0%" x2="15%" y2="100%">
+      <stop offset="0%" stop-color="#38e5a4"/>
+      <stop offset="100%" stop-color="#25c1b8"/>
+    </linearGradient>
+
+    <!-- Bar 3: Electric Cyan -->
+    <linearGradient id="bar3Grad" x1="0%" y1="0%" x2="10%" y2="100%">
+      <stop offset="0%" stop-color="#2cd9ec"/>
+      <stop offset="100%" stop-color="#22c0ec"/>
+    </linearGradient>
+
+    <!-- Rising burn-rate trend arrow: Emerald to Cyan -->
+    <linearGradient id="arrowGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#17b983"/>
+      <stop offset="45%" stop-color="#2dd8a4"/>
+      <stop offset="80%" stop-color="#2be0d2"/>
+      <stop offset="100%" stop-color="#2ce4e2"/>
+    </linearGradient>
+
+    <!-- Flame peak: Coral-Rose to Orange to Amber-Gold -->
+    <linearGradient id="flameGrad" x1="8%" y1="88%" x2="92%" y2="12%">
+      <stop offset="0%" stop-color="#fd5a71"/>
+      <stop offset="48%" stop-color="#fb7349"/>
+      <stop offset="82%" stop-color="#f8951c"/>
+      <stop offset="100%" stop-color="#fbaf17"/>
+    </linearGradient>
+
+    <!-- Reusable sharp rising burn-rate arrow geometry -->
+    <path
+      id="trendArrowPath"
+      d="M 250 742
+         L 466 513
+         L 519 566
+         L 669 419
+         L 640 391
+         L 754 377
+         L 728 489
+         L 697 458
+         L 519 633
+         L 465 579
+         Z"
+    />
+
+    <!-- Negative-space knockout mask around the trend arrow -->
+    <mask id="arrowKnockout">
+      <rect width="1024" height="1024" fill="white"/>
+      <use
+        href="#trendArrowPath"
+        fill="black"
+        stroke="black"
+        stroke-width="38"
+        stroke-linejoin="miter"
+        stroke-miterlimit="6"
+      />
+    </mask>
+  </defs>
+
+  <!-- Canvas background -->
+  <rect width="1024" height="1024" fill="#06070b"/>
+  <rect width="1024" height="1024" fill="url(#bgGlow)"/>
+
+  <!-- Analytics bars + flame crest masked cleanly around the rising arrow -->
+  <g mask="url(#arrowKnockout)">
+    <!-- Bar 1 -->
+    <rect x="318" y="469" width="106" height="298" rx="17" fill="url(#bar1Grad)"/>
+
+    <!-- Bar 2 -->
+    <rect x="456" y="387" width="106" height="380" rx="17" fill="url(#bar2Grad)"/>
+
+    <!-- Bar 3 (bottom analytics bar below arrow) -->
+    <rect x="593" y="472" width="106" height="295" rx="17" fill="url(#bar3Grad)"/>
+
+    <!-- Stylized 3-tongue burn flame rising from Bar 3 with inner negative-space heart -->
+    <path
+      fill="url(#flameGrad)"
+      fill-rule="evenodd"
+      d="M 593 478
+         L 593 366
+         C 593 330, 601 304, 622 284
+         C 618 302, 624 316, 636 314
+         C 648 312, 646 286, 649 266
+         C 653 240, 667 220, 691 210
+         C 683 234, 687 254, 699 275
+         C 710 293, 718 311, 725 314
+         C 731 317, 735 304, 733 288
+         C 750 304, 758 330, 756 364
+         L 754 378
+         L 690 385
+         C 690 358, 684 336, 672 320
+         C 658 338, 648 358, 646 385
+         L 593 478
+         Z"
+    />
+  </g>
+
+  <!-- Rising burn-rate trend arrow -->
+  <use href="#trendArrowPath" fill="url(#arrowGrad)"/>
+</svg>

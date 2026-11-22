@@ -33,8 +33,10 @@ function isRelevantWatchEvent(filePath: string, eventType: string): boolean {
     return (
       norm.includes('/brain/') ||
       norm.includes('/projects/') ||
+      norm.includes('/sessions/') ||
       norm.endsWith('/brain') ||
-      norm.endsWith('/projects')
+      norm.endsWith('/projects') ||
+      norm.endsWith('/sessions')
     );
   }
   if (norm.endsWith('.jsonl')) {
@@ -55,8 +57,8 @@ function isRelevantWatchEvent(filePath: string, eventType: string): boolean {
 export function startLogWatcher(
   onUpdate: (snapshot: BurnrateSnapshot, changedPath: string) => void
 ): LogWatcherHandle {
-  const { geminiDir, claudeDir } = getWatchRoots();
-  const watchTargets = [geminiDir, claudeDir].filter((dir) => fs.existsSync(dir));
+  const { geminiDir, claudeDir, codexDir } = getWatchRoots();
+  const watchTargets = [geminiDir, claudeDir, codexDir].filter((dir) => fs.existsSync(dir));
 
   let debounceTimer: NodeJS.Timeout | null = null;
   let lastChangedPath = '';

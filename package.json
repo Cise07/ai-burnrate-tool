@@ -1,12 +1,10 @@
 {
   "name": "ai-burnrate-tool",
   "version": "1.0.8",
-  "description": "Real-time local token & API equivalent cost tracker for Antigravity CLI and Claude Code",
+  "description": "Real-time local token & API equivalent cost tracker for Antigravity CLI, Claude Code and Codex CLI",
   "type": "module",
   "bin": {
-    "burnrate": "dist/cli/index.js",
-    "ai-burnrate": "dist/cli/index.js",
-    "ai-burnrate-tool": "dist/cli/index.js"
+    "burn": "dist/cli/index.js"
   },
   "files": [
     "dist",
@@ -29,9 +27,12 @@
   "keywords": [
     "ai",
     "tokens",
+    "burn",
     "burnrate",
     "claude-code",
     "antigravity",
+    "codex",
+    "openai",
     "gemini",
     "cost-tracker",
     "cli"

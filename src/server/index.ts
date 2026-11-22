@@ -5,9 +5,16 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Currency, TimeRange, ToolFilter } from '../core/analytics.js';
+import { startMdnsResponder } from '../core/mdns.js';
 import { scanAllLogs } from '../core/parser.js';
 import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
-import type { BurnrateSnapshot } from '../core/types.js';
+import {
+  dismissLegacySessions,
+  getSessionKey,
+  restoreDismissedLegacySessions,
+} from '../core/session-ledger.js';
+import { loadUserSettings, saveUserSettings } from '../core/settings.js';
+import type { BurnrateSnapshot, ToolSource } from '../core/types.js';
 
 export interface LaunchDefaults {
   currency?: Currency;
@@ -22,6 +29,7 @@ const MIME_TYPES: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
 };
 
@@ -134,13 +142,13 @@ function readRequestBody(req: http.IncomingMessage, maxBytes = 4096): Promise<st
 function renderMobileAuthHtml(errorMessage?: string): string {
   const errBlock = errorMessage
     ? `<p class="err">${escapeHtml(errorMessage)}</p>`
-    : '<p class="sub">Inserisci il codice a 6 cifre mostrato nel terminale.</p>';
+    : '<p class="sub">Enter the 6-digit code shown in your terminal.</p>';
   return `<!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>ai-burnrate · Mobile Access</title>
+<title>ai-burnrate-tool · Mobile Access</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#09090b;color:#f4f4f5;font-family:ui-sans-serif,system-ui,sans-serif}
@@ -157,11 +165,11 @@ function renderMobileAuthHtml(errorMessage?: string): string {
 </head>
 <body>
   <form class="card" method="POST" action="/__auth">
-    <div class="badge">● AI-BURNRATE LAN</div>
-    <h1>Accesso da telefono</h1>
+    <div class="badge">● AI-BURNRATE-TOOL LAN</div>
+    <h1>Mobile Access</h1>
     ${errBlock}
     <input name="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="000000" autofocus required />
-    <button type="submit">Sblocca Dashboard</button>
+    <button type="submit">Unlock Dashboard</button>
   </form>
 </body>
 </html>`;
@@ -189,6 +197,8 @@ export interface BurnrateServer {
   url: string;
   lanIp: string | null;
   lanUrl: string | null;
+  mdnsHostname: string | null;
+  mdnsUrl: string | null;
   mobileCode: string;
   broadcast: (snapshot: BurnrateSnapshot, changedPath?: string) => void;
   close: () => Promise<void>;
@@ -293,7 +303,7 @@ export async function startServer(
             const lockedSec = checkLockoutSeconds(clientIp);
             if (lockedSec > 0) {
               res.writeHead(429, { ...authHeaders, 'Retry-After': String(lockedSec) });
-              res.end(renderMobileAuthHtml(`Troppi tentativi errati. Riprova tra ${lockedSec} secondi.`));
+              res.end(renderMobileAuthHtml(`Too many failed attempts. Try again in ${lockedSec} seconds.`));
               return;
             }
             if (verifySecret(candidate, mobileCode)) {
@@ -306,10 +316,10 @@ export async function startServer(
             await new Promise((r) => setTimeout(r, 400));
             if (newLockSec > 0) {
               res.writeHead(429, { ...authHeaders, 'Retry-After': String(newLockSec) });
-              res.end(renderMobileAuthHtml(`Troppi tentativi errati. Riprova tra ${newLockSec} secondi.`));
+              res.end(renderMobileAuthHtml(`Too many failed attempts. Try again in ${newLockSec} seconds.`));
             } else {
               res.writeHead(401, authHeaders);
-              res.end(renderMobileAuthHtml('Codice non valido. Controlla il codice a 6 cifre nel terminale.'));
+              res.end(renderMobileAuthHtml('Invalid code. Check the 6-digit code in your terminal.'));
             }
           };
 
@@ -424,6 +434,127 @@ export async function startServer(
           return;
         }
 
+        if (pathname === '/api/deleted-legacy/dismiss' && req.method === 'POST') {
+          if (!isSameOriginRequest(req)) {
+            res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Cross-origin request rejected' }));
+            return;
+          }
+          const rawBody = await readRequestBody(req, 64 * 1024);
+          if (rawBody === null) {
+            res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Payload Too Large' }));
+            return;
+          }
+          let parsed: { items?: unknown };
+          try {
+            parsed = JSON.parse(rawBody) as { items?: unknown };
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            return;
+          }
+          if (!Array.isArray(parsed.items) || parsed.items.length === 0 || parsed.items.length > 2000) {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Expected non-empty items array' }));
+            return;
+          }
+
+          const trackedKeys = new Set<string>();
+          for (const s of currentSnapshot.sessions) {
+            trackedKeys.add(getSessionKey(s.source, s.sessionId));
+          }
+          for (const s of currentSnapshot.deletedSessions || []) {
+            if (!s.untrackedHistory) {
+              trackedKeys.add(getSessionKey(s.source, s.sessionId));
+            }
+          }
+
+          const VALID_SOURCES = new Set<ToolSource>(['antigravity', 'claude', 'codex']);
+          const keysToDismiss: string[] = [];
+          for (const item of parsed.items) {
+            if (!item || typeof item !== 'object') continue;
+            const rec = item as { source?: unknown; sessionId?: unknown };
+            if (typeof rec.source !== 'string' || !VALID_SOURCES.has(rec.source as ToolSource)) continue;
+            if (typeof rec.sessionId !== 'string') continue;
+            const sessionId = rec.sessionId.trim();
+            if (!sessionId || sessionId.length > 256 || /[\r\n\0]/.test(sessionId)) continue;
+            const key = getSessionKey(rec.source as ToolSource, sessionId);
+            if (trackedKeys.has(key)) continue;
+            keysToDismiss.push(key);
+          }
+
+          const dismissedCount = dismissLegacySessions(keysToDismiss);
+          const fresh = scanAllLogs(false);
+          broadcast(fresh);
+          if (res.writableEnded || res.destroyed) return;
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          });
+          res.end(JSON.stringify({ dismissedCount, snapshot: fresh }));
+          return;
+        }
+
+        if (pathname === '/api/deleted-legacy/restore' && req.method === 'POST') {
+          if (!isSameOriginRequest(req)) {
+            res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Cross-origin request rejected' }));
+            return;
+          }
+          const restoredCount = restoreDismissedLegacySessions();
+          const fresh = scanAllLogs(false);
+          broadcast(fresh);
+          if (res.writableEnded || res.destroyed) return;
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          });
+          res.end(JSON.stringify({ restoredCount, snapshot: fresh }));
+          return;
+        }
+
+        if (pathname === '/api/settings' && req.method === 'GET') {
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          });
+          res.end(JSON.stringify(loadUserSettings()));
+          return;
+        }
+
+        if (pathname === '/api/settings' && req.method === 'POST') {
+          if (!isSameOriginRequest(req)) {
+            res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Cross-origin request rejected' }));
+            return;
+          }
+          const rawBody = await readRequestBody(req, 16 * 1024);
+          if (rawBody === null) {
+            res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Payload Too Large' }));
+            return;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(rawBody);
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            return;
+          }
+          const saved = saveUserSettings(parsed);
+          const updatedSnapshot: BurnrateSnapshot = { ...currentSnapshot, settings: saved };
+          broadcast(updatedSnapshot);
+          if (res.writableEnded || res.destroyed) return;
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          });
+          res.end(JSON.stringify({ settings: saved, snapshot: updatedSnapshot }));
+          return;
+        }
+
         let decodedPath: string;
         try {
           decodedPath = decodeURIComponent(pathname);
@@ -484,15 +615,26 @@ export async function startServer(
     server.listen(port, '0.0.0.0', () => resolve());
   });
 
+  const mdns = lanIp ? await startMdnsResponder('ai-burnrate.local', lanIp) : null;
+
   return {
     port,
     url: `http://localhost:${port}`,
     lanIp,
     lanUrl: lanIp ? `http://${lanIp}:${port}` : null,
+    mdnsHostname: mdns ? mdns.hostname : null,
+    mdnsUrl: mdns ? `http://${mdns.hostname}:${port}` : null,
     mobileCode,
     broadcast,
     close: async () => {
       clearInterval(heartbeatInterval);
+      if (mdns) {
+        try {
+          await mdns.close();
+        } catch {
+          // ignore
+        }
+      }
       for (const client of sseClients) {
         try {
           client.end();

@@ -7,13 +7,24 @@ export interface SessionLedgerFile {
   version: 1;
   updatedAt: string;
   sessions: Record<string, SessionStats>;
+  dismissedLegacyKeys?: string[];
+}
+
+interface LedgerState {
+  sessions: Map<string, SessionStats>;
+  dismissedLegacyKeys: Set<string>;
 }
 
 const memoryLedger = new Map<string, SessionStats>();
+const memoryDismissedLegacyKeys = new Set<string>();
+
+const VALID_TOOL_SOURCES = new Set<string>(['antigravity', 'claude', 'codex']);
 
 function isPersistentLedgerEnabled(): boolean {
   if (process.env.BURNRATE_SESSION_LEDGER_PATH) return true;
-  if (process.env.BURNRATE_GEMINI_DIR || process.env.BURNRATE_CLAUDE_DIR) return false;
+  if (process.env.BURNRATE_GEMINI_DIR || process.env.BURNRATE_CLAUDE_DIR || process.env.BURNRATE_CODEX_DIR) {
+    return false;
+  }
   return true;
 }
 
@@ -28,26 +39,40 @@ export function getSessionKey(source: SessionStats['source'], sessionId: string)
   return `${source}:${sessionId}`;
 }
 
-function loadLedgerMap(): Map<string, SessionStats> {
+export function isValidSessionKey(key: string): boolean {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 300) return false;
+  const sep = key.indexOf(':');
+  if (sep <= 0 || sep === key.length - 1) return false;
+  const source = key.slice(0, sep);
+  const id = key.slice(sep + 1);
+  if (!VALID_TOOL_SOURCES.has(source)) return false;
+  return id.trim().length > 0 && !/[\r\n\0]/.test(id);
+}
+
+function loadLedgerState(): LedgerState {
   if (!isPersistentLedgerEnabled()) {
-    return new Map(memoryLedger);
+    return {
+      sessions: new Map(memoryLedger),
+      dismissedLegacyKeys: new Set(memoryDismissedLegacyKeys),
+    };
   }
 
   const ledgerPath = getSessionLedgerPath();
   if (!fs.existsSync(ledgerPath)) {
-    return new Map();
+    return { sessions: new Map(), dismissedLegacyKeys: new Set() };
   }
 
   try {
     const raw = fs.readFileSync(ledgerPath, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<SessionLedgerFile>;
-    const map = new Map<string, SessionStats>();
+    const sessions = new Map<string, SessionStats>();
+    const dismissedLegacyKeys = new Set<string>();
     if (parsed && parsed.sessions && typeof parsed.sessions === 'object') {
       for (const [k, v] of Object.entries(parsed.sessions)) {
         if (
           v &&
           typeof v === 'object' &&
-          (v.source === 'antigravity' || v.source === 'claude') &&
+          VALID_TOOL_SOURCES.has(v.source) &&
           typeof v.sessionId === 'string' &&
           v.sessionId.length > 0 &&
           typeof v.turns === 'number' &&
@@ -60,21 +85,32 @@ function loadLedgerMap(): Map<string, SessionStats> {
           Number.isFinite(v.cacheSavingsUSD) &&
           Array.isArray(v.turnHistory)
         ) {
-          map.set(k, v);
+          sessions.set(k, v);
         }
       }
     }
-    return map;
+    if (parsed && Array.isArray(parsed.dismissedLegacyKeys)) {
+      for (const item of parsed.dismissedLegacyKeys) {
+        if (typeof item === 'string' && isValidSessionKey(item)) {
+          dismissedLegacyKeys.add(item);
+        }
+      }
+    }
+    return { sessions, dismissedLegacyKeys };
   } catch {
-    return new Map();
+    return { sessions: new Map(), dismissedLegacyKeys: new Set() };
   }
 }
 
-function saveLedgerMap(map: Map<string, SessionStats>): void {
+function saveLedgerState(state: LedgerState): void {
   if (!isPersistentLedgerEnabled()) {
     memoryLedger.clear();
-    for (const [k, v] of map.entries()) {
+    for (const [k, v] of state.sessions.entries()) {
       memoryLedger.set(k, structuredClone(v));
+    }
+    memoryDismissedLegacyKeys.clear();
+    for (const key of state.dismissedLegacyKeys) {
+      memoryDismissedLegacyKeys.add(key);
     }
     return;
   }
@@ -85,7 +121,10 @@ function saveLedgerMap(map: Map<string, SessionStats>): void {
     const payload: SessionLedgerFile = {
       version: 1,
       updatedAt: new Date().toISOString(),
-      sessions: Object.fromEntries(map.entries()),
+      sessions: Object.fromEntries(state.sessions.entries()),
+      ...(state.dismissedLegacyKeys.size > 0
+        ? { dismissedLegacyKeys: Array.from(state.dismissedLegacyKeys) }
+        : {}),
     };
     const serialized = JSON.stringify(payload);
     const tmpPath = `${ledgerPath}.${process.pid}.tmp`;
@@ -139,15 +178,27 @@ function mergeOrphanedSession(prev: SessionStats | undefined, orphan: SessionSta
 export function reconcileSessionLedger(params: {
   liveSessions: SessionStats[];
   orphanedDeletedSessions: SessionStats[];
+  mergedSubagentKeys?: Set<string>;
   geminiDirExists: boolean;
   claudeDirExists: boolean;
+  codexDirExists?: boolean;
 }): {
   activeSessions: SessionStats[];
   deletedSessions: SessionStats[];
 } {
-  const ledger = loadLedgerMap();
+  const ledgerState = loadLedgerState();
+  const ledger = ledgerState.sessions;
   const nowIso = new Date().toISOString();
   let dirty = false;
+
+  // Purge obsolete separate entries for subagents now rolled up into their parent chat
+  if (params.mergedSubagentKeys && params.mergedSubagentKeys.size > 0) {
+    for (const subKey of params.mergedSubagentKeys) {
+      if (ledger.delete(subKey)) {
+        dirty = true;
+      }
+    }
+  }
 
   const liveMap = new Map<string, SessionStats>();
   for (const s of params.liveSessions) {
@@ -192,7 +243,12 @@ export function reconcileSessionLedger(params: {
   // 3. Mark previously recorded sessions that disappeared from disk as deleted
   for (const [key, prev] of ledger.entries()) {
     if (liveMap.has(key) || orphanMap.has(key)) continue;
-    const toolRootExists = prev.source === 'antigravity' ? params.geminiDirExists : params.claudeDirExists;
+    const toolRootExists =
+      prev.source === 'antigravity'
+        ? params.geminiDirExists
+        : prev.source === 'claude'
+          ? params.claudeDirExists
+          : Boolean(params.codexDirExists);
     if (!toolRootExists) continue;
 
     if (!prev.deleted) {
@@ -206,7 +262,7 @@ export function reconcileSessionLedger(params: {
   }
 
   if (dirty) {
-    saveLedgerMap(ledger);
+    saveLedgerState(ledgerState);
   }
 
   const activeSessions = Array.from(liveMap.values()).sort((a, b) =>
@@ -228,6 +284,81 @@ export function reconcileSessionLedger(params: {
   return { activeSessions, deletedSessions };
 }
 
+export function upsertSingleSessionToLedger(session: SessionStats): boolean {
+  const ledgerState = loadLedgerState();
+  const key = getSessionKey(session.source, session.sessionId);
+  const prev = ledgerState.sessions.get(key);
+
+  // Never downgrade an already richer snapshot in the ledger
+  if (prev && prev.turns > session.turns && prev.totalTokens >= session.totalTokens) {
+    return false;
+  }
+
+  const cleanSession: SessionStats = {
+    ...session,
+    deleted: false,
+  };
+  delete cleanSession.deletedAt;
+
+  if (!hasSessionChanged(prev, cleanSession)) {
+    return false;
+  }
+
+  ledgerState.sessions.set(key, cleanSession);
+  saveLedgerState(ledgerState);
+  return true;
+}
+
+export function getDismissedLegacyKeys(): Set<string> {
+  return loadLedgerState().dismissedLegacyKeys;
+}
+
+export function getDismissedLegacyCount(): number {
+  return loadLedgerState().dismissedLegacyKeys.size;
+}
+
+export function dismissLegacySessions(keys: string[]): number {
+  const validKeys = keys.filter(isValidSessionKey);
+  if (validKeys.length === 0) return 0;
+
+  const ledgerState = loadLedgerState();
+  let added = 0;
+  for (const key of validKeys) {
+    if (!ledgerState.dismissedLegacyKeys.has(key)) {
+      ledgerState.dismissedLegacyKeys.add(key);
+      added++;
+    }
+  }
+
+  if (added > 0) {
+    saveLedgerState(ledgerState);
+  }
+  return added;
+}
+
+export function restoreDismissedLegacySessions(keys?: string[]): number {
+  const ledgerState = loadLedgerState();
+  if (ledgerState.dismissedLegacyKeys.size === 0) return 0;
+
+  let restored = 0;
+  if (!keys || keys.length === 0) {
+    restored = ledgerState.dismissedLegacyKeys.size;
+    ledgerState.dismissedLegacyKeys.clear();
+  } else {
+    for (const key of keys) {
+      if (ledgerState.dismissedLegacyKeys.delete(key)) {
+        restored++;
+      }
+    }
+  }
+
+  if (restored > 0) {
+    saveLedgerState(ledgerState);
+  }
+  return restored;
+}
+
 export function resetMemorySessionLedger(): void {
   memoryLedger.clear();
+  memoryDismissedLegacyKeys.clear();
 }
