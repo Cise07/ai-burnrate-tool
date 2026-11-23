@@ -1,75 +1,113 @@
 <div align="center">
 
-# 🔥 ai-burnrate-tool ⚡
+```text
+    (  .      _   ___   ___ _   _ ___ _  _ ___    _ _____ ___
+   )  ) )    /_\ |_ _| | _ ) | | | _ \ \| | _ \  /_\_   _| __|
+  ( (  (    / _ \ | |  | _ \ |_| |   / .` |   / / _ \| | | _|
+   \____)  /_/ \_\___| |___/\___/|_|_\_|\_|_|_\/_/ \_\_| |___|
+```
 
-**Real-Time Local Token & Equivalent API Cost Tracker for Antigravity CLI, Claude Code & Codex CLI**
+### **Real-Time Local Token & API Equivalent Cost Tracker for Antigravity CLI, Claude Code & Codex CLI**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg?style=flat-square)](https://github.com/Cise07/ai-burnrate-tool)
+[![npm version](https://img.shields.io/npm/v/ai-burnrate-tool?style=flat-square&color=10b981&label=npm)](https://www.npmjs.com/package/ai-burnrate-tool)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-06b6d4.svg?style=flat-square)](https://nodejs.org/)
-[![GitHub Repo](https://img.shields.io/badge/GitHub-Cise07%2Fai--burnrate--tool-d946ef.svg?style=flat-square)](https://github.com/Cise07/ai-burnrate-tool)
-[![100% Local](https://img.shields.io/badge/Privacy-100%25%20Local-f59e0b.svg?style=flat-square)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-a855f7.svg?style=flat-square)](https://github.com/Cise07/ai-burnrate-tool)
+[![100% Local](https://img.shields.io/badge/Privacy-100%25%20Local-f59e0b.svg?style=flat-square)](#-key-features)
 
-Track in real time how many tokens you are consuming across **Antigravity CLI** (`~/.gemini`), **Claude Code** (`~/.claude`), and **Codex CLI** (`~/.codex`), what your equivalent pay-as-you-go API spend would be in **USD (`$`) or EUR (`€`)**, and how much value you get from Prompt Caching and your monthly subscriptions.
+Track live token consumption, **pay-as-you-go API equivalent spend (`$ USD` / `€ EUR`)**, Prompt Caching savings, subagents & `/btw` side-chats, and subscription ROI across **Antigravity CLI**, **Claude Code**, and **Codex CLI** — **100% locally, with zero cloud uploads.**
+
+[🚀 Quick Install](#-quick-install) · [✨ Features](#-key-features) · [🎮 CLI Flags](#-usage--cli-flags) · [🔄 Reset & Resume](#-per-tool-tracking-reset--resume) · [🪝 Offline Hooks](#-offline-auto-archive-hooks--zero-daemon-background-sync) · [💰 Pricing Engine](#-how-pricing--historical-rate-versioning-work)
+
+<br />
+
+<img src="https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/assets/demo.gif" alt="ai-burnrate-tool live dashboard demo" width="100%" />
 
 </div>
 
 ---
 
-## ✨ Key Features
+## 🚀 Quick Install
 
-- 🔒 **100% Local, Dynamic & Cross-Platform:** Automatically resolves your home directory (`~/.gemini`, `~/.claude`, `~/.codex`, or `$CODEX_HOME`) on Windows, macOS, and Linux with zero hardcoded paths. Override watched folders anytime via `BURNRATE_GEMINI_DIR`, `BURNRATE_CLAUDE_DIR`, and `BURNRATE_CODEX_DIR`.
-- 🤖 **Automatic Subagent & `/btw` Side-Chat Roll-Up:** Subagents (`image-generator`, `research`, Claude `/subagents/*.jsonl`, Codex multi-agent threads) and ephemeral **`/btw` / `/side`** side-chats across Antigravity CLI, Claude Code, and Codex CLI are automatically rolled into their originating parent chat and project folder without double-counting—remaining permanently preserved with **expandable & searchable individual `/btw` titles**, turns, tokens, models, and cost even after dismissing with `Esc` or archiving.
-- 🪝 **Offline Auto-Archive Hooks (`--sync-ledger`):** Automatically installs lightweight lifecycle hooks for **Antigravity**, **Claude Code**, and **Codex CLI** (`Stop`, `SubagentStop`, `SessionEnd`) so completed turns, subagents, and `/btw` side-chats are atomically snapshotted into `~/.burnrate/sessions-ledger.json` even when `burn` is closed.
-- 📱 **Mobile & LAN Access with `ai-burnrate.local` (mDNS) + 6-Digit PIN + QR Code:** Running `burn` binds to `0.0.0.0`, advertises **`http://ai-burnrate.local:<port>`** via built-in local mDNS/Bonjour (with LAN IP fallback), and prints a random **6-digit access code** + scannable **terminal QR code** so you can monitor your dashboard live from your phone over Wi-Fi. Localhost stays instant-access, while LAN clients require the PIN (constant-time verification, per-IP rate limiting, and `HttpOnly` session cookies).
-- 🟢 **Live Dashboard & Server-Sent Events (SSE):** A background file watcher (`chokidar`) monitors active transcripts and pushes instant real-time updates to charts, KPIs, heatmap, and session tables via `/api/events`.
-- 🔄 **Automatic 30-Minute `ETag` Price Sync & Long-Context Tiers:** Keeps tariffs fresh automatically at startup, every 30 minutes while running, on manual **Rescan**, and opportunistically in the background from offline hooks (`--sync-pricing` detached with an atomic lock and `If-None-Match` → `304 Not Modified`), appending immutable `effectiveFrom` snapshots to `~/.burnrate/pricing-ledger.json` and applying **per-request long-context tiers** (`>272k` on GPT-5.4/5.5/5.6/6.x, `>200k` on Gemini 2.5 Pro) strictly on models that use tiered billing.
-- 💱 **Instant `$ USD` / `€ EUR` Switch & Tax-Accurate Subscriptions:** API equivalent spend stays pure net pay-as-you-go, while customizable monthly subscription plans (Google AI, Claude, Codex/ChatGPT) automatically sync to the active currency and include local retail taxes (+22% VAT in EUR, +7.5% Sales Tax in USD).
-- 🧩 **Customizable Dashboard Layout:** Reorder or hide any dashboard section (KPIs, Charts, Activity Heatmap & Top Workspaces, Model Breakdown, Live Workspaces Table) directly from Settings with persistence in `~/.burnrate/settings.json`.
-- 🖥️ **Instant Terminal Mode (`--cli`):** Prints colorized ANSI tables (Tool Breakdown, Model Breakdown, grouped Workspaces → Chats → Subagents hierarchy, and Deleted Chats) directly in your terminal, with optional `--eur`, `--tool`, `--range`, and `--json` flags.
+> **Prerequisite:** [Node.js (>= 18)](https://nodejs.org/) and `npm`. Works on **Windows, macOS, and Linux**.
 
----
+### 1. Install globally
 
-## 🚀 Quick Install (Windows / macOS / Linux)
-
-Install globally from npm using **one command** from any terminal:
-
-> ⚠️ **Prerequisite:** Make sure you have [Node.js (>= 18)](https://nodejs.org/) and `npm` installed.
-
-### Latest Version
 ```bash
 npm install -g ai-burnrate-tool
 ```
 
-*(Want to run it once without installing? Use `npx ai-burnrate-tool`)*
+### 2. Run from any folder
 
-### 🏷️ Install a Specific Version
-To install a specific release, specify the version tag:
 ```bash
-npm install -g ai-burnrate-tool@X.Y.Z
+burn          # 🟢 Launch live Web Dashboard + real-time file watcher & mobile QR
+burn --cli    # 🖥️ Print an instant colorized ANSI report directly in your terminal
 ```
+
+<details>
+<summary><b>More install options</b> (run once with <code>npx</code>, pin a version, or uninstall)</summary>
+
+<br />
+
+- **Run once without installing:**
+  ```bash
+  npx ai-burnrate-tool
+  ```
+- **Install a specific version:**
+  ```bash
+  npm install -g ai-burnrate-tool@X.Y.Z
+  ```
+- **Update to latest release:**
+  ```bash
+  burn --update
+  ```
+- **Uninstall completely:**
+  ```bash
+  burn --uninstall
+  # or: npm uninstall -g ai-burnrate-tool
+  ```
+
+</details>
+
+---
+
+## ✨ Key Features
+
+- 🔒 **100% Local, Dynamic & Cross-Platform:** Automatically resolves `~/.gemini`, `~/.claude`, and `~/.codex` (or `$CODEX_HOME`) on Windows, macOS, and Linux with zero hardcoded paths. Override directories anytime via `BURNRATE_GEMINI_DIR`, `BURNRATE_CLAUDE_DIR`, and `BURNRATE_CODEX_DIR`.
+- 🤖 **Automatic Subagent & `/btw` Side-Chat Roll-Up:** Subagents (`image-generator`, `research`, Claude `/subagents/*.jsonl`, Codex multi-agent threads) and ephemeral **`/btw` / `/side`** side-chats across Antigravity CLI, Claude Code, and Codex CLI roll cleanly into their parent chat and project workspace without double-counting — preserved with **expandable & searchable individual `/btw` titles**, turns, tokens, models, and costs even after dismissing with `Esc` or archiving.
+- 🔄 **Per-Tool Spend Reset & Resume from Any Date:** Start counting spend for any individual tool (`Antigravity`, `Claude Code`, `Codex CLI`) from **right now** or **any custom date/time** (e.g. migrating from a third-party API to a native plan, or starting a new billing cycle) — filtering strictly per turn without touching any AI tool files, and fully reversible from any date or from the beginning.
+- 🪝 **Offline Auto-Archive Hooks (`--sync-ledger`):** Automatically installs lightweight native lifecycle hooks (`Stop`, `SubagentStop`, `SessionEnd`) for Antigravity, Claude Code, and Codex CLI so completed turns, subagents, and `/btw` chats are atomically snapshotted into `~/.burnrate/sessions-ledger.json` even while `burn` is closed.
+- 📱 **Mobile & LAN Access (`ai-burnrate.local` mDNS + 6-Digit PIN + QR):** Running `burn` binds to `0.0.0.0`, advertises **`http://ai-burnrate.local:<port>`** via built-in mDNS/Bonjour (with LAN IP fallback), and prints a random **6-digit PIN** + scannable **terminal QR code**. Localhost stays instant-access, while LAN devices authenticate with constant-time PIN verification, per-IP rate limiting, and `HttpOnly` cookies.
+- 🟢 **Live Dashboard & Server-Sent Events (SSE):** A background `chokidar` watcher streams instant updates to KPIs, charts, heatmap, and session tables via `/api/events`.
+- 🏷️ **30-Minute `ETag` Auto-Sync & Long-Context Tiers:** Keeps model tariffs fresh automatically at startup, every 30 minutes while running, on manual **Rescan**, and opportunistically in the background from offline hooks (`--sync-pricing` with atomic lock and `If-None-Match` → `304 Not Modified`), appending immutable `effectiveFrom` snapshots to `~/.burnrate/pricing-ledger.json` and applying **per-request long-context tiers** (`>272k` on GPT-5.4/5.5/5.6/6.x, `>200k` on Gemini 2.5 Pro) only on tiered models.
+- 💱 **Instant `$ USD` / `€ EUR` Switch & Tax-Accurate Subscriptions:** API equivalent spend remains pure net pay-as-you-go, while customizable monthly subscription plans automatically convert and include retail taxes (+22% VAT in EUR, +7.5% Sales Tax in USD).
+- 🧩 **Customizable Dashboard Layout:** Reorder (drag & drop) or hide any section from Settings with persistence in `~/.burnrate/settings.json`.
+- 🖥️ **Instant Terminal Mode (`--cli`):** Prints colorized ANSI tables (Tool Breakdown, Model Breakdown, Workspaces → Chats → Subagents hierarchy, and Deleted Chats) with `--eur`, `--tool`, `--range`, and `--json` support.
 
 ---
 
 ## 🎮 Usage & CLI Flags
 
-Once installed, the **`burn`** command is available globally from **any folder** in your terminal:
+Once installed, the **`burn`** command is available globally from any directory:
 
 | Command | Description |
 | :--- | :--- |
-| `burn` | 🟢 **Live Mode (Default):** Syncs official pricing, ensures offline archive hooks are active, starts the HTTP + SSE server on `0.0.0.0` (localhost + protected LAN access via 6-digit PIN & terminal QR), watches `~/.gemini`, `~/.claude` & `~/.codex`, and opens the React Dashboard in your browser. |
+| `burn` | 🟢 **Live Mode (Default):** Syncs official pricing, ensures offline archive hooks are active, starts the HTTP + SSE server on `0.0.0.0` (localhost + protected LAN access via 6-digit PIN & terminal QR), watches `~/.gemini`, `~/.claude` & `~/.codex`, and opens the React Dashboard. |
 | `burn --cli` | 📊 **Terminal Mode:** Syncs pricing, prints the workspace/chat/subagent token & cost report in colorized ANSI tables, and exits immediately. |
-| `burn --eur` | 💶 **EUR Mode (Web UI & CLI):** Sets the currency to EUR (`€`) instead of USD (`$`) in the browser dashboard and terminal report. |
-| `burn --tool <tool>` | 🔎 **Tool Filter (Web UI & CLI):** Filters the browser dashboard and `--cli` output by `all`, `antigravity`, `claude`, or `codex`. |
-| `burn --range <range>` | 🕒 **Time Range (Web UI & CLI):** Filters the browser dashboard and `--cli` output by `24h`, `7d`, `30d`, or `all`. |
+| `burn --eur` | 💶 **EUR Mode (Web UI & CLI):** Displays costs in EUR (`€`) instead of USD (`$`) in both Web Dashboard and `--cli` output. |
+| `burn --tool <tool>` | 🔎 **Tool Filter (Web UI & CLI):** Filters output by `all`, `antigravity`, `claude`, or `codex`. |
+| `burn --range <range>` | 🕒 **Time Range (Web UI & CLI):** Filters output by `24h`, `7d`, `30d`, or `all`. |
 | `burn --cli --json` | 🧾 **CLI JSON Output:** Prints aggregated workspaces, chats, subagents, and per-model breakdowns as JSON. |
-| `burn --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without automatically opening the browser. |
+| `burn --reset-tool <tool>` | 🔄 **Reset Tool Spend:** Starts counting spend & stats from now (or `--since <date>`) for `antigravity`, `claude`, `codex`, or `all` without touching tool files. |
+| `burn --restore-tool <tool>` | ⏪ **Restore Tool History:** Restores spend history from the beginning (or from `--since <date>`) for `antigravity`, `claude`, `codex`, or `all`. |
+| `burn --since <date>` | 📅 **Custom Cutoff Date:** Optional `YYYY-MM-DD` or ISO-8601 timestamp used with `--reset-tool` or `--restore-tool`. |
+| `burn --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without opening the browser. |
 | `burn --no-hooks` | 🔕 **Skip Hooks:** Launches without installing Antigravity/Claude/Codex offline archive hooks. |
 | `burn --uninstall-hooks` | 🧹 **Remove Hooks:** Removes `ai-burnrate-tool` offline archive hooks from Antigravity, Claude Code & Codex CLI configs. |
-| `burn --sync-ledger` | 🪝 **Hook Snapshot Mode (Internal):** Invoked automatically by tool hooks to snapshot the active transcript into `~/.burnrate/sessions-ledger.json` and trigger a detached `--sync-pricing` if ≥ 30 minutes have elapsed. |
-| `burn --sync-pricing` | 🔄 **Background Price Sync (Internal):** Refreshes `~/.burnrate/pricing-ledger.json` using conditional `ETag` (`304 Not Modified`) and exits silently. |
+| `burn --sync-ledger` | 🪝 **Hook Snapshot Mode (Internal):** Invoked by tool hooks to snapshot the active transcript into `~/.burnrate/sessions-ledger.json` and trigger a detached `--sync-pricing` if ≥ 30 minutes have elapsed. |
+| `burn --sync-pricing` | 🏷️ **Background Price Sync (Internal):** Refreshes `~/.burnrate/pricing-ledger.json` via conditional `ETag` (`304 Not Modified`) and exits silently. |
 | `burn -p, --port <number>` | 🔌 **Custom Port:** Starts the dashboard on a specific port (default: `4321`, automatically falling back to the next free port if busy). |
-| `burn --update` | 🔄 **Self-Update:** Updates `ai-burnrate-tool` to the latest version from npm. |
-| `burn --uninstall` | 🗑️ **Self-Uninstall:** Removes offline hooks and uninstalls the global `ai-burnrate-tool` package from your system. |
+| `burn --update` | ⬆️ **Self-Update:** Updates `ai-burnrate-tool` to the latest version from npm. |
+| `burn --uninstall` | 🗑️ **Self-Uninstall:** Removes offline hooks and uninstalls `ai-burnrate-tool` globally. |
 | `burn -V, --version` | 🏷️ Prints the installed version. |
 | `burn -h, --help` | ℹ️ Displays all available CLI options. |
 
@@ -77,18 +115,18 @@ Once installed, the **`burn`** command is available globally from **any folder**
 
 ---
 
-## 🗑️ How to Uninstall `ai-burnrate-tool`
+## 🔄 Per-Tool Tracking Reset & Resume
 
-You can remove the tool at any time using either method:
+Need to start from `$0.00` for one tool (for example, switching Claude Code from a third-party API to a native plan, or aligning stats to a new billing date) **without deleting any chats**?
 
-### 1️⃣ Built-in CLI Flag (Recommended)
+- **Turn-level precision:** Setting a start timestamp for a tool (`antigravity`, `claude`, or `codex`) excludes every turn before that moment across KPIs, charts, heatmap, ROI projections, CSV/JSON exports, and Deleted Chats. If you continue an older chat afterward, only the new post-reset turns are counted — even if you later delete that chat.
+- **Zero-destruction & reversible:** Your real tool folders (`~/.gemini`, `~/.claude`, `~/.codex`) and archive ledger remain completely intact. You can resume counting from **any specific date** or restore **from the beginning** anytime via **Settings**, the active **Dashboard Banner**, or the CLI:
+
 ```bash
-burn --uninstall
-```
-
-### 2️⃣ Via `npm`
-```bash
-npm uninstall -g ai-burnrate-tool
+burn --reset-tool claude                        # Zero out Claude Code starting from right now
+burn --reset-tool claude --since 2026-11-01     # Count Claude Code starting from Nov 1
+burn --restore-tool claude --since 2026-11-15   # Resume counting from a specific earlier date
+burn --restore-tool claude                      # Restore full history from the beginning
 ```
 
 ---
@@ -103,9 +141,9 @@ npm uninstall -g ai-burnrate-tool
 | **Claude Code** | `~/.claude/settings.json` | `Stop` (`5s`), `SubagentStop` (`5s`), `SessionEnd` (`5s`) |
 | **Codex CLI** | `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`) | `Stop` (`5s`), `SubagentStop` (`5s`), `SessionEnd` (`3s`) |
 
-When an AI turn finishes—even while `burn` is closed—the tool triggers `burn --sync-ledger`:
+When an AI turn finishes — even while `burn` is closed — the tool triggers `burn --sync-ledger`:
 1. **Read-Only Transcript Snapshot:** Reads the updated transcript (never modifying AI tool files) and atomically writes the latest turns, subagents, and `/btw` side-chats into `~/.burnrate/sessions-ledger.json`.
-2. **30-Minute Background Pricing Check:** Compares `lastSyncCheckedAt` in `~/.burnrate/pricing-ledger.json` (`<1ms`). If at least **30 minutes** have passed, it atomically acquires `~/.burnrate/.pricing-sync.lock` (`O_CREAT | O_EXCL`, preventing concurrent duplicate spawns, with automatic 60s stale-lock recovery) and spawns a detached `burn --sync-pricing` worker with `.unref()`—adding zero latency to your AI chat.
+2. **30-Minute Background Pricing Check:** Compares `lastSyncCheckedAt` in `~/.burnrate/pricing-ledger.json` (`<1ms`). If at least **30 minutes** have passed, it atomically acquires `~/.burnrate/.pricing-sync.lock` (`O_CREAT | O_EXCL`, preventing concurrent duplicate spawns, with automatic 60s stale-lock recovery) and spawns a detached `burn --sync-pricing` worker with `.unref()` — adding zero latency to your AI chat.
 3. **Instant Return:** Prints `{}` and exits cleanly so the AI loop continues uninterrupted.
 
 ---
@@ -142,6 +180,8 @@ When an AI turn finishes—even while `burn` is closed—the tool triggers `burn
 
 ```text
 ai-burnrate-tool/
+├── assets/
+│   └── demo.gif                    # Live interactive dashboard showcase for README
 ├── config/
 │   └── pricing.json                # Baseline model tariffs & subscription presets
 ├── public/
@@ -150,16 +190,16 @@ ai-burnrate-tool/
 │   └── postinstall.mjs             # Global install ASCII banner, version & PATH reminder
 ├── src/
 │   ├── cli/
-│   │   ├── index.ts                # CLI entrypoint (`burn`), hook sync modes & terminal QR output
+│   │   ├── index.ts                # CLI entrypoint (`burn`), reset/restore flags, hook sync & terminal QR
 │   │   └── reporter.ts             # ANSI terminal report formatter (--cli)
 │   ├── core/
-│   │   ├── analytics.ts            # Filtering, subagent/btw/model breakdowns, heatmap, CSV/JSON export
+│   │   ├── analytics.ts            # Filtering, per-tool cutoffs, subagent/btw/model breakdowns, heatmap, export
 │   │   ├── hooks.ts                # Antigravity, Claude Code & Codex CLI offline lifecycle hooks
 │   │   ├── mdns.ts                 # Built-in RFC 6762 mDNS responder (`ai-burnrate.local`)
 │   │   ├── parser.ts               # Dynamic ~/.gemini, ~/.claude & ~/.codex JSONL parser & subagent/btw merge
 │   │   ├── pricing.ts              # 30m ETag price auto-sync, atomic lock, long-context tiers & rate ledger
 │   │   ├── session-ledger.ts       # Persistent session archive & legacy deleted dismissal
-│   │   ├── settings.ts             # Persistent user subscription plans & dashboard layout
+│   │   ├── settings.ts             # Persistent plans, layout & per-tool tracking start cutoffs
 │   │   ├── watcher.ts              # Real-time chokidar file watcher
 │   │   └── types.ts                # Shared TypeScript interfaces
 │   ├── server/
