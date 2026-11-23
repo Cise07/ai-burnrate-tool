@@ -1,11 +1,11 @@
 <div align="center">
 
-```text
-    (  .      _   ___   ___ _   _ ___ _  _ ___    _ _____ ___
-   )  ) )    /_\ |_ _| | _ ) | | | _ \ \| | _ \  /_\_   _| __|
-  ( (  (    / _ \ | |  | _ \ |_| |   / .` |   / / _ \| | | _|
-   \____)  /_/ \_\___| |___/\___/|_|_\_|\_|_|_\/_/ \_\_| |___|
-```
+<pre>
+   (  .      _   ___   ___ _   _ ___ _  _ ___    _ _____ ___  
+  )  ) )    /_\ |_ _| | _ ) | | | _ \ \| | _ \  /_\_   _| __| 
+ ( (  (    / _ \ | |  | _ \ |_| |   / .` |   / / _ \| | | _|  
+  \____)  /_/ \_\___| |___/\___/|_|_\_|\_|_|_\/_/ \_\_| |___| 
+</pre>
 
 ### **Real-Time Local Token & API Equivalent Cost Tracker for Antigravity CLI, Claude Code & Codex CLI**
 
@@ -16,7 +16,7 @@
 
 Track live token consumption, **pay-as-you-go API equivalent spend (`$ USD` / `€ EUR`)**, Prompt Caching savings, subagents & `/btw` side-chats, and subscription ROI across **Antigravity CLI**, **Claude Code**, and **Codex CLI** — **100% locally, with zero cloud uploads.**
 
-[🚀 Quick Install](#-quick-install) · [✨ Features](#-key-features) · [🎮 CLI Flags](#-usage--cli-flags) · [🔄 Reset & Resume](#-per-tool-tracking-reset--resume) · [💾 Backup & Restore](#-portable-backup--restore) · [🪝 Offline Hooks](#-offline-auto-archive-hooks--zero-daemon-background-sync) · [💰 Pricing Engine](#-how-pricing--historical-rate-versioning-work)
+[🚀&nbsp;Quick&nbsp;Install](#-quick-install) · [✨&nbsp;Features](#-key-features) · [🎮&nbsp;CLI&nbsp;Flags](#-usage--cli-flags) · [🔄&nbsp;Reset](#-per-tool-tracking-reset--resume) · [💾&nbsp;Backup](#-portable-backup--restore) · [🪝&nbsp;Hooks](#-offline-auto-archive-hooks--zero-daemon-background-sync) · [💰&nbsp;Pricing](#-how-pricing--historical-rate-versioning-work)
 
 <br />
 
