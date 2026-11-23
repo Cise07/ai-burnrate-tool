@@ -73,24 +73,37 @@ export function getPreviousWindowBounds(
   };
 }
 
+export type TrackingStartMap = Partial<Record<ToolSource, string | null>>;
+
+export function getToolCutoffMs(source: ToolSource, trackingStartAt?: TrackingStartMap): number {
+  const raw = trackingStartAt?.[source];
+  if (!raw) return 0;
+  const ms = new Date(raw).getTime();
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
 export function filterSessionsInWindow(
   sessions: SessionStats[],
   options: {
     toolFilter?: ToolFilter;
     startMs: number;
     endMs: number;
+    trackingStartAt?: TrackingStartMap;
   }
 ): SessionStats[] {
-  const { toolFilter = 'all', startMs, endMs } = options;
+  const { toolFilter = 'all', startMs, endMs, trackingStartAt } = options;
   const filtered: SessionStats[] = [];
 
   for (const session of sessions) {
     if (toolFilter !== 'all' && session.source !== toolFilter) continue;
     if (session.untrackedHistory) continue;
 
+    const effectiveStartMs = Math.max(startMs, getToolCutoffMs(session.source, trackingStartAt));
+    if (effectiveStartMs >= endMs) continue;
+
     const validTurns = session.turnHistory.filter((t) => {
       const ts = new Date(t.timestamp).getTime();
-      return !Number.isNaN(ts) && ts >= startMs && ts < endMs;
+      return !Number.isNaN(ts) && ts >= effectiveStartMs && ts < endMs;
     });
     if (validTurns.length === 0) continue;
 
@@ -101,6 +114,9 @@ export function filterSessionsInWindow(
     let totalTokens = 0;
     let costUSD = 0;
     let cacheSavingsUSD = 0;
+    let estimatedTurns = 0;
+    let minTs = '';
+    let maxTs = '';
     for (const t of validTurns) {
       inputTokens += t.inputTokens;
       outputTokens += t.outputTokens;
@@ -109,10 +125,18 @@ export function filterSessionsInWindow(
       totalTokens += t.totalTokens;
       costUSD += t.costUSD;
       cacheSavingsUSD += t.cacheSavingsUSD;
+      if (t.estimated) estimatedTurns += 1;
+      if (t.timestamp) {
+        if (!minTs || t.timestamp < minTs) minTs = t.timestamp;
+        if (!maxTs || t.timestamp > maxTs) maxTs = t.timestamp;
+      }
     }
 
+    const modelBreakdown = getSessionModelBreakdown(validTurns);
     filtered.push({
       ...session,
+      primaryModel: modelBreakdown[0]?.normalizedModel || session.primaryModel,
+      primaryModelLabel: modelBreakdown[0]?.modelLabel || session.primaryModelLabel,
       turns: validTurns.length,
       inputTokens,
       outputTokens,
@@ -121,6 +145,9 @@ export function filterSessionsInWindow(
       totalTokens,
       costUSD,
       cacheSavingsUSD,
+      estimatedTurns,
+      startedAt: minTs || session.startedAt,
+      lastActiveAt: maxTs || session.lastActiveAt,
       turnHistory: validTurns,
     });
   }
@@ -367,9 +394,16 @@ export function filterSessions(
     timeRange?: TimeRange;
     searchQuery?: string;
     modelFilter?: string;
+    trackingStartAt?: TrackingStartMap;
   } = {}
 ): SessionStats[] {
-  const { toolFilter = 'all', timeRange = 'all', searchQuery = '', modelFilter = 'all' } = options;
+  const {
+    toolFilter = 'all',
+    timeRange = 'all',
+    searchQuery = '',
+    modelFilter = 'all',
+    trackingStartAt,
+  } = options;
   const cutoffMs = getCutoffMs(timeRange);
   const query = searchQuery.trim().toLowerCase();
   const targetModel = modelFilter && modelFilter !== 'all' ? modelFilter.toLowerCase() : '';
@@ -377,12 +411,13 @@ export function filterSessions(
 
   for (const session of sessions) {
     if (toolFilter !== 'all' && session.source !== toolFilter) continue;
+    const effectiveCutoffMs = Math.max(cutoffMs, getToolCutoffMs(session.source, trackingStartAt));
 
     if (session.untrackedHistory) {
       if (targetModel) continue;
-      if (cutoffMs > 0) {
+      if (effectiveCutoffMs > 0) {
         const ts = new Date(session.deletedAt || session.lastActiveAt || session.startedAt).getTime();
-        if (Number.isNaN(ts) || ts < cutoffMs) continue;
+        if (Number.isNaN(ts) || ts < effectiveCutoffMs) continue;
       }
       if (query) {
         const matchesQuery =
@@ -398,10 +433,10 @@ export function filterSessions(
     }
 
     let validTurns =
-      cutoffMs > 0
+      effectiveCutoffMs > 0
         ? session.turnHistory.filter((t) => {
             const ts = new Date(t.timestamp).getTime();
-            return !Number.isNaN(ts) && ts >= cutoffMs;
+            return !Number.isNaN(ts) && ts >= effectiveCutoffMs;
           })
         : session.turnHistory;
 
@@ -421,6 +456,7 @@ export function filterSessions(
     let totalTokens = 0;
     let costUSD = 0;
     let cacheSavingsUSD = 0;
+    let estimatedTurns = 0;
     let minTs = '';
     let maxTs = '';
 
@@ -432,18 +468,21 @@ export function filterSessions(
       totalTokens += t.totalTokens;
       costUSD += t.costUSD;
       cacheSavingsUSD += t.cacheSavingsUSD;
+      if (t.estimated) estimatedTurns += 1;
       if (t.timestamp) {
         if (!minTs || t.timestamp < minTs) minTs = t.timestamp;
         if (!maxTs || t.timestamp > maxTs) maxTs = t.timestamp;
       }
     }
 
-    const chatPrimaryModel =
-      getSessionModelBreakdown(validTurns)[0]?.modelLabel || session.primaryModelLabel;
-    const isTurnScoped = cutoffMs > 0 || Boolean(targetModel);
+    const modelBreakdown = getSessionModelBreakdown(validTurns);
+    const chatPrimaryModel = modelBreakdown[0]?.modelLabel || session.primaryModelLabel;
+    const chatPrimaryNormalized = modelBreakdown[0]?.normalizedModel || session.primaryModel;
+    const isTurnScoped = effectiveCutoffMs > 0 || Boolean(targetModel);
 
     const scopedSession: SessionStats = {
       ...session,
+      primaryModel: chatPrimaryNormalized,
       primaryModelLabel: chatPrimaryModel,
       turns: validTurns.length,
       inputTokens,
@@ -453,6 +492,7 @@ export function filterSessions(
       totalTokens,
       costUSD,
       cacheSavingsUSD,
+      estimatedTurns,
       startedAt: (isTurnScoped && minTs) || session.startedAt,
       lastActiveAt: (isTurnScoped && maxTs) || session.lastActiveAt,
       turnHistory: validTurns,

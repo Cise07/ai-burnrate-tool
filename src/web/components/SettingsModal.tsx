@@ -1,15 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
   Check,
+  Clock,
+  Download,
   Eye,
   EyeOff,
   GripVertical,
+  HardDrive,
   LayoutGrid,
   RotateCcw,
   ShieldCheck,
   SlidersHorizontal,
+  Upload,
   X,
 } from 'lucide-react';
 import {
@@ -19,7 +23,14 @@ import {
   getTaxLabel,
   type Currency,
 } from '../../core/analytics';
-import type { DashboardSectionId, HooksStatus, UserSettings } from '../../core/types';
+import type {
+  BurnrateSnapshot,
+  DashboardSectionId,
+  HooksStatus,
+  ToolSource,
+  ToolTrackingStartSettings,
+  UserSettings,
+} from '../../core/types';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -28,6 +39,7 @@ interface SettingsModalProps {
   hooksStatus?: HooksStatus;
   currency: Currency;
   onSave: (next: UserSettings) => Promise<void>;
+  onSnapshotUpdated?: (snapshot: BurnrateSnapshot) => void;
 }
 
 const DEFAULT_ORDER: DashboardSectionId[] = [
@@ -102,6 +114,72 @@ const PLAN_PRESETS: Array<{
   },
 ];
 
+const EMPTY_TRACKING_START: ToolTrackingStartSettings = {
+  antigravity: null,
+  claude: null,
+  codex: null,
+};
+
+function normalizeDraftSettings(raw: UserSettings): UserSettings {
+  return {
+    ...raw,
+    trackingStartAt: {
+      ...EMPTY_TRACKING_START,
+      ...(raw.trackingStartAt || {}),
+    },
+  };
+}
+
+function isoToLocalDateTimeInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function localDateTimeInputToIso(val: string): string | null {
+  const trimmed = val.trim();
+  if (!trimmed) return null;
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function formatCutoffBadge(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+type QuickStartPreset = 'today' | '7d' | '30d' | 'month';
+
+function getQuickStartIso(preset: QuickStartPreset): string {
+  const now = new Date();
+  if (preset === 'today') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString();
+  }
+  if (preset === '7d') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0, 0).toISOString();
+  }
+  if (preset === '30d') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0).toISOString();
+  }
+  return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString();
+}
+
+const QUICK_START_PRESETS: Array<{ id: QuickStartPreset; label: string }> = [
+  { id: 'today', label: 'Today 00:00' },
+  { id: '7d', label: '-7d' },
+  { id: '30d', label: '-30d' },
+  { id: 'month', label: 'Month start' },
+];
+
 function toDisplayAmount(usd: number, currency: Currency): number {
   return Number(convertSubscriptionMoney(usd, currency).toFixed(2));
 }
@@ -119,17 +197,29 @@ export function SettingsModal({
   hooksStatus,
   currency,
   onSave,
+  onSnapshotUpdated,
 }: SettingsModalProps) {
   const [rendered, setRendered] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [draft, setDraft] = useState<UserSettings>(settings);
+  const [draft, setDraft] = useState<UserSettings>(() => normalizeDraftSettings(settings));
   const [saving, setSaving] = useState(false);
   const [draggedId, setDraggedId] = useState<DashboardSectionId | null>(null);
   const [dragOverId, setDragOverId] = useState<DashboardSectionId | null>(null);
+  const [backupImportMode, setBackupImportMode] = useState<'merge' | 'replace'>('merge');
+  const [backupBusy, setBackupBusy] = useState<'export' | 'import' | null>(null);
+  const [backupStatus, setBackupStatus] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setBackupStatus(null);
+      setBackupBusy(null);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
-      setDraft(settings);
+      setDraft(normalizeDraftSettings(settings));
       setRendered(true);
       let raf2 = 0;
       const raf1 = requestAnimationFrame(() => {
@@ -174,6 +264,27 @@ export function SettingsModal({
       },
     }));
   };
+
+  const setToolTrackingStart = (tool: ToolSource, iso: string | null) => {
+    setDraft((prev) => ({
+      ...prev,
+      trackingStartAt: {
+        ...prev.trackingStartAt,
+        [tool]: iso,
+      },
+    }));
+  };
+
+  const resetAllTrackingCutoffs = () => {
+    setDraft((prev) => ({
+      ...prev,
+      trackingStartAt: { ...EMPTY_TRACKING_START },
+    }));
+  };
+
+  const hasAnyTrackingCutoff = Boolean(
+    draft.trackingStartAt.antigravity || draft.trackingStartAt.claude || draft.trackingStartAt.codex
+  );
 
   const toggleSection = (id: DashboardSectionId) => {
     setDraft((prev) => {
@@ -250,6 +361,89 @@ export function SettingsModal({
       onClose();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleExportBackup = async () => {
+    setBackupBusy('export');
+    setBackupStatus(null);
+    try {
+      const res = await fetch('/api/backup/export');
+      if (!res.ok) {
+        throw new Error('Failed to generate backup file');
+      }
+      const blob = await res.blob();
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `burnrate-backup-${dateStamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setBackupStatus({
+        tone: 'ok',
+        text: `Downloaded burnrate-backup-${dateStamp}.json (${(blob.size / 1024).toFixed(1)} KB)`,
+      });
+    } catch (err) {
+      setBackupStatus({
+        tone: 'err',
+        text: err instanceof Error ? err.message : 'Export failed',
+      });
+    } finally {
+      setBackupBusy(null);
+    }
+  };
+
+  const handleImportBackupFile = async (file: File | undefined) => {
+    if (!file) return;
+    setBackupBusy('import');
+    setBackupStatus(null);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error('Selected file is not valid JSON.');
+      }
+      const res = await fetch('/api/backup/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: backupImportMode, backup: parsed }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        result?: {
+          mode: 'merge' | 'replace';
+          importedSessions: number;
+          mergedSessions: number;
+          pricingSnapshotsAdded: number;
+        };
+        snapshot?: BurnrateSnapshot;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || 'Import failed');
+      }
+      if (data.snapshot) {
+        onSnapshotUpdated?.(data.snapshot);
+      }
+      const r = data.result;
+      setBackupStatus({
+        tone: 'ok',
+        text: r
+          ? `Restored (${r.mode}): +${r.importedSessions} sessions, ${r.mergedSessions} merged, +${r.pricingSnapshotsAdded} pricing snapshots.`
+          : 'Backup imported successfully.',
+      });
+    } catch (err) {
+      setBackupStatus({
+        tone: 'err',
+        text: err instanceof Error ? err.message : 'Import failed',
+      });
+    } finally {
+      setBackupBusy(null);
+      if (backupInputRef.current) backupInputRef.current.value = '';
     }
   };
 
@@ -364,6 +558,107 @@ export function SettingsModal({
                         className="w-24 h-8 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 focus:border-emerald-500/50 focus:outline-none text-xs font-mono text-zinc-100 text-right"
                       />
                       <span className="text-[11px] font-mono text-zinc-500">/mo</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Tool Spend Reset / Tracking Start Date */}
+          <div className="space-y-2.5 pt-2 border-t border-zinc-800/80">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-xs font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                Tool Tracking Reset (Start Date)
+              </h4>
+              {hasAnyTrackingCutoff && (
+                <button
+                  type="button"
+                  onClick={resetAllTrackingCutoffs}
+                  className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Restore all from beginning
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Count turns and spend per tool starting from now or any custom date, and restore anytime from a chosen date or from the beginning. Never touches tool files.
+            </p>
+            <div className="space-y-2">
+              {PLAN_PRESETS.map((tool) => {
+                const cutoffIso = draft.trackingStartAt[tool.key];
+                const isReset = Boolean(cutoffIso);
+                return (
+                  <div
+                    key={tool.key}
+                    className={`rounded-xl border p-3 flex flex-col gap-2 transition-colors ${
+                      isReset
+                        ? 'bg-amber-500/[0.06] border-amber-500/30'
+                        : 'bg-zinc-950/70 border-zinc-800/80'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-xs font-semibold font-mono ${tool.accent}`}>
+                        {tool.label}
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded-md border ${
+                          isReset
+                            ? 'bg-amber-500/15 border-amber-500/35 text-amber-300'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-500'
+                        }`}
+                      >
+                        {isReset && cutoffIso ? `From ${formatCutoffBadge(cutoffIso)}` : 'Full history'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-mono text-zinc-500 shrink-0">
+                        {isReset ? 'Resume from:' : 'Start from:'}
+                      </span>
+                      <input
+                        type="datetime-local"
+                        step={1}
+                        value={isoToLocalDateTimeInput(cutoffIso)}
+                        onChange={(e) =>
+                          setToolTrackingStart(tool.key, localDateTimeInputToIso(e.target.value))
+                        }
+                        aria-label={`${tool.label} tracking start date`}
+                        className="flex-1 min-w-[180px] h-8 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800 focus:border-amber-500/50 focus:outline-none text-[11px] font-mono text-zinc-200 [color-scheme:dark]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setToolTrackingStart(tool.key, new Date().toISOString())}
+                        className="h-8 px-2.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-[11px] font-mono font-medium text-amber-200 transition-colors cursor-pointer shrink-0"
+                      >
+                        Reset now
+                      </button>
+                      {isReset && (
+                        <button
+                          type="button"
+                          onClick={() => setToolTrackingStart(tool.key, null)}
+                          className="h-8 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[11px] font-mono text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer shrink-0 inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          From beginning
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                      <span className="text-[10px] font-mono text-zinc-500 mr-1">
+                        {isReset ? 'Quick resume:' : 'Quick start:'}
+                      </span>
+                      {QUICK_START_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => setToolTrackingStart(tool.key, getQuickStartIso(preset.id))}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 );
@@ -514,6 +809,85 @@ export function SettingsModal({
                 {draft.includeDeletedInTotals ? 'ON' : 'OFF'}
               </span>
             </button>
+          </div>
+
+          {/* Portable Backup & Restore (~/.burnrate) */}
+          <div className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
+                <HardDrive className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>Portable Backup &amp; Restore</span>
+              </div>
+              <div className="inline-flex items-center rounded-md border border-zinc-800 bg-zinc-900 p-0.5 text-[10px] font-mono">
+                <button
+                  type="button"
+                  onClick={() => setBackupImportMode('merge')}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    backupImportMode === 'merge'
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  Merge (Safe)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBackupImportMode('replace')}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    backupImportMode === 'replace'
+                      ? 'bg-amber-500/20 text-amber-300'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  Replace
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Export or restore your entire <span className="font-mono text-zinc-300">~/.burnrate</span> archive (sessions &amp; deleted chats ledger, historical pricing &amp; settings) in a single portable <span className="font-mono text-zinc-300">.json</span> file when migrating PCs or formatting.
+            </p>
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <button
+                type="button"
+                disabled={backupBusy !== null}
+                onClick={() => void handleExportBackup()}
+                className="h-8 px-3 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-xs font-mono font-medium text-cyan-200 inline-flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{backupBusy === 'export' ? 'Exporting...' : 'Export Backup (.json)'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={backupBusy !== null}
+                onClick={() => backupInputRef.current?.click()}
+                className="h-8 px-3 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-mono text-zinc-200 inline-flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>
+                  {backupBusy === 'import'
+                    ? 'Importing...'
+                    : `Import Backup (${backupImportMode === 'merge' ? 'Merge' : 'Replace'})`}
+                </span>
+              </button>
+              <input
+                ref={backupInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => void handleImportBackupFile(e.target.files?.[0])}
+              />
+            </div>
+            {backupStatus && (
+              <div
+                className={`rounded-lg px-2.5 py-1.5 text-[11px] font-mono border ${
+                  backupStatus.tone === 'ok'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                }`}
+              >
+                {backupStatus.text}
+              </div>
+            )}
           </div>
 
           {/* Auto-Archive Offline Hooks Status */}

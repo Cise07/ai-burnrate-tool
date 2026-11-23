@@ -628,3 +628,152 @@ export function resetMemorySessionLedger(): void {
   memoryLedger.clear();
   memoryDismissedLegacyKeys.clear();
 }
+
+function isValidLedgerSession(v: unknown): v is SessionStats {
+  if (!v || typeof v !== 'object') return false;
+  const rec = v as Record<string, unknown>;
+  return (
+    typeof rec.source === 'string' &&
+    VALID_TOOL_SOURCES.has(rec.source) &&
+    typeof rec.sessionId === 'string' &&
+    rec.sessionId.trim().length > 0 &&
+    typeof rec.turns === 'number' &&
+    Number.isFinite(rec.turns) &&
+    typeof rec.totalTokens === 'number' &&
+    Number.isFinite(rec.totalTokens) &&
+    typeof rec.costUSD === 'number' &&
+    Number.isFinite(rec.costUSD) &&
+    typeof rec.cacheSavingsUSD === 'number' &&
+    Number.isFinite(rec.cacheSavingsUSD) &&
+    Array.isArray(rec.turnHistory)
+  );
+}
+
+function mergeTwoSessions(existing: SessionStats, incoming: SessionStats): SessionStats {
+  const existingSigs = new Set(existing.turnHistory.map(turnSignature));
+  const extraTurns: SessionStats['turnHistory'] = [];
+  for (const t of incoming.turnHistory) {
+    const sig = turnSignature(t);
+    if (!existingSigs.has(sig)) {
+      existingSigs.add(sig);
+      extraTurns.push(t);
+    }
+  }
+  const hasBetterTitle =
+    (!existing.sessionTitle || existing.sessionTitle === existing.sessionId) &&
+    Boolean(incoming.sessionTitle && incoming.sessionTitle !== incoming.sessionId);
+
+  if (extraTurns.length === 0) {
+    return hasBetterTitle ? { ...existing, sessionTitle: incoming.sessionTitle } : existing;
+  }
+
+  const base = hasBetterTitle ? { ...existing, sessionTitle: incoming.sessionTitle } : existing;
+  return recomputeSessionFromTurns(base, [...existing.turnHistory, ...extraTurns]);
+}
+
+export function exportSessionLedgerSnapshot(): SessionLedgerFile {
+  const state = loadLedgerState();
+  return {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sessions: Object.fromEntries(
+      Array.from(state.sessions.entries()).map(([k, v]) => [k, structuredClone(v)])
+    ),
+    ...(state.dismissedLegacyKeys.size > 0
+      ? { dismissedLegacyKeys: Array.from(state.dismissedLegacyKeys) }
+      : {}),
+  };
+}
+
+export function importSessionLedgerSnapshot(
+  raw: unknown,
+  mode: 'merge' | 'replace' = 'merge',
+  fallbackArchiveIso?: string
+): {
+  importedSessions: number;
+  mergedSessions: number;
+  totalSessionsInBackup: number;
+  dismissedLegacyCount: number;
+} {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Invalid sessionsLedger payload in backup');
+  }
+  const parsed = raw as Partial<SessionLedgerFile>;
+  if (!parsed.sessions || typeof parsed.sessions !== 'object' || Array.isArray(parsed.sessions)) {
+    throw new Error('Backup sessionsLedger.sessions must be an object');
+  }
+
+  const nowIso = fallbackArchiveIso || new Date().toISOString();
+  const validIncoming = new Map<string, SessionStats>();
+  for (const val of Object.values(parsed.sessions)) {
+    if (!isValidLedgerSession(val)) continue;
+    const key = getSessionKey(val.source, val.sessionId);
+    // Mark imported entries as archived until live disk reconciliation confirms active files on this PC
+    const normalized: SessionStats = {
+      ...structuredClone(val),
+      deleted: true,
+      deletedAt: val.deletedAt || val.lastActiveAt || nowIso,
+    };
+    validIncoming.set(key, normalized);
+  }
+
+  const incomingDismissed = new Set<string>();
+  if (Array.isArray(parsed.dismissedLegacyKeys)) {
+    for (const item of parsed.dismissedLegacyKeys) {
+      if (typeof item === 'string' && isValidSessionKey(item)) {
+        incomingDismissed.add(item);
+      }
+    }
+  }
+
+  const current = loadLedgerState();
+  let importedSessions = 0;
+  let mergedSessions = 0;
+
+  if (mode === 'replace') {
+    const nextState: LedgerState = {
+      sessions: validIncoming,
+      dismissedLegacyKeys: incomingDismissed,
+    };
+    saveLedgerState(nextState);
+    return {
+      importedSessions: validIncoming.size,
+      mergedSessions: 0,
+      totalSessionsInBackup: validIncoming.size,
+      dismissedLegacyCount: incomingDismissed.size,
+    };
+  }
+
+  // Merge mode: preserve active/local sessions and merge any missing sessions or turns from backup
+  const nextSessions = new Map(current.sessions);
+  for (const [key, inc] of validIncoming.entries()) {
+    const prev = nextSessions.get(key);
+    if (!prev) {
+      nextSessions.set(key, inc);
+      importedSessions++;
+    } else {
+      const merged = mergeTwoSessions(prev, inc);
+      if (hasSessionChanged(prev, merged)) {
+        nextSessions.set(key, merged);
+        mergedSessions++;
+      }
+    }
+  }
+
+  const nextDismissed = new Set(current.dismissedLegacyKeys);
+  for (const key of incomingDismissed) {
+    nextDismissed.add(key);
+  }
+
+  saveLedgerState({
+    sessions: nextSessions,
+    dismissedLegacyKeys: nextDismissed,
+  });
+
+  return {
+    importedSessions,
+    mergedSessions,
+    totalSessionsInBackup: validIncoming.size,
+    dismissedLegacyCount: nextDismissed.size,
+  };
+}

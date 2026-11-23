@@ -24,6 +24,11 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     order: [...DEFAULT_SECTION_ORDER],
     hidden: [],
   },
+  trackingStartAt: {
+    antigravity: null,
+    claude: null,
+    codex: null,
+  },
 };
 
 let memorySettings: UserSettings | null = null;
@@ -92,9 +97,45 @@ function sanitizeLayout(rawLayout: unknown, baseLayout: UserSettings['layout']):
   return { order, hidden };
 }
 
+export function parseUserDateInput(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (dateOnlyMatch) {
+    const year = Number(dateOnlyMatch[1]);
+    const month = Number(dateOnlyMatch[2]);
+    const day = Number(dateOnlyMatch[3]);
+    const localDate = new Date(year, month - 1, day, 0, 0, 0, 0);
+    if (
+      localDate.getFullYear() !== year ||
+      localDate.getMonth() !== month - 1 ||
+      localDate.getDate() !== day
+    ) {
+      return null;
+    }
+    return localDate.toISOString();
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function sanitizeTrackingTimestamp(val: unknown, fallback: string | null): string | null {
+  if (val === null || val === '') return null;
+  if (typeof val === 'string') {
+    const parsed = parseUserDateInput(val);
+    if (parsed) return parsed;
+  }
+  return fallback;
+}
+
 export function sanitizeUserSettings(raw: unknown, base: UserSettings = DEFAULT_USER_SETTINGS): UserSettings {
   const obj = raw && typeof raw === 'object' ? (raw as Record<string, any>) : {};
   const subs = obj.subscriptions && typeof obj.subscriptions === 'object' ? obj.subscriptions : {};
+  const rawTracking =
+    obj.trackingStartAt && typeof obj.trackingStartAt === 'object'
+      ? (obj.trackingStartAt as Record<string, unknown>)
+      : null;
+  const baseTracking = base.trackingStartAt ?? DEFAULT_USER_SETTINGS.trackingStartAt;
 
   return {
     subscriptions: {
@@ -107,6 +148,20 @@ export function sanitizeUserSettings(raw: unknown, base: UserSettings = DEFAULT_
         ? obj.includeDeletedInTotals
         : base.includeDeletedInTotals,
     layout: sanitizeLayout(obj.layout, base.layout),
+    trackingStartAt: {
+      antigravity:
+        rawTracking && 'antigravity' in rawTracking
+          ? sanitizeTrackingTimestamp(rawTracking.antigravity, baseTracking.antigravity)
+          : baseTracking.antigravity,
+      claude:
+        rawTracking && 'claude' in rawTracking
+          ? sanitizeTrackingTimestamp(rawTracking.claude, baseTracking.claude)
+          : baseTracking.claude,
+      codex:
+        rawTracking && 'codex' in rawTracking
+          ? sanitizeTrackingTimestamp(rawTracking.codex, baseTracking.codex)
+          : baseTracking.codex,
+    },
   };
 }
 

@@ -34,6 +34,9 @@ export function getPackageRoot(): string {
 }
 
 export function getUserLedgerPath(): string {
+  if (process.env.BURNRATE_PRICING_LEDGER_PATH) {
+    return path.resolve(process.env.BURNRATE_PRICING_LEDGER_PATH);
+  }
   return path.join(os.homedir(), '.burnrate', 'pricing-ledger.json');
 }
 
@@ -211,6 +214,137 @@ export function loadPricing(forceReload = false): PricingConfig {
   cachedPricing = bundled;
   saveUserLedger(cachedPricing);
   return cachedPricing;
+}
+
+function isValidModelRate(rate: unknown): rate is ModelRate {
+  if (!rate || typeof rate !== 'object') return false;
+  const r = rate as Record<string, unknown>;
+  return (
+    typeof r.label === 'string' &&
+    r.label.length > 0 &&
+    typeof r.input === 'number' &&
+    Number.isFinite(r.input) &&
+    typeof r.output === 'number' &&
+    Number.isFinite(r.output) &&
+    typeof r.cacheRead === 'number' &&
+    Number.isFinite(r.cacheRead) &&
+    typeof r.cacheWrite === 'number' &&
+    Number.isFinite(r.cacheWrite)
+  );
+}
+
+function sanitizeModelsRecord(raw: unknown): Record<string, ModelRate> {
+  const result: Record<string, ModelRate> = {};
+  if (!raw || typeof raw !== 'object') return result;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (k.trim().length > 0 && isValidModelRate(v)) {
+      result[k] = structuredClone(v);
+    }
+  }
+  return result;
+}
+
+function sanitizeHistorySnapshots(raw: unknown): RateSnapshot[] {
+  if (!Array.isArray(raw)) return [];
+  const snapshots: RateSnapshot[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.effectiveFrom !== 'string' || Number.isNaN(new Date(rec.effectiveFrom).getTime())) {
+      continue;
+    }
+    const models = sanitizeModelsRecord(rec.models);
+    if (Object.keys(models).length === 0) continue;
+    snapshots.push({
+      effectiveFrom: rec.effectiveFrom,
+      ...(typeof rec.source === 'string' ? { source: rec.source } : {}),
+      models,
+    });
+  }
+  snapshots.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  return snapshots;
+}
+
+export function importPricingLedger(
+  incoming: unknown,
+  mode: 'merge' | 'replace' = 'merge'
+): { snapshotsAdded: number; modelsMerged: number } {
+  if (!incoming || typeof incoming !== 'object') {
+    return { snapshotsAdded: 0, modelsMerged: 0 };
+  }
+  const inc = incoming as Partial<PricingConfig>;
+  const incomingModels = sanitizeModelsRecord(inc.models);
+  const incomingHistory = sanitizeHistorySnapshots(inc.history);
+  if (Object.keys(incomingModels).length === 0 && incomingHistory.length === 0) {
+    return { snapshotsAdded: 0, modelsMerged: 0 };
+  }
+
+  const bundled = ensureHistoryInitialized(loadBundledPricing());
+  const current = loadPricing(true);
+
+  if (mode === 'replace') {
+    const nextModels = { ...structuredClone(bundled.models), ...incomingModels };
+    const nextHistory =
+      incomingHistory.length > 0
+        ? incomingHistory
+        : [
+            {
+              effectiveFrom: '1970-01-01T00:00:00.000Z',
+              source: 'backup',
+              models: structuredClone(nextModels),
+            },
+          ];
+    const nextConfig: PricingConfig = {
+      ...structuredClone(bundled),
+      updatedAt: typeof inc.updatedAt === 'string' && inc.updatedAt ? inc.updatedAt : new Date().toISOString(),
+      ...(typeof inc.lastSyncCheckedAt === 'string' ? { lastSyncCheckedAt: inc.lastSyncCheckedAt } : {}),
+      ...(typeof inc.litellmEtag === 'string' ? { litellmEtag: inc.litellmEtag } : {}),
+      ...(typeof inc.repoPricingEtag === 'string' ? { repoPricingEtag: inc.repoPricingEtag } : {}),
+      models: nextModels,
+      history: nextHistory,
+    };
+    cachedPricing = nextConfig;
+    saveUserLedger(nextConfig);
+    return {
+      snapshotsAdded: nextHistory.length,
+      modelsMerged: Object.keys(incomingModels).length,
+    };
+  }
+
+  // Merge mode: preserve existing local history + add any missing snapshots chronologically
+  const nextHistory = [...(current.history || [])];
+  const existingKeys = new Set(nextHistory.map((h) => h.effectiveFrom));
+  let snapshotsAdded = 0;
+  for (const snap of incomingHistory) {
+    if (!existingKeys.has(snap.effectiveFrom)) {
+      existingKeys.add(snap.effectiveFrom);
+      nextHistory.push(snap);
+      snapshotsAdded++;
+    }
+  }
+  nextHistory.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+
+  const nextModels = structuredClone(current.models);
+  const incomingIsNewer =
+    typeof inc.updatedAt === 'string' &&
+    (!current.updatedAt || inc.updatedAt > current.updatedAt);
+  let modelsMerged = 0;
+  for (const [key, rate] of Object.entries(incomingModels)) {
+    if (!nextModels[key] || incomingIsNewer) {
+      nextModels[key] = rate;
+      modelsMerged++;
+    }
+  }
+
+  const mergedConfig: PricingConfig = {
+    ...current,
+    updatedAt: incomingIsNewer && inc.updatedAt ? inc.updatedAt : current.updatedAt,
+    models: nextModels,
+    history: nextHistory,
+  };
+  cachedPricing = mergedConfig;
+  saveUserLedger(mergedConfig);
+  return { snapshotsAdded, modelsMerged };
 }
 
 function longContextTiersDiffer(a?: LongContextTier, b?: LongContextTier): boolean {

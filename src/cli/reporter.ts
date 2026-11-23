@@ -53,9 +53,14 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   const toolFilter: ToolFilter = options.toolFilter || 'all';
   const timeRange: TimeRange = options.timeRange || 'all';
   const includeDeleted = snapshot.settings?.includeDeletedInTotals ?? true;
+  const trackingStartAt = snapshot.settings?.trackingStartAt;
 
-  const activeSessions = filterSessions(snapshot.sessions, { toolFilter, timeRange });
-  const deletedSessions = filterSessions(snapshot.deletedSessions || [], { toolFilter, timeRange });
+  const activeSessions = filterSessions(snapshot.sessions, { toolFilter, timeRange, trackingStartAt });
+  const deletedSessions = filterSessions(snapshot.deletedSessions || [], {
+    toolFilter,
+    timeRange,
+    trackingStartAt,
+  });
   const trackedDeletedSessions = deletedSessions.filter((s) => !s.untrackedHistory);
   const allSessions = includeDeleted ? [...activeSessions, ...trackedDeletedSessions] : [...activeSessions];
   const workspaceGroups = buildWorkspaceGroups(activeSessions);
@@ -149,6 +154,31 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
     }`
   );
   console.log(pc.dim(`Scanned: ${snapshot.watchedPaths.join('  •  ')}`));
+  if (trackingStartAt) {
+    const toolNames: Array<{ key: 'antigravity' | 'claude' | 'codex'; label: string }> = [
+      { key: 'antigravity', label: 'Antigravity' },
+      { key: 'claude', label: 'Claude Code' },
+      { key: 'codex', label: 'Codex CLI' },
+    ];
+    const activeCutoffs = toolNames
+      .filter((t) => (toolFilter === 'all' || toolFilter === t.key) && Boolean(trackingStartAt[t.key]))
+      .map((t) => {
+        const d = new Date(trackingStartAt[t.key]!);
+        const formatted = Number.isNaN(d.getTime())
+          ? trackingStartAt[t.key]!
+          : d.toLocaleString(undefined, {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+        return `${t.label} >= ${formatted}`;
+      });
+    if (activeCutoffs.length > 0) {
+      console.log(pc.yellow(`Tracking reset active: ${activeCutoffs.join('  •  ')}`));
+    }
+  }
   console.log(pc.dim('─'.repeat(104)));
 
   console.log(

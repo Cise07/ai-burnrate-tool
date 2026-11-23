@@ -8,6 +8,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock,
   Cpu,
   Database,
   DollarSign,
@@ -17,6 +18,7 @@ import {
   LayoutGrid,
   MessageSquare,
   RefreshCw,
+  RotateCcw,
   Search,
   SlidersHorizontal,
   Sparkles,
@@ -89,6 +91,11 @@ const FALLBACK_SETTINGS: UserSettings = {
   layout: {
     order: DEFAULT_SECTION_ORDER,
     hidden: [],
+  },
+  trackingStartAt: {
+    antigravity: null,
+    claude: null,
+    codex: null,
   },
 };
 
@@ -217,6 +224,27 @@ function formatPreciseDateTime(iso: string | undefined): { date: string; time: s
   } catch {
     return { date: iso.slice(0, 10), time: iso.slice(11, 19) };
   }
+}
+
+function toLocalDateTimeInput(isoOrDate: string | Date): string {
+  const d = typeof isoOrDate === 'string' ? new Date(isoOrDate) : isoOrDate;
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function getQuickRestoreLocalInput(preset: 'today' | '7d' | '30d' | 'month'): string {
+  const now = new Date();
+  if (preset === 'today') {
+    return toLocalDateTimeInput(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0));
+  }
+  if (preset === '7d') {
+    return toLocalDateTimeInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0, 0));
+  }
+  if (preset === '30d') {
+    return toLocalDateTimeInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0));
+  }
+  return toLocalDateTimeInput(new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0));
 }
 
 function isPromoActive(rate: ModelRate | undefined, targetDate?: string | number): boolean {
@@ -443,6 +471,9 @@ export default function App() {
   });
   const [isDeletedModalOpen, setIsDeletedModalOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isBannerRestoreOpen, setIsBannerRestoreOpen] = useState<boolean>(false);
+  const [bannerRestoreDate, setBannerRestoreDate] = useState<string>('');
+  const [bannerRestoreTarget, setBannerRestoreTarget] = useState<'all' | ToolSource>('all');
   const [dismissingLegacyKeys, setDismissingLegacyKeys] = useState<Set<string>>(new Set());
   const [isClearingLegacyBulk, setIsClearingLegacyBulk] = useState<boolean>(false);
   const [isRestoringLegacy, setIsRestoringLegacy] = useState<boolean>(false);
@@ -521,7 +552,23 @@ export default function App() {
     localStorage.setItem('burnrate_time_range', next);
     clearUrlOverrideParam('range');
   };
-  const userSettings: UserSettings = snapshot?.settings || FALLBACK_SETTINGS;
+  const userSettings: UserSettings = useMemo(() => {
+    const raw = snapshot?.settings;
+    if (!raw) return FALLBACK_SETTINGS;
+    return {
+      ...FALLBACK_SETTINGS,
+      ...raw,
+      subscriptions: {
+        ...FALLBACK_SETTINGS.subscriptions,
+        ...(raw.subscriptions || {}),
+      },
+      layout: raw.layout || FALLBACK_SETTINGS.layout,
+      trackingStartAt: {
+        ...FALLBACK_SETTINGS.trackingStartAt,
+        ...(raw.trackingStartAt || {}),
+      },
+    };
+  }, [snapshot?.settings]);
   const currencySymbol = currency === 'EUR' ? '€' : '$';
   const rateMultiplier = currency === 'EUR' ? EUR_RATE : 1;
   const taxLabel = getTaxLabel(currency);
@@ -700,13 +747,16 @@ export default function App() {
     if (!snapshot) return null;
 
     const includeDeleted = userSettings.includeDeletedInTotals;
+    const trackingStartAt = userSettings.trackingStartAt;
     const activeFilteredSessions: SessionStats[] = filterSessions(snapshot.sessions, {
       toolFilter,
       timeRange,
+      trackingStartAt,
     });
     const deletedFilteredSessions: SessionStats[] = filterSessions(snapshot.deletedSessions || [], {
       toolFilter,
       timeRange,
+      trackingStartAt,
     }).sort((a, b) => {
       const aKey = a.deletedAt || a.lastActiveAt || '';
       const bKey = b.deletedAt || b.lastActiveAt || '';
@@ -894,6 +944,7 @@ export default function App() {
         toolFilter,
         startMs: prevBounds.startMs,
         endMs: prevBounds.endMs,
+        trackingStartAt,
       });
       const prevCost = prevSessions.reduce((a, s) => a + s.costUSD, 0);
       const prevTokens = prevSessions.reduce((a, s) => a + s.totalTokens, 0);
@@ -912,7 +963,11 @@ export default function App() {
       };
     }
 
-    const toolScopedAllTime = filterSessions(fullTrackedPool, { toolFilter, timeRange: 'all' });
+    const toolScopedAllTime = filterSessions(fullTrackedPool, {
+      toolFilter,
+      timeRange: 'all',
+      trackingStartAt,
+    });
     const projection = computeMonthlyProjection(toolScopedAllTime, nowMs);
     const heatmapDays = computeDailyHeatmap(toolScopedAllTime, 13, nowMs);
     const topWorkspaces = computeTopWorkspaces(allFilteredSessions, 7);
@@ -1038,6 +1093,70 @@ export default function App() {
     displayedSub > 0 ? (displayedSpend / displayedSub).toFixed(1) : '0.0';
 
   const hasTableFilters = activeModelFilter !== 'all' || searchQuery.trim().length > 0;
+
+  const activeTrackingCutoffs = (
+    [
+      { key: 'antigravity', label: 'Antigravity' },
+      { key: 'claude', label: 'Claude Code' },
+      { key: 'codex', label: 'Codex CLI' },
+    ] as Array<{ key: ToolSource; label: string }>
+  )
+    .filter((item) => (toolFilter === 'all' || toolFilter === item.key) && Boolean(userSettings.trackingStartAt[item.key]))
+    .map((item) => {
+      const iso = userSettings.trackingStartAt[item.key]!;
+      const formatted = formatPreciseDateTime(iso);
+      return {
+        ...item,
+        iso,
+        display: `${formatted.date} ${formatted.time.slice(0, 5)}`.trim(),
+      };
+    });
+
+  const restoreVisibleTrackingCutoffs = () => {
+    const nextTracking = { ...userSettings.trackingStartAt };
+    for (const item of activeTrackingCutoffs) {
+      nextTracking[item.key] = null;
+    }
+    setIsBannerRestoreOpen(false);
+    void saveSettings({
+      ...userSettings,
+      trackingStartAt: nextTracking,
+    });
+  };
+
+  const openBannerRestoreFromDate = () => {
+    const firstCutoff = activeTrackingCutoffs[0]?.iso;
+    setBannerRestoreTarget('all');
+    setBannerRestoreDate(
+      firstCutoff ? toLocalDateTimeInput(firstCutoff) : getQuickRestoreLocalInput('today')
+    );
+    setIsBannerRestoreOpen(true);
+  };
+
+  const effectiveBannerRestoreTarget: 'all' | ToolSource =
+    bannerRestoreTarget !== 'all' &&
+    activeTrackingCutoffs.some((c) => c.key === bannerRestoreTarget)
+      ? bannerRestoreTarget
+      : 'all';
+
+  const applyBannerRestoreFromDate = () => {
+    const parsed = new Date(bannerRestoreDate);
+    if (!bannerRestoreDate || Number.isNaN(parsed.getTime())) return;
+    const nextIso = parsed.toISOString();
+    const nextTracking = { ...userSettings.trackingStartAt };
+    const targets =
+      effectiveBannerRestoreTarget === 'all'
+        ? activeTrackingCutoffs.map((c) => c.key)
+        : [effectiveBannerRestoreTarget];
+    for (const key of targets) {
+      nextTracking[key] = nextIso;
+    }
+    setIsBannerRestoreOpen(false);
+    void saveSettings({
+      ...userSettings,
+      trackingStartAt: nextTracking,
+    });
+  };
 
   const exportReport = (format: 'csv' | 'json') => {
     const dateStamp = new Date().toISOString().slice(0, 10);
@@ -1530,7 +1649,7 @@ export default function App() {
         {/* Live Event Banner if a file just updated */}
         {lastChangedFile && (
           <div
-            style={{ order: -1 }}
+            style={{ order: -2 }}
             className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300 animate-burn-expand"
           >
             <span className="truncate">
@@ -1542,6 +1661,145 @@ export default function App() {
             >
               Dismiss
             </button>
+          </div>
+        )}
+
+        {/* Active Per-Tool Tracking Reset Banner */}
+        {activeTrackingCutoffs.length > 0 && (
+          <div
+            style={{ order: -1 }}
+            className="rounded-lg bg-amber-950/25 border border-amber-500/30 px-3.5 py-2 flex flex-col gap-2 text-xs font-mono text-amber-200 animate-burn-expand"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="truncate">
+                  Tracking reset active:{' '}
+                  {activeTrackingCutoffs.map((c, idx) => (
+                    <span key={c.key}>
+                      {idx > 0 ? ' · ' : ''}
+                      <span className="text-amber-100 font-semibold">{c.label}</span> from {c.display}
+                    </span>
+                  ))}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() =>
+                    isBannerRestoreOpen
+                      ? setIsBannerRestoreOpen(false)
+                      : openBannerRestoreFromDate()
+                  }
+                  className={`px-2 py-0.5 rounded-md border text-[11px] transition-colors cursor-pointer ${
+                    isBannerRestoreOpen
+                      ? 'border-amber-400/60 bg-amber-500/25 text-amber-100'
+                      : 'border-amber-500/35 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200'
+                  }`}
+                >
+                  Restore from date
+                </button>
+                <button
+                  type="button"
+                  onClick={restoreVisibleTrackingCutoffs}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-zinc-700 bg-zinc-900/90 hover:bg-zinc-800 text-[11px] text-zinc-200 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  From beginning
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                >
+                  Settings
+                </button>
+              </div>
+            </div>
+
+            {isBannerRestoreOpen && (
+              <div className="pt-2 border-t border-amber-500/20 flex flex-wrap items-center gap-2">
+                {activeTrackingCutoffs.length > 1 && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setBannerRestoreTarget('all')}
+                      className={`px-2 py-1 rounded-md text-[10.5px] border transition-colors cursor-pointer ${
+                        effectiveBannerRestoreTarget === 'all'
+                          ? 'bg-amber-500/20 border-amber-500/45 text-amber-100'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      All ({activeTrackingCutoffs.length})
+                    </button>
+                    {activeTrackingCutoffs.map((c) => (
+                      <button
+                        key={c.key}
+                        type="button"
+                        onClick={() => {
+                          setBannerRestoreTarget(c.key);
+                          setBannerRestoreDate(toLocalDateTimeInput(c.iso));
+                        }}
+                        className={`px-2 py-1 rounded-md text-[10.5px] border transition-colors cursor-pointer ${
+                          effectiveBannerRestoreTarget === c.key
+                            ? 'bg-amber-500/20 border-amber-500/45 text-amber-100'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <input
+                  type="datetime-local"
+                  step={1}
+                  value={bannerRestoreDate}
+                  onChange={(e) => setBannerRestoreDate(e.target.value)}
+                  aria-label="Restore expenses starting from date"
+                  className="h-7 px-2 rounded-md bg-zinc-950 border border-amber-500/35 focus:border-amber-400 focus:outline-none text-[11px] font-mono text-zinc-100 [color-scheme:dark]"
+                />
+
+                <div className="flex flex-wrap items-center gap-1">
+                  {(
+                    [
+                      { id: 'today', label: 'Today' },
+                      { id: '7d', label: '-7d' },
+                      { id: '30d', label: '-30d' },
+                      { id: 'month', label: 'Month start' },
+                    ] as Array<{ id: 'today' | '7d' | '30d' | 'month'; label: string }>
+                  ).map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => setBannerRestoreDate(getQuickRestoreLocalInput(preset.id))}
+                      className="px-2 py-1 rounded-md text-[10px] bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <button
+                    type="button"
+                    disabled={!bannerRestoreDate}
+                    onClick={applyBannerRestoreFromDate}
+                    className="h-7 px-2.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-[11px] transition-colors disabled:opacity-40 cursor-pointer"
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsBannerRestoreOpen(false)}
+                    className="h-7 px-2 rounded-md border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -3124,6 +3382,10 @@ export default function App() {
         hooksStatus={snapshot.hooksStatus}
         currency={currency}
         onSave={saveSettings}
+        onSnapshotUpdated={(nextSnapshot) => {
+          setSnapshot(nextSnapshot);
+          setLastSyncTime(new Date().toLocaleTimeString());
+        }}
       />
     </div>
   );

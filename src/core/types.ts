@@ -12,6 +12,12 @@ export interface DashboardLayoutSettings {
   hidden: DashboardSectionId[];
 }
 
+export interface ToolTrackingStartSettings {
+  antigravity: string | null;
+  claude: string | null;
+  codex: string | null;
+}
+
 export interface UserSettings {
   subscriptions: {
     antigravity: number;
@@ -20,6 +26,7 @@ export interface UserSettings {
   };
   includeDeletedInTotals: boolean;
   layout: DashboardLayoutSettings;
+  trackingStartAt: ToolTrackingStartSettings;
 }
 
 export interface HooksStatus {

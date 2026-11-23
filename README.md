@@ -16,7 +16,7 @@
 
 Track live token consumption, **pay-as-you-go API equivalent spend (`$ USD` / `€ EUR`)**, Prompt Caching savings, subagents & `/btw` side-chats, and subscription ROI across **Antigravity CLI**, **Claude Code**, and **Codex CLI** — **100% locally, with zero cloud uploads.**
 
-[🚀 Quick Install](#-quick-install) · [✨ Features](#-key-features) · [🎮 CLI Flags](#-usage--cli-flags) · [🔄 Reset & Resume](#-per-tool-tracking-reset--resume) · [🪝 Offline Hooks](#-offline-auto-archive-hooks--zero-daemon-background-sync) · [💰 Pricing Engine](#-how-pricing--historical-rate-versioning-work)
+[🚀 Quick Install](#-quick-install) · [✨ Features](#-key-features) · [🎮 CLI Flags](#-usage--cli-flags) · [🔄 Reset & Resume](#-per-tool-tracking-reset--resume) · [💾 Backup & Restore](#-portable-backup--restore) · [🪝 Offline Hooks](#-offline-auto-archive-hooks--zero-daemon-background-sync) · [💰 Pricing Engine](#-how-pricing--historical-rate-versioning-work)
 
 <br />
 
@@ -75,6 +75,7 @@ burn --cli    # 🖥️ Print an instant colorized ANSI report directly in your 
 - 🔒 **100% Local, Dynamic & Cross-Platform:** Automatically resolves `~/.gemini`, `~/.claude`, and `~/.codex` (or `$CODEX_HOME`) on Windows, macOS, and Linux with zero hardcoded paths. Override directories anytime via `BURNRATE_GEMINI_DIR`, `BURNRATE_CLAUDE_DIR`, and `BURNRATE_CODEX_DIR`.
 - 🤖 **Automatic Subagent & `/btw` Side-Chat Roll-Up:** Subagents (`image-generator`, `research`, Claude `/subagents/*.jsonl`, Codex multi-agent threads) and ephemeral **`/btw` / `/side`** side-chats across Antigravity CLI, Claude Code, and Codex CLI roll cleanly into their parent chat and project workspace without double-counting — preserved with **expandable & searchable individual `/btw` titles**, turns, tokens, models, and costs even after dismissing with `Esc` or archiving.
 - 🔄 **Per-Tool Spend Reset & Resume from Any Date:** Start counting spend for any individual tool (`Antigravity`, `Claude Code`, `Codex CLI`) from **right now** or **any custom date/time** (e.g. migrating from a third-party API to a native plan, or starting a new billing cycle) — filtering strictly per turn without touching any AI tool files, and fully reversible from any date or from the beginning.
+- 💾 **Portable Backup & Restore (`~/.burnrate`):** Export your entire local archive (sessions & deleted chats ledger, `/btw` turns, historical pricing snapshots, subscription plans, layout & tool cutoffs) into a single portable `.json` file and restore it in safe **Merge** (default) or **Replace** mode from either Settings UI or the CLI — even on a brand-new machine before installing your AI CLIs.
 - 🪝 **Offline Auto-Archive Hooks (`--sync-ledger`):** Automatically installs lightweight native lifecycle hooks (`Stop`, `SubagentStop`, `SessionEnd`) for Antigravity, Claude Code, and Codex CLI so completed turns, subagents, and `/btw` chats are atomically snapshotted into `~/.burnrate/sessions-ledger.json` even while `burn` is closed.
 - 📱 **Mobile & LAN Access (`ai-burnrate.local` mDNS + 6-Digit PIN + QR):** Running `burn` binds to `0.0.0.0`, advertises **`http://ai-burnrate.local:<port>`** via built-in mDNS/Bonjour (with LAN IP fallback), and prints a random **6-digit PIN** + scannable **terminal QR code**. Localhost stays instant-access, while LAN devices authenticate with constant-time PIN verification, per-IP rate limiting, and `HttpOnly` cookies.
 - 🟢 **Live Dashboard & Server-Sent Events (SSE):** A background `chokidar` watcher streams instant updates to KPIs, charts, heatmap, and session tables via `/api/events`.
@@ -100,6 +101,9 @@ Once installed, the **`burn`** command is available globally from any directory:
 | `burn --reset-tool <tool>` | 🔄 **Reset Tool Spend:** Starts counting spend & stats from now (or `--since <date>`) for `antigravity`, `claude`, `codex`, or `all` without touching tool files. |
 | `burn --restore-tool <tool>` | ⏪ **Restore Tool History:** Restores spend history from the beginning (or from `--since <date>`) for `antigravity`, `claude`, `codex`, or `all`. |
 | `burn --since <date>` | 📅 **Custom Cutoff Date:** Optional `YYYY-MM-DD` or ISO-8601 timestamp used with `--reset-tool` or `--restore-tool`. |
+| `burn --export-backup [file]` | 💾 **Export Backup:** Snapshots live transcripts and exports `~/.burnrate` (sessions ledger, pricing history & settings) into a portable `.json` file (`burnrate-backup-YYYY-MM-DD.json` by default). |
+| `burn --import-backup <file>` | 📥 **Import Backup:** Restores a Burnrate backup `.json` file into `~/.burnrate`, safely **merging** with existing local data by default. |
+| `burn --replace` | 🔁 **Replace Mode (Backup Import):** Used with `--import-backup <file>` to overwrite local `~/.burnrate` data instead of merging. |
 | `burn --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without opening the browser. |
 | `burn --no-hooks` | 🔕 **Skip Hooks:** Launches without installing Antigravity/Claude/Codex offline archive hooks. |
 | `burn --uninstall-hooks` | 🧹 **Remove Hooks:** Removes `ai-burnrate-tool` offline archive hooks from Antigravity, Claude Code & Codex CLI configs. |
@@ -128,6 +132,21 @@ burn --reset-tool claude --since 2026-11-01     # Count Claude Code starting fro
 burn --restore-tool claude --since 2026-11-15   # Resume counting from a specific earlier date
 burn --restore-tool claude                      # Restore full history from the beginning
 ```
+
+---
+
+## 💾 Portable Backup & Restore
+
+Moving to a new machine or formatting your OS? Export your entire `~/.burnrate` state (**sessions & deleted chats ledger**, preserved `/btw` side-chats, **historical pricing snapshots**, and **user settings/plans/cutoffs**) into one validated JSON bundle — and restore it anytime from **Settings → Portable Backup & Restore** or the CLI:
+
+```bash
+burn --export-backup                            # Writes ./burnrate-backup-YYYY-MM-DD.json
+burn --export-backup ~/backups/burnrate.json    # Export to a custom file or directory
+burn --import-backup burnrate-backup.json       # Safe Merge mode (preserves newer local sessions & turns)
+burn --import-backup burnrate-backup.json --replace  # Full Replace mode
+```
+
+- **Works even on a clean PC:** Imported sessions appear immediately in your totals, charts, heatmap, and archive even before `~/.gemini`, `~/.claude`, or `~/.codex` exist on the new machine, and automatically reconnect to live chats once matching transcripts appear on disk.
 
 ---
 
@@ -194,6 +213,7 @@ ai-burnrate-tool/
 │   │   └── reporter.ts             # ANSI terminal report formatter (--cli)
 │   ├── core/
 │   │   ├── analytics.ts            # Filtering, per-tool cutoffs, subagent/btw/model breakdowns, heatmap, export
+│   │   ├── backup.ts               # Portable ~/.burnrate JSON backup & merge/replace restore engine
 │   │   ├── hooks.ts                # Antigravity, Claude Code & Codex CLI offline lifecycle hooks
 │   │   ├── mdns.ts                 # Built-in RFC 6762 mDNS responder (`ai-burnrate.local`)
 │   │   ├── parser.ts               # Dynamic ~/.gemini, ~/.claude & ~/.codex JSONL parser & subagent/btw merge

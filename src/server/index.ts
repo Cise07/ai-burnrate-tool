@@ -5,6 +5,12 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Currency, TimeRange, ToolFilter } from '../core/analytics.js';
+import {
+  createBackupBundle,
+  getDefaultBackupFilename,
+  importBackupBundle,
+  type BackupImportMode,
+} from '../core/backup.js';
 import { startMdnsResponder } from '../core/mdns.js';
 import { scanAllLogs } from '../core/parser.js';
 import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
@@ -560,6 +566,79 @@ export async function startServer(
             'Cache-Control': 'no-store, no-cache, must-revalidate',
           });
           res.end(JSON.stringify({ settings: saved, snapshot: updatedSnapshot }));
+          return;
+        }
+
+        if (pathname === '/api/backup/export' && req.method === 'GET') {
+          try {
+            const bundle = createBackupBundle();
+            const filename = getDefaultBackupFilename(new Date(bundle.exportedAt));
+            const payload = JSON.stringify(bundle, null, 2);
+            res.writeHead(200, {
+              'Content-Type': 'application/json; charset=utf-8',
+              'Content-Disposition': `attachment; filename="${filename}"`,
+              'Cache-Control': 'no-store, no-cache, must-revalidate',
+            });
+            res.end(payload);
+          } catch {
+            res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Failed to export backup bundle' }));
+          }
+          return;
+        }
+
+        if (pathname === '/api/backup/import' && req.method === 'POST') {
+          if (!isSameOriginRequest(req)) {
+            res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Cross-origin request rejected' }));
+            return;
+          }
+          const rawBody = await readRequestBody(req, 25 * 1024 * 1024);
+          if (rawBody === null) {
+            res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Backup payload exceeds 25 MB limit' }));
+            return;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(rawBody);
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            return;
+          }
+
+          const queryMode = reqUrl.searchParams.get('mode');
+          let mode: BackupImportMode = queryMode === 'replace' ? 'replace' : 'merge';
+          let bundlePayload: unknown = parsed;
+          if (
+            parsed &&
+            typeof parsed === 'object' &&
+            !Array.isArray(parsed) &&
+            'backup' in (parsed as Record<string, unknown>)
+          ) {
+            const wrapper = parsed as { mode?: unknown; backup?: unknown };
+            if (wrapper.mode === 'replace') mode = 'replace';
+            else if (wrapper.mode === 'merge') mode = 'merge';
+            bundlePayload = wrapper.backup;
+          }
+
+          try {
+            const result = importBackupBundle(bundlePayload, { mode });
+            const fresh = scanAllLogs(true);
+            broadcast(fresh, 'backup-import');
+            if (res.writableEnded || res.destroyed) return;
+            res.writeHead(200, {
+              'Content-Type': 'application/json; charset=utf-8',
+              'Cache-Control': 'no-store, no-cache, must-revalidate',
+            });
+            res.end(JSON.stringify({ result, snapshot: fresh }));
+          } catch (err) {
+            if (res.writableEnded || res.destroyed) return;
+            const message = err instanceof Error ? err.message : 'Failed to import backup';
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: message }));
+          }
           return;
         }
 

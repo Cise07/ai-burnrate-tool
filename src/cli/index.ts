@@ -7,7 +7,8 @@ import open from 'open';
 import pc from 'picocolors';
 import QRCode from 'qrcode';
 import { scanAllLogs, syncSingleTranscriptToLedger } from '../core/parser.js';
-import type { TimeRange, ToolFilter } from '../core/analytics.js';
+import { filterSessions, type TimeRange, type ToolFilter } from '../core/analytics.js';
+import { exportBackupToFile, importBackupFromFile } from '../core/backup.js';
 import { installAutoArchiveHooks, uninstallAutoArchiveHooks } from '../core/hooks.js';
 import {
   getPackageRoot,
@@ -16,6 +17,8 @@ import {
   syncOfficialPricing,
   tryClaimBackgroundPricingSync,
 } from '../core/pricing.js';
+import { parseUserDateInput, saveUserSettings } from '../core/settings.js';
+import type { ToolSource } from '../core/types.js';
 import { startLogWatcher } from '../core/watcher.js';
 import { startServer, type LaunchDefaults } from '../server/index.js';
 import { printCliReport } from './reporter.js';
@@ -80,6 +83,27 @@ program
   .option('--sync-ledger', 'Fast hook mode: snapshot current session to ledger and exit silently', false)
   .option('--sync-pricing', 'Background mode: refresh official pricing ledger using ETag and exit silently', false)
   .option('--uninstall-hooks', 'Remove ai-burnrate-tool offline archive hooks from Antigravity/Claude/Codex configs', false)
+  .option(
+    '--reset-tool <tool>',
+    'Start counting spend & stats from now (or --since <date>) for a tool (antigravity, claude, codex, all) without touching tool files'
+  )
+  .option(
+    '--since <date>',
+    'Optional start date/timestamp (YYYY-MM-DD or ISO-8601) used with --reset-tool or --restore-tool'
+  )
+  .option(
+    '--restore-tool <tool>',
+    'Restore spend history from the beginning (or from --since <date>) for a tool (antigravity, claude, codex, all)'
+  )
+  .option(
+    '--export-backup [file]',
+    'Export a portable JSON backup of ~/.burnrate (sessions ledger, pricing history & settings)'
+  )
+  .option(
+    '--import-backup <file>',
+    'Import a portable Burnrate backup JSON file (merges safely by default; add --replace to overwrite)'
+  )
+  .option('--replace', 'Used with --import-backup to replace local ~/.burnrate data instead of merging', false)
   .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
   .option('--update', 'Update ai-burnrate-tool to the latest version from npm', false)
   .option('--uninstall', 'Uninstall ai-burnrate-tool globally from your system', false);
@@ -97,6 +121,12 @@ const opts = program.opts<{
   syncLedger?: boolean;
   syncPricing?: boolean;
   uninstallHooks?: boolean;
+  resetTool?: string;
+  since?: string;
+  restoreTool?: string;
+  exportBackup?: string | boolean;
+  importBackup?: string;
+  replace?: boolean;
   port?: string;
   update?: boolean;
   uninstall?: boolean;
@@ -183,6 +213,133 @@ async function main() {
   if (opts.uninstallHooks) {
     uninstallAutoArchiveHooks();
     console.log(`\n  ${pc.green('✓')} Removed ai-burnrate-tool offline archive hooks from Antigravity, Claude Code & Codex CLI.\n`);
+    process.exit(0);
+  }
+
+  if (opts.exportBackup && opts.importBackup) {
+    console.error(pc.red('Cannot combine --export-backup and --import-backup in the same command.'));
+    process.exit(1);
+  }
+
+  if (opts.replace && !opts.importBackup) {
+    console.error(pc.red('Option --replace requires --import-backup <file>.'));
+    process.exit(1);
+  }
+
+  if (opts.exportBackup) {
+    try {
+      // Reconcile current live transcripts into the ledger first so the backup is complete
+      scanAllLogs(false);
+      const targetArg = typeof opts.exportBackup === 'string' ? opts.exportBackup : undefined;
+      const exported = exportBackupToFile(targetArg);
+      const sizeKb = (exported.sizeBytes / 1024).toFixed(1);
+      console.log(
+        `\n  ${pc.green('✓')} Exported portable backup to ${pc.cyan(exported.filePath)} ${pc.dim(`(${sizeKb} KB)`)}`
+      );
+      console.log(
+        `  ${pc.dim(`Included: ${exported.sessionCount} archived sessions • ${exported.pricingSnapshots} pricing snapshots • user settings`)}\n`
+      );
+      process.exit(0);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  ${pc.red('✗')} Backup export failed: ${message}`);
+      process.exit(1);
+    }
+  }
+
+  if (opts.importBackup) {
+    try {
+      const mode = opts.replace ? 'replace' : 'merge';
+      const result = importBackupFromFile(opts.importBackup, { mode });
+      // Immediately reconcile live local transcripts so active chats on this PC stay active
+      scanAllLogs(true);
+      console.log(
+        `\n  ${pc.green('✓')} Imported Burnrate backup (${pc.bold(result.mode)} mode) from ${pc.cyan(path.resolve(opts.importBackup))}.`
+      );
+      console.log(
+        `  ${pc.dim(`Sessions added: ${result.importedSessions} • merged: ${result.mergedSessions} • pricing snapshots added: ${result.pricingSnapshotsAdded} • settings restored: ${result.settingsRestored ? 'yes' : 'no'}`)}\n`
+      );
+      process.exit(0);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  ${pc.red('✗')} Backup import failed: ${message}`);
+      process.exit(1);
+    }
+  }
+
+  if (opts.resetTool && opts.restoreTool) {
+    console.error(pc.red('Cannot combine --reset-tool and --restore-tool in the same command.'));
+    process.exit(1);
+  }
+
+  if (opts.since && !opts.resetTool && !opts.restoreTool) {
+    console.error(
+      pc.red('Option --since requires --reset-tool or --restore-tool <antigravity|claude|codex|all>.')
+    );
+    process.exit(1);
+  }
+
+  const resolveToolTargets = (rawTool: string, flagName: string): ToolSource[] => {
+    const lower = rawTool.trim().toLowerCase();
+    if (!VALID_TOOLS.has(lower)) {
+      console.error(pc.red(`Invalid ${flagName} "${rawTool}". Expected: all, antigravity, claude, or codex.`));
+      process.exit(1);
+    }
+    return lower === 'all' ? ['antigravity', 'claude', 'codex'] : [lower as ToolSource];
+  };
+
+  if (opts.resetTool) {
+    const targets = resolveToolTargets(opts.resetTool, '--reset-tool');
+    let cutoffIso: string;
+    if (opts.since) {
+      const parsed = parseUserDateInput(opts.since);
+      if (!parsed) {
+        console.error(
+          pc.red(`Invalid --since "${opts.since}". Expected YYYY-MM-DD or an ISO-8601 timestamp (e.g. 2026-11-23T10:30:00).`)
+        );
+        process.exit(1);
+      }
+      cutoffIso = parsed;
+    } else {
+      cutoffIso = new Date().toISOString();
+    }
+    const patch: Partial<Record<ToolSource, string | null>> = {};
+    for (const t of targets) patch[t] = cutoffIso;
+    saveUserSettings({ trackingStartAt: patch });
+    const displayDate = new Date(cutoffIso).toLocaleString();
+    console.log(
+      `\n  ${pc.green('✓')} Tracking reset active for ${pc.bold(targets.join(', '))} from ${pc.cyan(displayDate)} ${pc.dim(`(${cutoffIso})`)}.`
+    );
+    console.log(
+      `  ${pc.dim(`Turns before this timestamp are excluded from KPIs, charts & deleted totals. Tool files are untouched; restore anytime with: burn --restore-tool ${opts.resetTool.trim().toLowerCase()} [--since YYYY-MM-DD]`)}\n`
+    );
+    process.exit(0);
+  }
+
+  if (opts.restoreTool) {
+    const targets = resolveToolTargets(opts.restoreTool, '--restore-tool');
+    const patch: Partial<Record<ToolSource, string | null>> = {};
+    if (opts.since) {
+      const parsed = parseUserDateInput(opts.since);
+      if (!parsed) {
+        console.error(
+          pc.red(`Invalid --since "${opts.since}". Expected YYYY-MM-DD or an ISO-8601 timestamp (e.g. 2026-11-20T09:00:00).`)
+        );
+        process.exit(1);
+      }
+      for (const t of targets) patch[t] = parsed;
+      saveUserSettings({ trackingStartAt: patch });
+      const displayDate = new Date(parsed).toLocaleString();
+      console.log(
+        `\n  ${pc.green('✓')} Restored tracking history for ${pc.bold(targets.join(', '))} starting from ${pc.cyan(displayDate)} ${pc.dim(`(${parsed})`)}.\n`
+      );
+      process.exit(0);
+    }
+    for (const t of targets) patch[t] = null;
+    saveUserSettings({ trackingStartAt: patch });
+    console.log(
+      `\n  ${pc.green('✓')} Restored full tracking history for ${pc.bold(targets.join(', '))} (from the beginning).\n`
+    );
     process.exit(0);
   }
 
@@ -324,7 +481,10 @@ async function main() {
   }
   console.log(`  ${pc.bold('SSE Stream:')}     ${pc.dim(`${server.url}/api/events`)}`);
   console.log(`  ${pc.bold('Watching:')}       ${pc.dim(snapshot.watchedPaths.join(' & '))}`);
-  console.log(`  ${pc.bold('Sessions Found:')} ${pc.yellow(String(snapshot.sessions.length))}`);
+  const visibleSessionsCount = filterSessions(snapshot.sessions, {
+    trackingStartAt: snapshot.settings?.trackingStartAt,
+  }).length;
+  console.log(`  ${pc.bold('Sessions Found:')} ${pc.yellow(String(visibleSessionsCount))}`);
   if (mobileUrl) {
     console.log(`  ${pc.dim('─'.repeat(58))}`);
     console.log(`  ${pc.bold('Scan from phone:')}`);

@@ -21,7 +21,8 @@ function computeSnapshotFingerprint(snapshot: BurnrateSnapshot): string {
         `${s.source}:${s.sessionId}:${s.turns}:${s.totalTokens}:${Number(s.costUSD || 0).toFixed(4)}:${s.deletedAt || ''}`
     )
     .join('|');
-  return `${snapshot.sessions.length}#${(snapshot.deletedSessions || []).length}#${activePart}##${deletedPart}`;
+  const settingsPart = JSON.stringify(snapshot.settings || null);
+  return `${snapshot.sessions.length}#${(snapshot.deletedSessions || []).length}#${activePart}##${deletedPart}##${settingsPart}`;
 }
 
 function isRelevantWatchEvent(filePath: string, eventType: string): boolean {
