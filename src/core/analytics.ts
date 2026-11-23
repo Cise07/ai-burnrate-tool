@@ -471,7 +471,8 @@ export function filterSessions(
             t.modelLabel.toLowerCase().includes(query) ||
             t.normalizedModel.toLowerCase().includes(query) ||
             t.model.toLowerCase().includes(query) ||
-            (t.subagentName || '').toLowerCase().includes(query)
+            (t.subagentName || '').toLowerCase().includes(query) ||
+            (t.subagentTitle || '').toLowerCase().includes(query)
         );
       if (!matchesQuery) continue;
     }

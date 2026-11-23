@@ -762,6 +762,7 @@ export default function App() {
         outputTokens: number;
         cacheReadTokens: number;
         turns: number;
+        longContextTurns: number;
         source: ToolSource;
         rate?: ModelRate;
       }
@@ -823,6 +824,7 @@ export default function App() {
             outputTokens: 0,
             cacheReadTokens: 0,
             turns: 0,
+            longContextTurns: 0,
             source: session.source,
             rate: matchedRate,
           };
@@ -836,6 +838,14 @@ export default function App() {
         modEntry.turns += 1;
         if (!modEntry.rate && t.normalizedModel && snapshot.pricing?.models?.[t.normalizedModel]) {
           modEntry.rate = snapshot.pricing.models[t.normalizedModel];
+        }
+        const lcThreshold = modEntry.rate?.longContext?.thresholdTokens;
+        if (
+          lcThreshold &&
+          lcThreshold > 0 &&
+          t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens > lcThreshold
+        ) {
+          modEntry.longContextTurns += 1;
         }
       }
     }
@@ -1211,10 +1221,17 @@ export default function App() {
             {m.rate.longContext && (
               <div
                 className="text-[10px] text-zinc-400 font-mono flex items-center justify-between gap-1.5 bg-zinc-900/60 px-2 py-1 rounded border border-zinc-800/70"
-                title={`Requests exceeding ${(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k context tokens are billed at the long-context tier`}
+                title={`Requests exceeding ${(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k context tokens are billed at the long-context tier${m.longContextTurns > 0 ? ` (${m.longContextTurns} of ${m.turns} turns in this view)` : ''}`}
               >
-                <span className="text-sky-400 font-semibold shrink-0">
-                  &gt;{(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k ctx:
+                <span className="inline-flex items-center gap-1 shrink-0">
+                  <span className="text-sky-400 font-semibold">
+                    &gt;{(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k ctx:
+                  </span>
+                  {m.longContextTurns > 0 && (
+                    <span className="px-1 py-0 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[9px] font-semibold">
+                      {m.longContextTurns}t
+                    </span>
+                  )}
                 </span>
                 <span className="truncate">
                   <span className="text-zinc-200">{formatRateMoney(m.rate.longContext.input, currency)}</span>

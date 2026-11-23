@@ -421,16 +421,24 @@ export async function startServer(
             res.end(JSON.stringify({ error: 'Cross-origin request rejected' }));
             return;
           }
-          void syncOfficialPricing().finally(() => {
-            const fresh = scanAllLogs(true);
-            broadcast(fresh);
-            if (res.writableEnded || res.destroyed) return;
-            res.writeHead(200, {
-              'Content-Type': 'application/json; charset=utf-8',
-              'Cache-Control': 'no-store, no-cache, must-revalidate',
+          void syncOfficialPricing()
+            .catch(() => undefined)
+            .finally(() => {
+              try {
+                const fresh = scanAllLogs(true);
+                broadcast(fresh);
+                if (res.writableEnded || res.destroyed) return;
+                res.writeHead(200, {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'Cache-Control': 'no-store, no-cache, must-revalidate',
+                });
+                res.end(JSON.stringify(fresh));
+              } catch {
+                if (res.writableEnded || res.destroyed) return;
+                res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+                res.end(JSON.stringify({ error: 'Rescan failed' }));
+              }
             });
-            res.end(JSON.stringify(fresh));
-          });
           return;
         }
 

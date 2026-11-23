@@ -70,9 +70,9 @@ program
   .option('--range <range>', 'Filter Web UI and --cli report by time range (24h, 7d, 30d, all)', 'all')
   .option('--json', 'Print --cli report as JSON instead of ANSI tables', false)
   .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
-  .option('--no-hooks', 'Skip automatic installation of Antigravity/Claude offline archive hooks')
+  .option('--no-hooks', 'Skip automatic installation of Antigravity/Claude/Codex offline archive hooks')
   .option('--sync-ledger', 'Fast hook mode: snapshot current session to ledger and exit silently', false)
-  .option('--uninstall-hooks', 'Remove ai-burnrate-tool offline archive hooks from Antigravity/Claude configs', false)
+  .option('--uninstall-hooks', 'Remove ai-burnrate-tool offline archive hooks from Antigravity/Claude/Codex configs', false)
   .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
   .option('--update', 'Update ai-burnrate-tool to the latest version from npm', false)
   .option('--uninstall', 'Uninstall ai-burnrate-tool globally from your system', false);
@@ -150,7 +150,7 @@ async function main() {
 
   if (opts.uninstallHooks) {
     uninstallAutoArchiveHooks();
-    console.log(`\n  ${pc.green('✓')} Removed ai-burnrate-tool offline archive hooks from Antigravity & Claude Code.\n`);
+    console.log(`\n  ${pc.green('✓')} Removed ai-burnrate-tool offline archive hooks from Antigravity, Claude Code & Codex CLI.\n`);
     process.exit(0);
   }
 

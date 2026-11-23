@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CalendarDays, FolderGit2 } from 'lucide-react';
 import {
   formatMoney,

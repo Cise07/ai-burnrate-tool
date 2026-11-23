@@ -19,7 +19,7 @@ Track in real time how many tokens you are consuming across **Antigravity CLI** 
 
 - 🔒 **100% Local, Dynamic & Cross-Platform:** Automatically resolves your home directory (`~/.gemini`, `~/.claude`, `~/.codex`) on Windows, macOS, and Linux with zero hardcoded paths. Override watched folders anytime via `BURNRATE_GEMINI_DIR`, `BURNRATE_CLAUDE_DIR`, and `BURNRATE_CODEX_DIR`.
 - 🤖 **Automatic Subagent Roll-Up & Tool Breakdown:** Subagent sessions spawned by Antigravity CLI (e.g., `image-generator`, `research`) or Claude Code (`/subagents/*.jsonl`) are automatically merged into their parent chat without double-counting, while clearly distinguishing each subagent's own turns, models, tokens, API cost, and cost share.
-- 🗑️ **Deleted Chats Archive & Offline Auto-Archive Hooks:** Automatically installs lightweight lifecycle hooks for Antigravity & Claude Code (`--sync-ledger`) so completed turns are snapshotted into `~/.burnrate/sessions-ledger.json` even when the dashboard is closed—preserving exact API spend and models if you later delete a chat.
+- 🗑️ **Deleted Chats Archive & Offline Auto-Archive Hooks:** Automatically installs lightweight lifecycle hooks for Antigravity, Claude Code & Codex CLI (`--sync-ledger`) so completed turns are snapshotted into `~/.burnrate/sessions-ledger.json` even when the dashboard is closed—preserving exact API spend and models if you later delete a chat or dismiss an ephemeral `/btw` side-chat.
 - 📱 **Mobile & LAN Access with `ai-burnrate.local` (mDNS) + 6-Digit PIN + QR Code:** Running `burn` binds to `0.0.0.0`, advertises **`http://ai-burnrate.local:<port>`** via built-in local mDNS/Bonjour (with LAN IP fallback), and prints a random **6-digit access code** + scannable **terminal QR code** so you can monitor your dashboard live from your phone over Wi-Fi. Localhost stays instant-access, while LAN clients require the PIN (constant-time verification, per-IP rate limiting, and `HttpOnly` session cookies).
 - 🟢 **Live Dashboard & Server-Sent Events (SSE):** A background file watcher (`chokidar`) monitors active transcripts and pushes instant real-time updates to charts, KPIs, heatmap, and session tables via `/api/events`.
 - 🔄 **Automatic Official Price Sync & Historical Tariff Protection:** On startup and manual rescan, `ai-burnrate-tool` fetches official per-token prices from the **LiteLLM Pricing Registry** and appends timestamped snapshots (`effectiveFrom`) to `~/.burnrate/pricing-ledger.json`—past turns are never recalculated when prices change.
@@ -63,8 +63,8 @@ Once installed, the **`burn`** command is available globally from **any folder**
 | `burn --range <range>` | 🕒 **Time Range (Web UI & CLI):** Filters the browser dashboard and `--cli` output by `24h`, `7d`, `30d`, or `all`. |
 | `burn --cli --json` | 🧾 **CLI JSON Output:** Prints aggregated workspaces, chats, subagents, and per-model breakdowns as JSON. |
 | `burn --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without automatically opening the browser. |
-| `burn --no-hooks` | 🔕 **Skip Hooks:** Launches without installing Antigravity/Claude offline archive hooks. |
-| `burn --uninstall-hooks` | 🧹 **Remove Hooks:** Removes `ai-burnrate-tool` offline archive hooks from Antigravity/Claude configs. |
+| `burn --no-hooks` | 🔕 **Skip Hooks:** Launches without installing Antigravity/Claude/Codex offline archive hooks. |
+| `burn --uninstall-hooks` | 🧹 **Remove Hooks:** Removes `ai-burnrate-tool` offline archive hooks from Antigravity, Claude Code & Codex CLI configs. |
 | `burn -p, --port <number>` | 🔌 **Custom Port:** Starts the dashboard on a specific port (default: `4321`, automatically falling back to the next free port if busy). |
 | `burn --update` | 🔄 **Self-Update:** Updates `ai-burnrate-tool` to the latest version from npm. |
 | `burn --uninstall` | 🗑️ **Self-Uninstall:** Removes offline hooks and uninstalls the global `ai-burnrate-tool` package from your system. |

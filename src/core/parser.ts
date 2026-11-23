@@ -1550,6 +1550,7 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
   const pricing = loadPricing(false);
 
   const rawTranscriptPath =
+    (typeof hookPayload?.agent_transcript_path === 'string' && hookPayload.agent_transcript_path.trim()) ||
     (typeof hookPayload?.transcriptPath === 'string' && hookPayload.transcriptPath.trim()) ||
     (typeof hookPayload?.transcript_path === 'string' && hookPayload.transcript_path.trim()) ||
     '';
@@ -1562,12 +1563,20 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
   const candidates: Array<{ filePath: string; source: ToolSource }> = [];
 
   if (rawTranscriptPath) {
-    const norm = path.resolve(rawTranscriptPath).replace(/\\/g, '/').toLowerCase();
+    let resolvedTranscriptPath = rawTranscriptPath;
+    if (path.basename(resolvedTranscriptPath).toLowerCase() === 'transcript_full.jsonl') {
+      const siblingCompact = path.join(path.dirname(resolvedTranscriptPath), 'transcript.jsonl');
+      if (fs.existsSync(siblingCompact)) {
+        resolvedTranscriptPath = siblingCompact;
+      }
+    }
+    const norm = path.resolve(resolvedTranscriptPath).replace(/\\/g, '/').toLowerCase();
     const normClaude = normalizePathKey(claudeDir);
     const normCodex = normalizePathKey(codexDir);
     const normGemini = normalizePathKey(geminiDir);
     const isSnakeCaseClaudeHook =
-      typeof hookPayload?.transcript_path === 'string' && typeof hookPayload?.transcriptPath !== 'string';
+      (typeof hookPayload?.transcript_path === 'string' || typeof hookPayload?.agent_transcript_path === 'string') &&
+      typeof hookPayload?.transcriptPath !== 'string';
 
     const detectedSource: ToolSource =
       norm.startsWith(`${normClaude}/`) || norm.includes('/.claude/')
@@ -1579,8 +1588,8 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
             : isSnakeCaseClaudeHook
               ? 'claude'
               : 'antigravity';
-    if (fs.existsSync(rawTranscriptPath)) {
-      candidates.push({ filePath: rawTranscriptPath, source: detectedSource });
+    if (fs.existsSync(resolvedTranscriptPath)) {
+      candidates.push({ filePath: resolvedTranscriptPath, source: detectedSource });
     }
   }
 

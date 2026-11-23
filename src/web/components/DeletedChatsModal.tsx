@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Bot,
   Check,
@@ -193,7 +193,8 @@ export function DeletedChatsModal({
             t.modelLabel.toLowerCase().includes(q) ||
             t.normalizedModel.toLowerCase().includes(q) ||
             t.model.toLowerCase().includes(q) ||
-            (t.subagentName || '').toLowerCase().includes(q)
+            (t.subagentName || '').toLowerCase().includes(q) ||
+            (t.subagentTitle || '').toLowerCase().includes(q)
         )
     );
   }, [deletedSessions, searchQuery, hideLegacyDeleted]);
@@ -205,7 +206,11 @@ export function DeletedChatsModal({
 
   if (!rendered) return null;
 
-  const hooksActive = Boolean(hooksStatus?.antigravity || hooksStatus?.claude);
+  const activeHookTools: string[] = [];
+  if (hooksStatus?.antigravity) activeHookTools.push('Antigravity');
+  if (hooksStatus?.claude) activeHookTools.push('Claude Code');
+  if (hooksStatus?.codex) activeHookTools.push('Codex CLI');
+  const hooksActive = activeHookTools.length > 0;
 
   return (
     <div
@@ -257,10 +262,10 @@ export function DeletedChatsModal({
                 {hooksActive && (
                   <span
                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-cyan-500/10 border border-cyan-500/25 text-cyan-300"
-                    title="Auto-archive hooks snapshot turns even when burnrate is closed"
+                    title={`Auto-archive hooks active for ${activeHookTools.join(', ')} — snapshots turns even when burn is closed`}
                   >
                     <ShieldCheck className="w-3 h-3 shrink-0" />
-                    Offline hook active
+                    Offline hooks active ({activeHookTools.join(' · ')})
                   </span>
                 )}
               </div>

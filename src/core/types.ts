@@ -25,6 +25,7 @@ export interface UserSettings {
 export interface HooksStatus {
   antigravity: boolean;
   claude: boolean;
+  codex?: boolean;
 }
 
 export interface LongContextTier {

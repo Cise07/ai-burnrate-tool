@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -523,7 +523,7 @@ export function SettingsModal({
               <span>Offline Auto-Archive Hooks</span>
             </div>
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Automatically snapshots each completed turn into <span className="font-mono text-zinc-300">~/.burnrate/sessions-ledger.json</span> even when burnrate is closed, preserving exact spend and models if you later delete a chat.
+              Automatically snapshots each completed turn into <span className="font-mono text-zinc-300">~/.burnrate/sessions-ledger.json</span> even when <span className="font-mono text-zinc-300">burn</span> is closed, preserving exact spend and models if you later delete a chat or dismiss a <span className="font-mono text-zinc-300">/btw</span> side-chat.
             </p>
             <div className="flex flex-wrap gap-2 pt-0.5">
               <span
@@ -545,6 +545,16 @@ export function SettingsModal({
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${hooksStatus?.claude ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
                 Claude Code: {hooksStatus?.claude ? 'Active' : 'Inactive'}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border ${
+                  hooksStatus?.codex
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-500'
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${hooksStatus?.codex ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+                Codex CLI: {hooksStatus?.codex ? 'Active' : 'Inactive'}
               </span>
             </div>
           </div>
