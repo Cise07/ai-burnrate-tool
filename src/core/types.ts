@@ -64,6 +64,9 @@ export interface PricingConfig {
   updatedAt: string;
   currency: string;
   unit: string;
+  lastSyncCheckedAt?: string;
+  litellmEtag?: string;
+  repoPricingEtag?: string;
   subscriptions: {
     claude_max: { name: string; monthlyUSD: number };
     antigravity_pro: { name: string; monthlyUSD: number };

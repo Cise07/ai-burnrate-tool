@@ -9,8 +9,13 @@ const __dirname = path.dirname(__filename);
 
 const LITELLM_PRICING_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+const LITELLM_COMMIT_URL =
+  'https://api.github.com/repos/BerriAI/litellm/commits?path=model_prices_and_context_window.json&per_page=1';
 const REPO_PRICING_URL =
   'https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/config/pricing.json';
+
+export const PRICING_SYNC_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const PRICING_SYNC_LOCK_STALE_MS = 60 * 1000; // 60 seconds
 
 let cachedPricing: PricingConfig | null = null;
 
@@ -30,6 +35,86 @@ export function getPackageRoot(): string {
 
 export function getUserLedgerPath(): string {
   return path.join(os.homedir(), '.burnrate', 'pricing-ledger.json');
+}
+
+export function getPricingSyncLockPath(): string {
+  return path.join(os.homedir(), '.burnrate', '.pricing-sync.lock');
+}
+
+export function releasePricingSyncLock(): void {
+  try {
+    const lockPath = getPricingSyncLockPath();
+    if (fs.existsSync(lockPath)) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch {
+    // ignore lock cleanup errors
+  }
+}
+
+/**
+ * Atomically checks TTL (`lastSyncCheckedAt`) and acquires a short-lived lock file
+ * (`O_CREAT | O_EXCL`) so concurrent hook invocations never spawn duplicate background syncs.
+ */
+export function tryClaimBackgroundPricingSync(ttlMs = PRICING_SYNC_TTL_MS): boolean {
+  if (process.env.BURNRATE_DISABLE_PRICING_SYNC === '1' || process.env.BURNRATE_DISABLE_PRICING_SYNC === 'true') {
+    return false;
+  }
+  const now = Date.now();
+  try {
+    const ledgerPath = getUserLedgerPath();
+    if (fs.existsSync(ledgerPath)) {
+      const parsed = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')) as Partial<PricingConfig>;
+      if (parsed.lastSyncCheckedAt) {
+        const lastMs = new Date(parsed.lastSyncCheckedAt).getTime();
+        if (!Number.isNaN(lastMs) && now - lastMs < ttlMs) {
+          return false;
+        }
+      }
+    }
+  } catch {
+    // Proceed to lock check if ledger is unreadable
+  }
+
+  const lockPath = getPricingSyncLockPath();
+  try {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  } catch {
+    return false;
+  }
+
+  const acquire = (): boolean => {
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(lockPath, 'wx', 0o600);
+      fs.writeSync(fd, `${process.pid}\n${new Date(now).toISOString()}\n`);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  };
+
+  if (acquire()) return true;
+
+  // Check if an existing lock is stale (e.g. crashed background process)
+  try {
+    const st = fs.statSync(lockPath);
+    if (now - st.mtimeMs >= PRICING_SYNC_LOCK_STALE_MS) {
+      fs.unlinkSync(lockPath);
+      return acquire();
+    }
+  } catch {
+    // Another worker released it between openSync and statSync
+  }
+  return false;
 }
 
 function loadBundledPricing(): PricingConfig {
@@ -58,8 +143,20 @@ function ensureHistoryInitialized(config: PricingConfig): PricingConfig {
 export function saveUserLedger(config: PricingConfig): void {
   try {
     const ledgerPath = getUserLedgerPath();
-    fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
-    fs.writeFileSync(ledgerPath, JSON.stringify(config, null, 2), 'utf-8');
+    fs.mkdirSync(path.dirname(ledgerPath), { recursive: true, mode: 0o700 });
+    const serialized = JSON.stringify(config, null, 2);
+    const tmpPath = `${ledgerPath}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(tmpPath, serialized, { encoding: 'utf-8', mode: 0o600 });
+      fs.renameSync(tmpPath, ledgerPath);
+    } catch {
+      fs.writeFileSync(ledgerPath, serialized, { encoding: 'utf-8', mode: 0o600 });
+      try {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      } catch {
+        // ignore cleanup error
+      }
+    }
   } catch {
     // Ignore write errors on read-only environments
   }
@@ -364,16 +461,42 @@ function deriveOrchestratorRate(
   };
 }
 
+async function fetchLiteLlmLastCommitIso(): Promise<string | null> {
+  try {
+    const res = await fetch(LITELLM_COMMIT_URL, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'ai-burnrate-tool',
+      },
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const commits = (await res.json()) as Array<{
+      commit?: { committer?: { date?: string }; author?: { date?: string } };
+    }>;
+    const rawDate = commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date;
+    if (!rawDate) return null;
+    const parsed = new Date(rawDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Syncs latest official pricing without altering historical token calculations.
+ * Uses conditional ETag (`If-None-Match` -> 304 Not Modified) for near-zero bandwidth/latency.
  * If any rate changed compared to the latest snapshot, a new RateSnapshot is appended
- * with `effectiveFrom = new Date().toISOString()` so only future tokens use the new tariff.
+ * with an accurate `effectiveFrom` so past turns keep their original tariff.
  */
-export async function syncOfficialPricing(): Promise<{
+export async function syncOfficialPricing(options: { force?: boolean } = {}): Promise<{
   updated: boolean;
   effectiveFrom?: string;
+  notModified?: boolean;
 }> {
+  const force = Boolean(options.force);
   const current = loadPricing(true);
+  const previousSyncCheckedAt = current.lastSyncCheckedAt || '';
   const latestSnapshot: RateSnapshot =
     current.history && current.history.length > 0
       ? current.history[current.history.length - 1]
@@ -381,39 +504,66 @@ export async function syncOfficialPricing(): Promise<{
 
   const candidateModels: Record<string, ModelRate> = structuredClone(latestSnapshot.models);
 
-  // 1. Try syncing from official GitHub repository pricing.json
   let remoteUpdatedAt: string | null = null;
   let repoApplied = false;
   let litellmApplied = false;
+  let nextRepoEtag = current.repoPricingEtag;
+  let nextLitellmEtag = current.litellmEtag;
+  let anyNetworkSuccess = false;
+  let repoNotModified = false;
+  let litellmNotModified = false;
+
   try {
-    const res = await fetch(REPO_PRICING_URL, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      const remoteConfig = (await res.json()) as Partial<PricingConfig>;
-      if (remoteConfig.updatedAt && typeof remoteConfig.updatedAt === 'string') {
-        remoteUpdatedAt = remoteConfig.updatedAt;
+    // 1. Try syncing from official GitHub repository pricing.json (with ETag)
+    try {
+      const headers: Record<string, string> = {};
+      if (!force && current.repoPricingEtag) {
+        headers['If-None-Match'] = current.repoPricingEtag;
       }
-      if (
-        remoteConfig.models &&
-        typeof remoteConfig.models === 'object' &&
-        (!current.updatedAt || (remoteConfig.updatedAt && remoteConfig.updatedAt > current.updatedAt))
-      ) {
-        for (const [k, rate] of Object.entries(remoteConfig.models)) {
-          if (rate && typeof rate.input === 'number' && typeof rate.output === 'number') {
-            candidateModels[k] = { ...candidateModels[k], ...rate };
-            repoApplied = true;
+      const res = await fetch(REPO_PRICING_URL, { headers, signal: AbortSignal.timeout(3000) });
+      if (res.status === 304) {
+        anyNetworkSuccess = true;
+        repoNotModified = true;
+      } else if (res.ok) {
+        anyNetworkSuccess = true;
+        const etag = res.headers.get('etag');
+        if (etag) nextRepoEtag = etag;
+        const remoteConfig = (await res.json()) as Partial<PricingConfig>;
+        if (remoteConfig.updatedAt && typeof remoteConfig.updatedAt === 'string') {
+          remoteUpdatedAt = remoteConfig.updatedAt;
+        }
+        if (
+          remoteConfig.models &&
+          typeof remoteConfig.models === 'object' &&
+          (!current.updatedAt || (remoteConfig.updatedAt && remoteConfig.updatedAt > current.updatedAt))
+        ) {
+          for (const [k, rate] of Object.entries(remoteConfig.models)) {
+            if (rate && typeof rate.input === 'number' && typeof rate.output === 'number') {
+              candidateModels[k] = { ...candidateModels[k], ...rate };
+              repoApplied = true;
+            }
           }
         }
       }
+    } catch {
+      // Offline or repo unreachable; proceed to LiteLLM feed
     }
-  } catch {
-    // Offline or repo not yet published; proceed to LiteLLM feed
-  }
 
-  // 2. Sync official provider per-token rates from LiteLLM registry
-  try {
-    const res = await fetch(LITELLM_PRICING_URL, { signal: AbortSignal.timeout(3500) });
-    if (res.ok) {
-      const litellm = (await res.json()) as Record<string, any>;
+    // 2. Sync official provider per-token rates from LiteLLM registry (with ETag)
+    try {
+      const headers: Record<string, string> = {};
+      if (!force && current.litellmEtag) {
+        headers['If-None-Match'] = current.litellmEtag;
+      }
+      const res = await fetch(LITELLM_PRICING_URL, { headers, signal: AbortSignal.timeout(3500) });
+      if (res.status === 304) {
+        anyNetworkSuccess = true;
+        litellmNotModified = true;
+      } else if (res.ok) {
+        anyNetworkSuccess = true;
+        const etag = res.headers.get('etag');
+        if (etag) nextLitellmEtag = etag;
+        const litellm = (await res.json()) as Record<string, any>;
       const mapping: Array<{ ourKey: string; litellmKeys: string[] }> = [
         {
           ourKey: 'claude-3-7-sonnet',
@@ -731,49 +881,73 @@ export async function syncOfficialPricing(): Promise<{
     // Offline fallback: keep local ledger intact
   }
 
-  // 3. Derive composite Orchestrator rates dynamically from live Planner (Carbon/Argon) + Executor (Hydrogen) rates
-  const hydrogenRate = candidateModels['gemini-4-hydrogen'];
-  if (hydrogenRate) {
-    if (candidateModels['gemini-4-carbon'] && candidateModels['orchestrator-carbon']) {
-      candidateModels['orchestrator-carbon'] = deriveOrchestratorRate(
-        'Carbon',
-        candidateModels['gemini-4-carbon'],
-        hydrogenRate,
-        candidateModels['orchestrator-carbon']
-      );
-    }
-    if (candidateModels['gemini-4-argon'] && candidateModels['orchestrator-argon']) {
-      candidateModels['orchestrator-argon'] = deriveOrchestratorRate(
-        'Argon',
-        candidateModels['gemini-4-argon'],
-        hydrogenRate,
-        candidateModels['orchestrator-argon']
-      );
+      // 3. Derive composite Orchestrator rates dynamically from live Planner (Carbon/Argon) + Executor (Hydrogen) rates
+      const hydrogenRate = candidateModels['gemini-4-hydrogen'];
+      if (hydrogenRate) {
+        if (candidateModels['gemini-4-carbon'] && candidateModels['orchestrator-carbon']) {
+          candidateModels['orchestrator-carbon'] = deriveOrchestratorRate(
+            'Carbon',
+            candidateModels['gemini-4-carbon'],
+            hydrogenRate,
+            candidateModels['orchestrator-carbon']
+          );
+        }
+        if (candidateModels['gemini-4-argon'] && candidateModels['orchestrator-argon']) {
+          candidateModels['orchestrator-argon'] = deriveOrchestratorRate(
+            'Argon',
+            candidateModels['gemini-4-argon'],
+            hydrogenRate,
+            candidateModels['orchestrator-argon']
+          );
+        }
+      }
+
+      const nowIso = new Date().toISOString();
+      if (ratesDiffer(latestSnapshot.models, candidateModels)) {
+        const remoteIso = remoteUpdatedAt ? `${remoteUpdatedAt}T00:00:00.000Z` : null;
+        let effectiveFrom = nowIso;
+        if (repoApplied && !litellmApplied && remoteIso && remoteIso > latestSnapshot.effectiveFrom) {
+          effectiveFrom = remoteIso;
+        } else if (litellmApplied) {
+          const commitIso = await fetchLiteLlmLastCommitIso();
+          const lowerBound =
+            previousSyncCheckedAt && previousSyncCheckedAt > latestSnapshot.effectiveFrom
+              ? previousSyncCheckedAt
+              : latestSnapshot.effectiveFrom;
+          if (commitIso && commitIso > lowerBound && commitIso <= nowIso) {
+            effectiveFrom = commitIso;
+          }
+        }
+        current.history = current.history || [];
+        current.history.push({
+          effectiveFrom,
+          source: 'official-sync',
+          models: candidateModels,
+        });
+        current.history.sort((a, b) => (a.effectiveFrom > b.effectiveFrom ? 1 : -1));
+        current.models = structuredClone(candidateModels);
+        current.updatedAt = remoteUpdatedAt && repoApplied && !litellmApplied ? remoteUpdatedAt : effectiveFrom.slice(0, 10);
+        current.lastSyncCheckedAt = nowIso;
+        if (nextLitellmEtag) current.litellmEtag = nextLitellmEtag;
+        if (nextRepoEtag) current.repoPricingEtag = nextRepoEtag;
+        cachedPricing = current;
+        saveUserLedger(current);
+        return { updated: true, effectiveFrom };
+      }
+
+      if (anyNetworkSuccess) {
+        current.lastSyncCheckedAt = nowIso;
+        if (nextLitellmEtag) current.litellmEtag = nextLitellmEtag;
+        if (nextRepoEtag) current.repoPricingEtag = nextRepoEtag;
+        cachedPricing = current;
+        saveUserLedger(current);
+      }
+
+      return { updated: false, notModified: repoNotModified && litellmNotModified };
+    } finally {
+      releasePricingSyncLock();
     }
   }
-
-  if (ratesDiffer(latestSnapshot.models, candidateModels)) {
-    const remoteIso = remoteUpdatedAt ? `${remoteUpdatedAt}T00:00:00.000Z` : null;
-    const effectiveFrom =
-      repoApplied && !litellmApplied && remoteIso && remoteIso > latestSnapshot.effectiveFrom
-        ? remoteIso
-        : new Date().toISOString();
-    current.history = current.history || [];
-    current.history.push({
-      effectiveFrom,
-      source: 'official-sync',
-      models: candidateModels,
-    });
-    current.history.sort((a, b) => (a.effectiveFrom > b.effectiveFrom ? 1 : -1));
-    current.models = structuredClone(candidateModels);
-    current.updatedAt = remoteUpdatedAt && repoApplied && !litellmApplied ? remoteUpdatedAt : effectiveFrom.slice(0, 10);
-    cachedPricing = current;
-    saveUserLedger(current);
-    return { updated: true, effectiveFrom };
-  }
-
-  return { updated: false };
-}
 
 function getDefaultModelForSource(source: ToolSource, pricing: PricingConfig): string {
   const fromConfig = pricing.defaults?.[source];

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
@@ -9,7 +9,13 @@ import QRCode from 'qrcode';
 import { scanAllLogs, syncSingleTranscriptToLedger } from '../core/parser.js';
 import type { TimeRange, ToolFilter } from '../core/analytics.js';
 import { installAutoArchiveHooks, uninstallAutoArchiveHooks } from '../core/hooks.js';
-import { getPackageRoot, syncOfficialPricing } from '../core/pricing.js';
+import {
+  getPackageRoot,
+  PRICING_SYNC_TTL_MS,
+  releasePricingSyncLock,
+  syncOfficialPricing,
+  tryClaimBackgroundPricingSync,
+} from '../core/pricing.js';
 import { startLogWatcher } from '../core/watcher.js';
 import { startServer, type LaunchDefaults } from '../server/index.js';
 import { printCliReport } from './reporter.js';
@@ -72,6 +78,7 @@ program
   .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
   .option('--no-hooks', 'Skip automatic installation of Antigravity/Claude/Codex offline archive hooks')
   .option('--sync-ledger', 'Fast hook mode: snapshot current session to ledger and exit silently', false)
+  .option('--sync-pricing', 'Background mode: refresh official pricing ledger using ETag and exit silently', false)
   .option('--uninstall-hooks', 'Remove ai-burnrate-tool offline archive hooks from Antigravity/Claude/Codex configs', false)
   .option('-p, --port <number>', 'Specify a custom port for the dashboard server', '4321')
   .option('--update', 'Update ai-burnrate-tool to the latest version from npm', false)
@@ -88,6 +95,7 @@ const opts = program.opts<{
   open?: boolean;
   hooks?: boolean;
   syncLedger?: boolean;
+  syncPricing?: boolean;
   uninstallHooks?: boolean;
   port?: string;
   update?: boolean;
@@ -133,10 +141,34 @@ async function readStdinJsonWithTimeout(timeoutMs = 150): Promise<Record<string,
 }
 
 async function main() {
+  if (opts.syncPricing) {
+    try {
+      await syncOfficialPricing();
+    } catch {
+      // Never surface background sync errors
+    } finally {
+      releasePricingSyncLock();
+    }
+    process.exit(0);
+  }
+
   if (opts.syncLedger) {
     try {
       const hookPayload = await readStdinJsonWithTimeout(150);
       syncSingleTranscriptToLedger(hookPayload);
+      if (tryClaimBackgroundPricingSync()) {
+        try {
+          const cliEntry = path.join(getPackageRoot(), 'dist', 'cli', 'index.js');
+          const child = spawn(process.execPath, [cliEntry, '--sync-pricing'], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+          child.unref();
+        } catch {
+          releasePricingSyncLock();
+        }
+      }
       if (hookPayload) {
         process.stdout.write('{}\n');
       }
@@ -254,6 +286,19 @@ async function main() {
     );
   });
 
+  // Periodic background pricing check (ETag 304 -> zero bytes when unchanged)
+  const pricingRefreshInterval = setInterval(() => {
+    void syncOfficialPricing()
+      .then((res) => {
+        if (res.updated) {
+          const fresh = scanAllLogs(true);
+          server.broadcast(fresh, 'pricing-sync');
+        }
+      })
+      .catch(() => undefined);
+  }, PRICING_SYNC_TTL_MS);
+  pricingRefreshInterval.unref?.();
+
   console.log('');
   console.log(
     `  ${pc.bgGreen(pc.black(pc.bold(' AI-BURNRATE-TOOL ')))} ${pc.green('● LIVE')} ${pc.bold('Real-Time Token & Cost Tracker')}`
@@ -302,6 +347,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(pricingRefreshInterval);
     console.log(`\n  ${pc.yellow('●')} Received ${signal}. Closing file watcher and SSE connections...`);
     try {
       await Promise.all([watcherHandle.close(), server.close()]);

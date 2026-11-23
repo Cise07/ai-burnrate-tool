@@ -421,7 +421,7 @@ export async function startServer(
             res.end(JSON.stringify({ error: 'Cross-origin request rejected' }));
             return;
           }
-          void syncOfficialPricing()
+          void syncOfficialPricing({ force: true })
             .catch(() => undefined)
             .finally(() => {
               try {
