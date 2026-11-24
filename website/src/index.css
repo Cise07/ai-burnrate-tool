@@ -576,9 +576,11 @@
     0 2px 6px -2px var(--card-shadow);
 }
 
-/* Hero workbench gets extra-clear crystalline liquid refraction once lens maps decode */
-:root.liquid-glass-ready .hero-instrument.glass-panel {
-  backdrop-filter: url(#ios-liquid-glass-card) blur(3px) saturate(188%) brightness(1.02);
+/* Hero workbench gets extra-clear crystalline liquid refraction on desktop pointers */
+@media (hover: hover) and (pointer: fine) and (min-width: 768px) {
+  :root.liquid-glass-ready .hero-instrument.glass-panel {
+    backdrop-filter: url(#ios-liquid-glass-card) blur(3px) saturate(188%) brightness(1.02);
+  }
 }
 
 /* Subtle diagonal glass sheen (compositor-only, lightweight) */
@@ -739,8 +741,14 @@
   border-radius: 1.05rem;
   transform-origin: 50% 0%;
   background-color: var(--glass-header);
-  backdrop-filter: blur(8px) saturate(185%) brightness(1.02);
-  -webkit-backdrop-filter: blur(8px) saturate(185%) brightness(1.02);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--glass-specular) 38%, transparent) 0%,
+    transparent 48%,
+    color-mix(in oklab, var(--glass-bottom-rim) 35%, transparent) 100%
+  );
+  backdrop-filter: blur(14px) saturate(195%) brightness(1.04);
+  -webkit-backdrop-filter: blur(14px) saturate(195%) brightness(1.04);
   border: 1px solid var(--border-hairline);
   box-shadow:
     inset 0 1px 0 var(--glass-specular),
@@ -748,8 +756,12 @@
     0 14px 34px -12px var(--header-shadow);
 }
 
-:root.liquid-glass-ready .header-inner {
-  backdrop-filter: url(#ios-liquid-glass-bar) blur(3px) saturate(192%) brightness(1.03);
+/* SVG optical displacement only on desktop pointers (avoids mobile HiDPI Chromium backdrop shift bug) */
+@media (hover: hover) and (pointer: fine) and (min-width: 768px) {
+  :root.liquid-glass-ready .header-inner {
+    background-image: none;
+    backdrop-filter: url(#ios-liquid-glass-bar) blur(3px) saturate(192%) brightness(1.03);
+  }
 }
 
 .site-header.is-measuring *,

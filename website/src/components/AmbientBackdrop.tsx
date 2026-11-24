@@ -158,6 +158,7 @@ export function AmbientBackdrop() {
           >
             {barLensMap && (
               <>
+                <feFlood floodColor="rgb(128,128,128)" floodOpacity="1" result="barNeutral" />
                 <feImage
                   href={barLensMap}
                   x="0%"
@@ -165,8 +166,9 @@ export function AmbientBackdrop() {
                   width="100%"
                   height="100%"
                   preserveAspectRatio="none"
-                  result="barMap"
+                  result="barMapRaw"
                 />
+                <feComposite in="barMapRaw" in2="barNeutral" operator="over" result="barMap" />
                 <feDisplacementMap
                   in="SourceGraphic"
                   in2="barMap"
@@ -226,6 +228,7 @@ export function AmbientBackdrop() {
           >
             {cardLensMap && (
               <>
+                <feFlood floodColor="rgb(128,128,128)" floodOpacity="1" result="cardNeutral" />
                 <feImage
                   href={cardLensMap}
                   x="0%"
@@ -233,8 +236,9 @@ export function AmbientBackdrop() {
                   width="100%"
                   height="100%"
                   preserveAspectRatio="none"
-                  result="cardMap"
+                  result="cardMapRaw"
                 />
+                <feComposite in="cardMapRaw" in2="cardNeutral" operator="over" result="cardMap" />
                 <feDisplacementMap
                   in="SourceGraphic"
                   in2="cardMap"
