@@ -7,7 +7,6 @@
 ### **Real-Time Local Token & API Equivalent Cost Tracker for Antigravity CLI, Claude Code & Codex CLI**
 
 [![Website](https://img.shields.io/badge/Website-Live%20Showcase-0a786a.svg?style=flat-square)](https://cise07.github.io/ai-burnrate-tool/)
-[![npm version](https://img.shields.io/npm/v/ai-burnrate-tool?style=flat-square&color=10b981&label=npm)](https://www.npmjs.com/package/ai-burnrate-tool)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-06b6d4.svg?style=flat-square)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-a855f7.svg?style=flat-square)](https://github.com/Cise07/ai-burnrate-tool)
 [![100% Local](https://img.shields.io/badge/Privacy-100%25%20Local-f59e0b.svg?style=flat-square)](#-key-features)
