@@ -167,22 +167,34 @@ export default function App() {
               </p>
 
               {/* Translucent glass command bar */}
-              <div className="mt-4 sm:mt-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5">
-                <div className="glass-panel inline-flex items-center justify-between gap-2 rounded-xl p-1.5 max-w-full">
+              <div className="hero-install-row mt-4 sm:mt-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5">
+                <div className="hero-install-dock glass-panel inline-flex items-center justify-between gap-2 rounded-xl p-1.5 max-w-full">
                   <div
                     role="group"
                     aria-label="Install method"
-                    className="hidden sm:inline-flex items-center rounded-lg bg-elevated p-0.5 font-mono text-[11px] shrink-0"
+                    className="relative hidden sm:inline-grid grid-cols-3 items-center rounded-lg bg-elevated p-0.5 font-mono text-[11px] shrink-0 select-none"
                   >
+                    <span
+                      aria-hidden="true"
+                      className="hero-install-pill pointer-events-none absolute top-0.5 bottom-0.5 left-0.5 w-[calc((100%-4px)/3)] rounded-md bg-surface border border-hairline shadow-sm"
+                      style={{
+                        transform: `translateX(${
+                          Math.max(
+                            0,
+                            INSTALL_COMMANDS.findIndex((item) => item.id === installMode)
+                          ) * 100
+                        }%)`,
+                      }}
+                    />
                     {INSTALL_COMMANDS.map((item) => (
                       <button
                         key={item.id}
                         type="button"
                         aria-pressed={installMode === item.id}
                         onClick={() => setInstallMode(item.id)}
-                        className={`min-h-[26px] px-2 rounded-md transition-colors cursor-pointer ${
+                        className={`relative z-10 min-h-[26px] min-w-[46px] px-2 rounded-md text-center transition-colors cursor-pointer ${
                           installMode === item.id
-                            ? 'bg-surface text-ink font-semibold shadow-sm'
+                            ? 'text-ink font-semibold'
                             : 'text-muted hover:text-ink'
                         }`}
                       >
@@ -191,9 +203,12 @@ export default function App() {
                     ))}
                   </div>
 
-                  <code className="font-mono text-xs sm:text-[13px] text-ink px-2 overflow-x-auto whitespace-nowrap">
+                  <code className="font-mono text-xs sm:text-[13px] text-ink px-2 overflow-x-auto whitespace-nowrap inline-flex items-center">
                     <span className="text-flame font-semibold select-none mr-1.5">$</span>
-                    {currentInstall.cmd}
+                    <span key={currentInstall.id} className="hero-cmd-swap inline-block">
+                      {currentInstall.cmd}
+                    </span>
+                    <span aria-hidden="true" className="hero-cmd-cursor ml-1" />
                   </code>
 
                   <button
@@ -201,11 +216,11 @@ export default function App() {
                     type="button"
                     onClick={() => void handleCopy(currentInstall.cmd, 'hero')}
                     aria-label={`Copy ${currentInstall.cmd}`}
-                    className="btn-primary-brand inline-flex items-center gap-1.5 min-h-[32px] px-3 rounded-lg font-semibold text-xs transition-colors shrink-0 cursor-pointer"
+                    className="btn-primary-brand inline-flex items-center gap-1.5 min-h-[32px] px-3 rounded-lg font-semibold text-xs transition-all active:scale-[0.97] shrink-0 cursor-pointer"
                   >
                     {heroCopied ? (
                       <>
-                        <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                        <Check className="hero-check-pop w-3.5 h-3.5" aria-hidden="true" />
                         <span>Copied</span>
                       </>
                     ) : (
@@ -221,10 +236,13 @@ export default function App() {
                   href="https://github.com/Cise07/ai-burnrate-tool"
                   target="_blank"
                   rel="noreferrer"
-                  className="glass-control hidden sm:inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3.5 rounded-xl hover:border-hairlineStrong text-xs font-semibold text-ink transition-colors shrink-0"
+                  className="hero-github-btn group glass-control hidden sm:inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3.5 rounded-xl hover:border-hairlineStrong text-xs font-semibold text-ink transition-all shrink-0"
                 >
                   <span>GitHub</span>
-                  <ArrowUpRight className="w-3.5 h-3.5 text-brand" aria-hidden="true" />
+                  <ArrowUpRight
+                    className="w-3.5 h-3.5 text-brand transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 motion-reduce:transition-none"
+                    aria-hidden="true"
+                  />
                 </a>
               </div>
 
