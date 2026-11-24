@@ -140,8 +140,16 @@ export function AmbientBackdrop() {
 
   // Pre-decode PNG displacement maps before enabling SVG backdrop-filter so Chromium
   // paints crisp refracted glass immediately on reload without needing a click.
+  // Skip WebKit/iOS & Firefox because Core Animation drops backdrop-filter when url(#...) is present.
   useEffect(() => {
     if (typeof document === 'undefined' || !barLensMap || !cardLensMap) return;
+    const ua = navigator.userAgent;
+    const isIOS =
+      /iP(?:hone|ad|od)/i.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isChromium = /Chrome\/|Chromium\/|Edg\/|OPR\//i.test(ua) && !/Firefox\//i.test(ua);
+    if (isIOS || !isChromium) return;
+
     let cancelled = false;
     let timerId = 0;
 

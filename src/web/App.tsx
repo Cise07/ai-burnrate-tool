@@ -643,13 +643,17 @@ export default function App() {
   const hasSnapshot = Boolean(snapshot);
   useLayoutEffect(() => {
     if (!hasSnapshot) return;
+    const ua = navigator.userAgent;
+    const isIOS =
+      /iP(?:hone|ad|od)/i.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let scaleRaf = 0;
     const applyScrollScale = () => {
       scaleRaf = 0;
       const innerEl = dashHeaderInnerRef.current;
       if (!innerEl) return;
-      if (reducedMotion.matches) {
+      if (isIOS || reducedMotion.matches) {
         innerEl.style.transform = '';
         return;
       }

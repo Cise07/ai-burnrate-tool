@@ -106,11 +106,16 @@ export function Navbar({ currency, onCurrencyChange, onThemeToggle }: NavbarProp
 
     // Smooth scroll-linked scale (1 -> 0.988 over 0..100px) driven via rAF instead of
     // CSS animation-timeline: scroll() to avoid Chromium's reload compositor blur bug.
+    // Disabled on iOS WebKit where mutating transform on a sticky backdrop-filter detaches CABackdropLayer.
+    const ua = navigator.userAgent;
+    const isIOS =
+      /iP(?:hone|ad|od)/i.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let scaleRaf = 0;
     const applyScrollScale = () => {
       scaleRaf = 0;
-      if (reducedMotion.matches) {
+      if (isIOS || reducedMotion.matches) {
         inner.style.transform = '';
         return;
       }
