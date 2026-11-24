@@ -1,32 +1,42 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 /* Physically inspired convex squircle optical lens map (R = dx, G = dy, neutral 128 center)
-   modeled on Apple iOS Liquid Glass beveled-edge refraction.
-   Generated once on mount (< 0.5ms) as a GPU-cached PNG data URI that adapts to any
-   element dimensions via preserveAspectRatio="none" with zero resize clipping. */
-function createSquircleLensMap(size: number, bevelRatio: number, cornerRatio: number): string {
-  if (typeof document === 'undefined') return '';
+   computed at the target element's exact aspect ratio so all 4 edges have uniform
+   iOS Liquid Glass bevel thickness and exact corner curvature at every DPR (1x–4x). */
+function createSquircleLensMap(
+  cssWidth: number,
+  cssHeight: number,
+  bevelPx: number,
+  radiusPx: number
+): string {
+  if (typeof document === 'undefined' || cssWidth <= 0 || cssHeight <= 0) return '';
+  const maxDim = 320;
+  const ratio = Math.min(1, maxDim / Math.max(cssWidth, cssHeight));
+  const w = Math.max(32, Math.round(cssWidth * ratio));
+  const h = Math.max(24, Math.round(cssHeight * ratio));
+
   const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext('2d');
   if (!ctx) return '';
 
-  const img = ctx.createImageData(size, size);
+  const img = ctx.createImageData(w, h);
   const data = img.data;
-  const half = size / 2;
-  const r = cornerRatio * half;
-  const bx = half - r;
-  const by = half - r;
-  const bevelPx = bevelRatio * half;
+  const halfW = w / 2;
+  const halfH = h / 2;
+  const r = Math.min(radiusPx * ratio, halfW, halfH);
+  const bx = halfW - r;
+  const by = halfH - r;
+  const bevel = Math.max(2, Math.min(bevelPx * ratio, Math.min(halfW, halfH) * 0.65));
 
-  for (let y = 0; y < size; y++) {
-    const py = y + 0.5 - half;
+  for (let y = 0; y < h; y++) {
+    const py = y + 0.5 - halfH;
     const ay = Math.abs(py);
     const sy = py < 0 ? -1 : 1;
 
-    for (let x = 0; x < size; x++) {
-      const px = x + 0.5 - half;
+    for (let x = 0; x < w; x++) {
+      const px = x + 0.5 - halfW;
       const ax = Math.abs(px);
       const sx = px < 0 ? -1 : 1;
 
@@ -44,29 +54,27 @@ function createSquircleLensMap(size: number, bevelRatio: number, cornerRatio: nu
           nx = (qx / len) * sx;
           ny = (qy / len) * sy;
         }
+      } else if (qx > qy) {
+        distInside = r - qx;
+        nx = sx;
+        ny = 0;
       } else {
-        if (qx > qy) {
-          distInside = r - qx;
-          nx = sx;
-          ny = 0;
-        } else {
-          distInside = r - qy;
-          nx = 0;
-          ny = sy;
-        }
+        distInside = r - qy;
+        nx = 0;
+        ny = sy;
       }
 
       let dx = 0;
       let dy = 0;
 
-      if (distInside >= 0 && distInside < bevelPx) {
-        const u = distInside / bevelPx;
+      if (distInside >= 0 && distInside < bevel) {
+        const u = distInside / bevel;
         const curved = Math.pow(1 - u, 1.85);
         dx = -nx * curved;
         dy = -ny * curved;
       }
 
-      const idx = (y * size + x) * 4;
+      const idx = (y * w + x) * 4;
       data[idx] = Math.max(0, Math.min(255, Math.round(128 + dx * 127)));
       data[idx + 1] = Math.max(0, Math.min(255, Math.round(128 + dy * 127)));
       data[idx + 2] = 128;
@@ -79,16 +87,56 @@ function createSquircleLensMap(size: number, bevelRatio: number, cornerRatio: nu
 }
 
 /* GPU-friendly optical backdrop + Apple iOS Liquid Glass SVG refraction filters for the dashboard.
-   Calibrated so elements scrolling under the floating glass header visibly bend with subtle RGB
-   prism dispersion while telemetry cards stay crisp and effortless to scan. */
+   Uses filterUnits="userSpaceOnUse" matched to live offsetWidth/offsetHeight so the lens stays
+   100% locked inside the floating header at every DPR (1x–4x on both desktop and mobile LAN). */
 export function AmbientBackdrop() {
-  const { barLensMap, cardLensMap } = useMemo(
-    () => ({
-      barLensMap: createSquircleLensMap(128, 0.34, 0.36),
-      cardLensMap: createSquircleLensMap(128, 0.2, 0.15),
-    }),
-    []
+  const [barSize, setBarSize] = useState<{ w: number; h: number }>({ w: 1280, h: 58 });
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    let ro: ResizeObserver | null = null;
+    let mo: MutationObserver | null = null;
+
+    const attach = () => {
+      const barEl = document.querySelector<HTMLElement>('.dash-header-inner');
+      if (!barEl) return false;
+
+      const sync = () => {
+        if (barEl.offsetWidth > 0 && barEl.offsetHeight > 0) {
+          const w = barEl.offsetWidth;
+          const h = barEl.offsetHeight;
+          setBarSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+        }
+      };
+
+      sync();
+      ro = new ResizeObserver(sync);
+      ro.observe(barEl);
+      return true;
+    };
+
+    if (!attach()) {
+      mo = new MutationObserver(() => {
+        if (attach() && mo) {
+          mo.disconnect();
+          mo = null;
+        }
+      });
+      mo.observe(document.body, { childList: true, subtree: true });
+    }
+
+    return () => {
+      ro?.disconnect();
+      mo?.disconnect();
+    };
+  }, []);
+
+  const barLensMap = useMemo(
+    () => createSquircleLensMap(barSize.w, barSize.h, 13, 17),
+    [barSize.w, barSize.h]
   );
+
+  const cardLensMap = useMemo(() => createSquircleLensMap(640, 620, 22, 18), []);
 
   // Pre-decode PNG displacement maps before enabling SVG backdrop-filter so Chromium
   // paints crisp refracted glass immediately on reload without needing a click.
@@ -127,9 +175,14 @@ export function AmbientBackdrop() {
     return () => {
       cancelled = true;
       window.clearTimeout(timerId);
-      document.documentElement.classList.remove('liquid-glass-ready');
     };
   }, [barLensMap, cardLensMap]);
+
+  useEffect(() => {
+    return () => {
+      document.documentElement.classList.remove('liquid-glass-ready');
+    };
+  }, []);
 
   return (
     <>
@@ -141,13 +194,15 @@ export function AmbientBackdrop() {
         style={{ position: 'fixed', width: 0, height: 0, overflow: 'hidden' }}
       >
         <defs>
-          {/* Floating dashboard header: convex bevel refraction + subtle RGB prism dispersion */}
+          {/* Floating dashboard header: userSpaceOnUse exact-px bevel + RGB prism dispersion */}
           <filter
             id="ios-liquid-glass-bar"
-            x="0%"
-            y="0%"
-            width="100%"
-            height="100%"
+            filterUnits="userSpaceOnUse"
+            primitiveUnits="userSpaceOnUse"
+            x="0"
+            y="0"
+            width={barSize.w}
+            height={barSize.h}
             colorInterpolationFilters="sRGB"
           >
             {barLensMap && (
@@ -155,10 +210,10 @@ export function AmbientBackdrop() {
                 <feFlood floodColor="rgb(128,128,128)" floodOpacity="1" result="barNeutral" />
                 <feImage
                   href={barLensMap}
-                  x="0%"
-                  y="0%"
-                  width="100%"
-                  height="100%"
+                  x="0"
+                  y="0"
+                  width={barSize.w}
+                  height={barSize.h}
                   preserveAspectRatio="none"
                   result="barMapRaw"
                 />
@@ -211,13 +266,15 @@ export function AmbientBackdrop() {
             )}
           </filter>
 
-          {/* Dashboard cards: smooth single-pass edge lens bend, crystal-clear center */}
+          {/* Modal Liquid Glass: exact-px convex bevel refraction */}
           <filter
             id="ios-liquid-glass-card"
-            x="0%"
-            y="0%"
-            width="100%"
-            height="100%"
+            filterUnits="userSpaceOnUse"
+            primitiveUnits="userSpaceOnUse"
+            x="0"
+            y="0"
+            width="640"
+            height="620"
             colorInterpolationFilters="sRGB"
           >
             {cardLensMap && (
@@ -225,10 +282,10 @@ export function AmbientBackdrop() {
                 <feFlood floodColor="rgb(128,128,128)" floodOpacity="1" result="cardNeutral" />
                 <feImage
                   href={cardLensMap}
-                  x="0%"
-                  y="0%"
-                  width="100%"
-                  height="100%"
+                  x="0"
+                  y="0"
+                  width="640"
+                  height="620"
                   preserveAspectRatio="none"
                   result="cardMapRaw"
                 />
@@ -258,48 +315,33 @@ export function AmbientBackdrop() {
 
         <svg
           className="ambient-rings absolute inset-0 w-full h-full"
-          viewBox="0 0 1440 960"
+          viewBox="0 0 1440 900"
           preserveAspectRatio="xMidYMid slice"
           fill="none"
         >
-          <g className="ambient-ring-group-a">
-            <circle cx="220" cy="260" r="260" stroke="var(--ring-teal)" strokeWidth="36" strokeOpacity="0.08" />
-            <circle cx="220" cy="260" r="260" stroke="var(--ring-teal)" strokeWidth="16" strokeOpacity="0.14" />
-            <circle cx="220" cy="260" r="370" stroke="var(--ring-cyan)" strokeWidth="14" strokeOpacity="0.12" strokeDasharray="18 22" />
+          <g className="ambient-ring-group-a" opacity="0.58">
+            <circle cx="220" cy="260" r="240" stroke="var(--ring-teal)" strokeWidth="1.25" strokeDasharray="4 10" />
+            <circle cx="220" cy="260" r="350" stroke="var(--ring-teal)" strokeWidth="0.95" opacity="0.65" />
+            <circle cx="220" cy="260" r="460" stroke="var(--ring-cyan)" strokeWidth="0.8" strokeDasharray="2 12" opacity="0.55" />
           </g>
-          <g className="ambient-ring-group-b">
-            <circle cx="1240" cy="420" r="290" stroke="var(--ring-flame)" strokeWidth="36" strokeOpacity="0.08" />
-            <circle cx="1240" cy="420" r="290" stroke="var(--ring-flame)" strokeWidth="16" strokeOpacity="0.14" />
-            <circle cx="1240" cy="420" r="420" stroke="var(--ring-violet)" strokeWidth="14" strokeOpacity="0.11" strokeDasharray="14 20" />
+          <g className="ambient-ring-group-b" opacity="0.55">
+            <circle cx="1240" cy="420" r="220" stroke="var(--ring-flame)" strokeWidth="1.25" strokeDasharray="3 10" />
+            <circle cx="1240" cy="420" r="330" stroke="var(--ring-violet)" strokeWidth="0.95" opacity="0.7" />
           </g>
-          <g className="ambient-wave-arc">
-            <path
-              d="M-80 640 C 260 480, 560 790, 920 600 C 1180 460, 1360 640, 1540 550"
-              stroke="var(--ring-teal)"
-              strokeWidth="42"
-              strokeOpacity="0.07"
-            />
-            <path
-              d="M-80 640 C 260 480, 560 790, 920 600 C 1180 460, 1360 640, 1540 550"
-              stroke="var(--ring-teal)"
-              strokeWidth="16"
-              strokeOpacity="0.13"
-            />
-          </g>
-          <g className="ambient-wave-arc-b">
-            <path
-              d="M-60 710 C 310 560, 600 840, 960 660 C 1220 530, 1380 700, 1540 620"
-              stroke="var(--ring-flame)"
-              strokeWidth="36"
-              strokeOpacity="0.07"
-            />
-            <path
-              d="M-60 710 C 310 560, 600 840, 960 660 C 1220 530, 1380 700, 1540 620"
-              stroke="var(--ring-flame)"
-              strokeWidth="14"
-              strokeOpacity="0.12"
-            />
-          </g>
+          <path
+            className="ambient-wave-arc"
+            d="M-140 620 Q 260 440 680 570 T 1580 480"
+            stroke="var(--ring-teal)"
+            strokeWidth="1.35"
+            opacity="0.45"
+          />
+          <path
+            className="ambient-wave-arc ambient-wave-arc-b"
+            d="M-120 710 Q 340 540 780 650 T 1580 560"
+            stroke="var(--ring-flame)"
+            strokeWidth="1.2"
+            opacity="0.4"
+          />
         </svg>
       </div>
     </>
