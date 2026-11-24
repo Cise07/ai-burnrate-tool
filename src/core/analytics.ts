@@ -8,10 +8,6 @@ export const EUR_RATE = 0.92;
 export const EUR_TAX_RATE = 0.22; // 22% VAT (IVA) on subscriptions
 export const USD_TAX_RATE = 0.075; // ~7.5% average US sales tax on subscriptions
 
-export function getTaxRate(currency: Currency): number {
-  return currency === 'EUR' ? EUR_TAX_RATE : USD_TAX_RATE;
-}
-
 export function getTaxLabel(currency: Currency): string {
   return currency === 'EUR' ? 'IVA 22%' : 'Tax 7.5%';
 }

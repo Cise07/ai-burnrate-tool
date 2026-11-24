@@ -214,7 +214,3 @@ export function saveUserSettings(patch: unknown): UserSettings {
 
   return next;
 }
-
-export function resetMemoryUserSettings(): void {
-  memorySettings = null;
-}

@@ -624,11 +624,6 @@ export function restoreDismissedLegacySessions(keys?: string[]): number {
   return restored;
 }
 
-export function resetMemorySessionLedger(): void {
-  memoryLedger.clear();
-  memoryDismissedLegacyKeys.clear();
-}
-
 function isValidLedgerSession(v: unknown): v is SessionStats {
   if (!v || typeof v !== 'object') return false;
   const rec = v as Record<string, unknown>;

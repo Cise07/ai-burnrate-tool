@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowDown,
@@ -17,11 +17,13 @@ import {
   Layers,
   LayoutGrid,
   MessageSquare,
+  Moon,
   RefreshCw,
   RotateCcw,
   Search,
   SlidersHorizontal,
   Sparkles,
+  Sun,
   Terminal,
   Trash2,
   TrendingUp,
@@ -73,6 +75,7 @@ import type {
   ToolSource,
   UserSettings,
 } from '../core/types';
+import { AmbientBackdrop } from './components/AmbientBackdrop';
 import { DeletedChatsModal } from './components/DeletedChatsModal';
 import { HeatmapAndWorkspaces } from './components/HeatmapAndWorkspaces';
 import { SettingsModal } from './components/SettingsModal';
@@ -129,7 +132,7 @@ function DeltaPill({
   if (Math.abs(rounded) < 0.1) {
     return (
       <span
-        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-800/80 text-zinc-400 border border-zinc-700/60"
+        className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono tabular glass-control text-[var(--ink-tertiary)]"
         title={label ? `Flat vs ${label}` : undefined}
       >
         0% {label ? `vs ${label}` : ''}
@@ -139,14 +142,14 @@ function DeltaPill({
   const isUp = rounded > 0;
   const isPositiveTone = higherIsBetter ? isUp : !isUp;
   const toneClass = isPositiveTone
-    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
-    : 'bg-amber-500/10 text-amber-300 border-amber-500/25';
+    ? 'bg-[var(--accent-teal-soft)] text-[var(--accent-teal)] border-[var(--accent-teal-border)]'
+    : 'bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border-[var(--accent-amber-border)]';
   const sign = isUp ? '+' : '';
   const displayPct = Math.abs(rounded) >= 999 ? `${sign}999%+` : `${sign}${rounded.toFixed(1)}%`;
 
   return (
     <span
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border whitespace-nowrap ${toneClass}`}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono tabular border whitespace-nowrap ${toneClass}`}
       title={label ? `Change vs ${label}` : undefined}
     >
       <span>{displayPct}</span>
@@ -161,7 +164,7 @@ function findModelRate(
   pricing: BurnrateSnapshot['pricing'] | undefined
 ): ModelRate | undefined {
   if (!pricing?.models) return undefined;
-    return (
+  return (
     (normalizedModel ? pricing.models[normalizedModel] : undefined) ||
     Object.values(pricing.models).find((r) => r.label === modelLabel)
   );
@@ -170,9 +173,9 @@ function findModelRate(
 function ToolBadge({ source, compact = false }: { source: ToolSource; compact?: boolean }) {
   const pad = compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[10.5px]';
   if (source === 'antigravity') {
-      return (
+    return (
       <span
-        className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25 whitespace-nowrap`}
+        className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-[var(--accent-sky-soft)] text-[var(--tool-antigravity)] border border-[var(--accent-sky-border)] whitespace-nowrap`}
       >
         <Terminal className="w-3 h-3 shrink-0" />
         Antigravity
@@ -180,18 +183,18 @@ function ToolBadge({ source, compact = false }: { source: ToolSource; compact?: 
     );
   }
   if (source === 'claude') {
-      return (
+    return (
       <span
-        className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25 whitespace-nowrap`}
+        className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-[var(--accent-violet-soft)] text-[var(--tool-claude)] border border-[var(--accent-violet-border)] whitespace-nowrap`}
       >
         <Sparkles className="w-3 h-3 shrink-0" />
         Claude Code
       </span>
     );
   }
-    return (
+  return (
     <span
-      className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/25 whitespace-nowrap`}
+      className={`inline-flex items-center gap-1 ${pad} rounded-md font-mono font-medium bg-[var(--accent-amber-soft)] text-[var(--tool-codex)] border border-[var(--accent-amber-border)] whitespace-nowrap`}
     >
       <Terminal className="w-3 h-3 shrink-0" />
       Codex CLI
@@ -258,7 +261,7 @@ function isPromoActive(rate: ModelRate | undefined, targetDate?: string | number
   return true;
 }
 
-const MODEL_COLORS = ['#10b981', '#06b6d4', '#a855f7', '#ec4899', '#f59e0b', '#3b82f6'];
+const MODEL_COLORS = ['#0d9488', '#0284c7', '#7c3aed', '#ea580c', '#d97706', '#2563eb'];
 
 const SORT_OPTIONS: Array<{ value: WorkspaceSortField; label: string }> = [
   { value: 'lastActiveAt', label: 'Last Modified' },
@@ -341,19 +344,19 @@ function FilterDropdown<T extends string>({
         title={title}
         className={
           attachedLeft
-            ? `h-full px-2.5 flex items-center gap-1.5 text-xs font-mono text-zinc-200 hover:bg-zinc-900/70 rounded-l-lg transition-colors cursor-pointer select-none ${maxWidthClass}`
-            : `h-8 px-2.5 rounded-lg bg-zinc-950 border ${
-                open ? 'border-emerald-500/50' : 'border-zinc-800 hover:border-zinc-700'
-              } flex items-center gap-1.5 text-xs font-mono text-zinc-200 transition-colors cursor-pointer select-none ${maxWidthClass}`
+            ? `h-full px-2.5 flex items-center gap-1.5 text-xs font-mono text-[var(--ink-primary)] hover:bg-[var(--table-hover)] rounded-l-lg transition-colors cursor-pointer select-none ${maxWidthClass}`
+            : `h-8 px-2.5 rounded-lg glass-control ${
+                open ? 'border-[var(--accent-teal)]' : 'hover:border-[var(--border-strong)]'
+              } flex items-center gap-1.5 text-xs font-mono text-[var(--ink-primary)] transition-colors cursor-pointer select-none ${maxWidthClass}`
         }
       >
         <span className="truncate">
-          {prefixLabel ? <span className="text-zinc-400">{prefixLabel} </span> : null}
+          {prefixLabel ? <span className="text-[var(--ink-tertiary)]">{prefixLabel} </span> : null}
           <span>{selectedLabel}</span>
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 text-zinc-400 shrink-0 transition-transform duration-150 ${
-            open ? 'rotate-180 text-emerald-400' : ''
+          className={`w-3.5 h-3.5 shrink-0 transition-transform duration-150 ${
+            open ? 'rotate-180 text-[var(--accent-teal)]' : 'text-[var(--ink-tertiary)]'
           }`}
         />
       </button>
@@ -364,7 +367,7 @@ function FilterDropdown<T extends string>({
           aria-label={ariaLabel}
           className={`absolute top-full ${
             menuAlign === 'left' ? 'left-0' : 'right-0'
-          } mt-1.5 z-40 min-w-[205px] max-h-72 overflow-y-auto rounded-lg bg-zinc-950/95 backdrop-blur-md border border-zinc-800 shadow-2xl shadow-black/80 p-1 space-y-0.5 animate-burn-expand`}
+          } mt-1.5 z-40 min-w-[205px] max-h-72 overflow-y-auto rounded-xl glass-popover p-1 space-y-0.5 animate-burn-expand`}
         >
           {options.map((opt) => {
             const isSelected = opt.value === value;
@@ -378,14 +381,14 @@ function FilterDropdown<T extends string>({
                   onChange(opt.value);
                   setOpen(false);
                 }}
-                className={`w-full px-2.5 py-1.5 rounded-md text-left text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                className={`w-full px-2.5 py-1.5 rounded-lg text-left text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
                   isSelected
-                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                    : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white border border-transparent'
+                    ? 'bg-[var(--accent-teal-soft)] text-[var(--accent-teal)] border border-[var(--accent-teal-border)] font-medium'
+                    : 'text-[var(--ink-secondary)] hover:bg-[var(--table-hover)] hover:text-[var(--ink-primary)] border border-transparent'
                 }`}
               >
                 <span className="truncate">{opt.label}</span>
-                {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                {isSelected && <Check className="w-3.5 h-3.5 text-[var(--accent-teal)] shrink-0" />}
               </button>
             );
           })}
@@ -460,7 +463,44 @@ export default function App() {
     () => urlOverrides.currency || parseCurrency(localStorage.getItem('burnrate_currency')) || 'USD'
   );
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [tableModelFilter, setTableModelFilter] = useState<string>('all');
+
+  useEffect(() => {
+    const syncColorScheme = (e: StorageEvent) => {
+      if (e.key !== 'color-scheme') return;
+      const meta = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
+      if (!meta) return;
+      meta.content = e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'light dark';
+    };
+    window.addEventListener('storage', syncColorScheme);
+    return () => window.removeEventListener('storage', syncColorScheme);
+  }, []);
+
+  const toggleColorScheme = () => {
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
+    if (!meta) return;
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem('color-scheme');
+    } catch {
+      stored = null;
+    }
+    const systemScheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    const renderedScheme = stored === 'light' || stored === 'dark' ? stored : systemScheme;
+    const targetScheme = renderedScheme === 'dark' ? 'light' : 'dark';
+    const nextValue = targetScheme === systemScheme ? 'light dark' : targetScheme;
+    meta.content = nextValue;
+    try {
+      if (nextValue === 'light dark') {
+        localStorage.removeItem('color-scheme');
+      } else {
+        localStorage.setItem('color-scheme', nextValue);
+      }
+    } catch {
+      // ignore storage quota/privacy restrictions
+    }
+  };
   const [sortBy, setSortBy] = useState<WorkspaceSortField>('lastActiveAt');
   const [sortDir, setSortDir] = useState<SortDirection>('desc');
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
@@ -586,6 +626,7 @@ export default function App() {
   };
   const visibleSectionCount = DEFAULT_SECTION_ORDER.filter((id) => !hiddenSections.has(id)).length;
 
+  const dashHeaderInnerRef = useRef<HTMLDivElement | null>(null);
   const toolGroupRef = useRef<HTMLDivElement | null>(null);
   const toolBtnRefs = useRef<Record<ToolFilter, HTMLButtonElement | null>>({
     all: null,
@@ -599,19 +640,76 @@ export default function App() {
     ready: false,
   });
 
+  const hasSnapshot = Boolean(snapshot);
   useLayoutEffect(() => {
+    if (!hasSnapshot) return;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let scaleRaf = 0;
+    const applyScrollScale = () => {
+      scaleRaf = 0;
+      const innerEl = dashHeaderInnerRef.current;
+      if (!innerEl) return;
+      if (reducedMotion.matches) {
+        innerEl.style.transform = '';
+        return;
+      }
+      const p = Math.min(1, Math.max(0, window.scrollY / 100));
+      if (p <= 0) {
+        innerEl.style.transform = '';
+      } else {
+        const ty = (-3 * p).toFixed(2);
+        const sc = (1 - 0.012 * p).toFixed(4);
+        innerEl.style.transform = `translateY(${ty}px) scale(${sc})`;
+      }
+    };
+    const onScroll = () => {
+      if (!scaleRaf) scaleRaf = requestAnimationFrame(applyScrollScale);
+    };
+    applyScrollScale();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    reducedMotion.addEventListener?.('change', applyScrollScale);
+    return () => {
+      cancelAnimationFrame(scaleRaf);
+      window.removeEventListener('scroll', onScroll);
+      reducedMotion.removeEventListener?.('change', applyScrollScale);
+      if (dashHeaderInnerRef.current) dashHeaderInnerRef.current.style.transform = '';
+    };
+  }, [hasSnapshot]);
+
+  useLayoutEffect(() => {
+    let rafId = 0;
     const updatePill = () => {
-      const btn = toolBtnRefs.current[toolFilter];
-      if (!btn) return;
-      setToolPill({ left: btn.offsetLeft, width: btn.offsetWidth, ready: true });
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const btn = toolBtnRefs.current[toolFilter];
+        if (!btn) return;
+        const nextLeft = btn.offsetLeft;
+        const nextWidth = btn.offsetWidth;
+        setToolPill((prev) =>
+          prev.ready && prev.left === nextLeft && prev.width === nextWidth
+            ? prev
+            : { left: nextLeft, width: nextWidth, ready: true }
+        );
+      });
     };
     updatePill();
 
     const groupEl = toolGroupRef.current;
-    if (!groupEl || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(updatePill);
-    ro.observe(groupEl);
-      return () => ro.disconnect();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updatePill) : null;
+    if (ro && groupEl) {
+      ro.observe(groupEl);
+      for (const el of Object.values(toolBtnRefs.current)) {
+        if (el) ro.observe(el);
+      }
+    }
+    window.addEventListener('resize', updatePill);
+    document.fonts?.ready.then(updatePill).catch(() => {});
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro?.disconnect();
+      window.removeEventListener('resize', updatePill);
+    };
   }, [toolFilter, snapshot !== null]);
 
   useEffect(() => {
@@ -1020,7 +1118,7 @@ export default function App() {
   const tableData = useMemo(() => {
     if (!analytics) return { workspaces: [], chatsCount: 0 };
     const tableSessions = filterSessions(analytics.filteredSessions, {
-      searchQuery,
+      searchQuery: deferredSearchQuery,
       modelFilter: activeModelFilter,
     });
     const grouped = buildWorkspaceGroups(tableSessions);
@@ -1028,7 +1126,7 @@ export default function App() {
       workspaces: sortWorkspaceGroups(grouped, sortBy, sortDir),
       chatsCount: tableSessions.length,
     };
-  }, [analytics, searchQuery, activeModelFilter, sortBy, sortDir]);
+  }, [analytics, deferredSearchQuery, activeModelFilter, sortBy, sortDir]);
 
   const dismissLegacyChats = async (chats: SessionStats[], isBulk = false) => {
     const legacyOnly = chats.filter((chat) => Boolean(chat.untrackedHistory));
@@ -1075,11 +1173,14 @@ export default function App() {
   };
 
   if (!snapshot || !analytics) {
-      return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-          <p className="text-sm text-zinc-400 font-mono">Scanning ~/.gemini, ~/.claude &amp; ~/.codex logs...</p>
+    return (
+      <div className="relative isolate min-h-screen text-[var(--ink-primary)] flex items-center justify-center p-4">
+        <AmbientBackdrop />
+        <div className="glass-panel rounded-2xl px-6 py-5 flex flex-col items-center gap-3">
+          <div className="h-7 w-7 rounded-full border-2 border-[var(--accent-teal)] border-t-transparent animate-spin" />
+          <p className="text-xs sm:text-sm text-[var(--ink-secondary)] font-mono">
+            Scanning ~/.gemini, ~/.claude &amp; ~/.codex logs...
+          </p>
         </div>
       </div>
     );
@@ -1207,33 +1308,33 @@ export default function App() {
       : 0;
     const curOutput = m.rate ? (promoActive ? m.rate.output : (m.rate.standardOutput ?? m.rate.output)) : 0;
 
-      return (
+    return (
       <div
         key={m.model}
-        className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 p-4 flex flex-col justify-between gap-3"
+        className="glass-subcard glass-interactive rounded-xl p-4 flex flex-col justify-between gap-3"
       >
         <div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-zinc-100 truncate" title={m.model}>
+            <span className="text-xs font-semibold text-[var(--ink-primary)] truncate" title={m.model}>
               {m.model}
             </span>
             <div className="flex items-center gap-1.5 shrink-0">
               {promoActive && (
                 <span
-                  className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
+                  className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)] flex items-center gap-1"
                   title={m.rate?.promoNote || 'Active promotional rate'}
                 >
-                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                  <Sparkles className="w-2.5 h-2.5" />
                   PROMO
                 </span>
               )}
               <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
                   m.source === 'antigravity'
-                    ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
+                    ? 'bg-[var(--accent-sky-soft)] text-[var(--tool-antigravity)] border-[var(--accent-sky-border)]'
                     : m.source === 'claude'
-                      ? 'bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20'
-                      : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                      ? 'bg-[var(--accent-violet-soft)] text-[var(--tool-claude)] border-[var(--accent-violet-border)]'
+                      : 'bg-[var(--accent-amber-soft)] text-[var(--tool-codex)] border-[var(--accent-amber-border)]'
                 }`}
               >
                 {m.source === 'antigravity'
@@ -1247,22 +1348,22 @@ export default function App() {
 
           <div className="mt-2 flex items-baseline justify-between">
             <div>
-              <span className="text-2xl font-bold font-mono text-white">
+              <span className="text-2xl font-bold font-mono tabular text-[var(--ink-primary)]">
                 {formatTokens(m.tokens)}
               </span>
-              <span className="text-[11px] text-zinc-500 font-mono ml-1">tokens</span>
+              <span className="text-[11px] text-[var(--ink-tertiary)] font-mono ml-1">tokens</span>
             </div>
-            <span className="text-xs font-mono text-zinc-400">{sharePct.toFixed(1)}%</span>
+            <span className="text-xs font-mono tabular text-[var(--ink-tertiary)]">{sharePct.toFixed(1)}%</span>
           </div>
 
-          <div className="mt-1.5 flex items-center justify-between text-xs font-mono">
-            <span className="text-zinc-400">Total Spend:</span>
-            <span className="font-semibold text-emerald-400">
+          <div className="mt-1.5 flex items-center justify-between text-xs font-mono tabular">
+            <span className="text-[var(--ink-tertiary)]">Total Spend:</span>
+            <span className="font-semibold text-[var(--accent-teal)]">
               {formatMoney(m.costUSD, currency)}
             </span>
           </div>
 
-          <div className="mt-2 h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+          <div className="mt-2 h-1.5 w-full rounded-full bg-[var(--track-bg)] overflow-hidden">
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{
@@ -1273,64 +1374,64 @@ export default function App() {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-zinc-800/70 text-[11px] font-mono">
+        <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-[var(--border-hairline)] text-[11px] font-mono tabular">
           <div>
-            <span className="text-zinc-500 block">Input</span>
-            <span className="text-zinc-200">{formatTokens(m.inputTokens)}</span>
+            <span className="text-[var(--ink-tertiary)] block">Input</span>
+            <span className="text-[var(--ink-primary)] font-medium">{formatTokens(m.inputTokens)}</span>
           </div>
           <div>
-            <span className="text-zinc-500 block">Cached</span>
-            <span className="text-cyan-400">{formatTokens(m.cacheReadTokens)}</span>
+            <span className="text-[var(--ink-tertiary)] block">Cached</span>
+            <span className="text-[var(--tool-antigravity)] font-medium">{formatTokens(m.cacheReadTokens)}</span>
           </div>
           <div>
-            <span className="text-zinc-500 block">Output</span>
-            <span className="text-amber-300">{formatTokens(m.outputTokens)}</span>
+            <span className="text-[var(--ink-tertiary)] block">Output</span>
+            <span className="text-[var(--accent-amber)] font-medium">{formatTokens(m.outputTokens)}</span>
           </div>
         </div>
 
         {m.rate && (
-          <div className="pt-2.5 border-t border-zinc-800/70 flex flex-col gap-1.5">
+          <div className="pt-2.5 border-t border-[var(--border-hairline)] flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-zinc-400">Rate per 1M tok:</span>
+              <span className="text-[var(--ink-tertiary)]">Rate per 1M tok:</span>
               {promoActive && (
-                <span className="text-[10px] font-semibold text-amber-400 flex items-center gap-1">
-                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                <span className="text-[10px] font-semibold text-[var(--accent-amber)] flex items-center gap-1">
+                  <Sparkles className="w-2.5 h-2.5" />
                   Promo Active
                 </span>
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-1.5 bg-zinc-900/90 p-2 rounded border border-zinc-800/80 text-[10px] font-mono">
+            <div className="grid grid-cols-3 gap-1.5 glass-control p-2 rounded-lg text-[10px] font-mono tabular">
               <div>
-                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Input</span>
+                <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Input</span>
                 <div className="flex items-baseline gap-1">
                   {promoActive && m.rate.standardInput && (
-                    <span className="line-through text-zinc-600 text-[9px]">
+                    <span className="line-through text-[var(--ink-tertiary)] opacity-70 text-[9px]">
                       {formatRateMoney(m.rate.standardInput, currency)}
                     </span>
                   )}
-                  <span className="text-zinc-200 font-semibold">
+                  <span className="text-[var(--ink-primary)] font-semibold">
                     {formatRateMoney(curInput, currency)}
                   </span>
                 </div>
               </div>
 
               <div>
-                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Cached</span>
-                <span className="text-cyan-400 font-semibold">
+                <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Cached</span>
+                <span className="text-[var(--tool-antigravity)] font-semibold">
                   {formatRateMoney(curCache, currency)}
                 </span>
               </div>
 
               <div>
-                <span className="text-zinc-500 block text-[9px] uppercase tracking-wider">Output</span>
+                <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Output</span>
                 <div className="flex items-baseline gap-1">
                   {promoActive && m.rate.standardOutput && (
-                    <span className="line-through text-zinc-600 text-[9px]">
+                    <span className="line-through text-[var(--ink-tertiary)] opacity-70 text-[9px]">
                       {formatRateMoney(m.rate.standardOutput, currency)}
                     </span>
                   )}
-                  <span className="text-amber-300 font-semibold">
+                  <span className="text-[var(--accent-amber)] font-semibold">
                     {formatRateMoney(curOutput, currency)}
                   </span>
                 </div>
@@ -1339,32 +1440,32 @@ export default function App() {
 
             {m.rate.longContext && (
               <div
-                className="text-[10px] text-zinc-400 font-mono flex items-center justify-between gap-1.5 bg-zinc-900/60 px-2 py-1 rounded border border-zinc-800/70"
+                className="text-[10px] text-[var(--ink-secondary)] font-mono tabular flex items-center justify-between gap-1.5 glass-control px-2 py-1 rounded-md"
                 title={`Requests exceeding ${(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k context tokens are billed at the long-context tier${m.longContextTurns > 0 ? ` (${m.longContextTurns} of ${m.turns} turns in this view)` : ''}`}
               >
                 <span className="inline-flex items-center gap-1 shrink-0">
-                  <span className="text-sky-400 font-semibold">
+                  <span className="text-[var(--accent-sky)] font-semibold">
                     &gt;{(m.rate.longContext.thresholdTokens / 1000).toFixed(0)}k ctx:
                   </span>
                   {m.longContextTurns > 0 && (
-                    <span className="px-1 py-0 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[9px] font-semibold">
+                    <span className="px-1 py-0 rounded bg-[var(--accent-sky-soft)] border border-[var(--accent-sky-border)] text-[var(--accent-sky)] text-[9px] font-semibold">
                       {m.longContextTurns}t
                     </span>
                   )}
                 </span>
                 <span className="truncate">
-                  <span className="text-zinc-200">{formatRateMoney(m.rate.longContext.input, currency)}</span>
-                  <span className="text-zinc-600 mx-1">/</span>
-                  <span className="text-cyan-400">{formatRateMoney(m.rate.longContext.cacheRead, currency)}</span>
-                  <span className="text-zinc-600 mx-1">/</span>
-                  <span className="text-amber-300">{formatRateMoney(m.rate.longContext.output, currency)}</span>
+                  <span className="text-[var(--ink-primary)]">{formatRateMoney(m.rate.longContext.input, currency)}</span>
+                  <span className="text-[var(--ink-tertiary)] mx-1">/</span>
+                  <span className="text-[var(--tool-antigravity)]">{formatRateMoney(m.rate.longContext.cacheRead, currency)}</span>
+                  <span className="text-[var(--ink-tertiary)] mx-1">/</span>
+                  <span className="text-[var(--accent-amber)]">{formatRateMoney(m.rate.longContext.output, currency)}</span>
                 </span>
               </div>
             )}
 
             {promoActive && m.rate.promoNote && (
-              <div className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
-                <span className="text-amber-400">●</span>
+              <div className="text-[10px] text-[var(--accent-amber)] font-mono flex items-center gap-1">
+                <span>●</span>
                 <span className="truncate" title={m.rate.promoNote}>
                   {m.rate.promoNote}
                 </span>
@@ -1380,26 +1481,26 @@ export default function App() {
     <>
       <div className="flex items-start gap-2.5">
         {canCollapseModels && (
-          <span className="mt-0.5 p-1 rounded group-hover:bg-zinc-800 text-zinc-500 group-hover:text-zinc-200 transition shrink-0">
+          <span className="mt-0.5 p-1 rounded group-hover:bg-[var(--table-hover)] text-[var(--ink-tertiary)] group-hover:text-[var(--ink-primary)] transition shrink-0">
             <ChevronRight
               className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
-                isModelUsageExpanded ? 'rotate-90 text-emerald-400' : ''
+                isModelUsageExpanded ? 'rotate-90 text-[var(--accent-teal)]' : ''
               }`}
             />
           </span>
         )}
         <div>
-          <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-emerald-400" />
+          <h2 className="text-sm font-semibold text-[var(--ink-primary)] flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-[var(--accent-teal)]" />
             Total Token Usage by Model
           </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Complete token consumption breakdown (Input, Cache Read & Output) per AI model
+          <p className="text-xs text-[var(--ink-tertiary)] mt-0.5">
+            Complete token consumption breakdown (Input, Cache Read &amp; Output) per AI model
           </p>
         </div>
       </div>
-      <div className={`text-xs font-mono text-zinc-400 ${canCollapseModels ? 'pl-7 sm:pl-0' : ''}`}>
-        Total: <span className="text-zinc-100 font-semibold">{formatTokens(analytics.totalTokens)}</span> tokens
+      <div className={`text-xs font-mono tabular text-[var(--ink-tertiary)] ${canCollapseModels ? 'pl-7 sm:pl-0' : ''}`}>
+        Total: <span className="text-[var(--ink-primary)] font-semibold">{formatTokens(analytics.totalTokens)}</span> tokens
       </div>
     </>
   );
@@ -1417,9 +1518,9 @@ export default function App() {
           type="button"
           onClick={() => handleSortField(field)}
           title={`Sort by ${label} (${isActive ? (sortDir === 'desc' ? 'descending' : 'ascending') : 'click to sort'})`}
-          className={`inline-flex items-center gap-1 uppercase font-mono transition-colors cursor-pointer select-none hover:text-zinc-100 ${
+          className={`inline-flex items-center gap-1 uppercase font-mono transition-colors cursor-pointer select-none hover:text-[var(--ink-primary)] ${
             align === 'right' ? 'justify-end ml-auto' : ''
-          } ${isActive ? 'text-emerald-400' : 'text-zinc-400'}`}
+          } ${isActive ? 'text-[var(--accent-teal)] font-semibold' : 'text-[var(--ink-tertiary)]'}`}
         >
           <span>{label}</span>
           {isActive ? (
@@ -1437,41 +1538,44 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col overflow-x-clip">
-      {/* Subtle top glow */}
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-64 bg-gradient-to-b from-emerald-500/[0.05] via-cyan-500/[0.02] to-transparent" />
+    <div className="relative isolate min-h-screen text-[var(--ink-primary)] flex flex-col overflow-x-clip">
+      <div className="scroll-progress-bar" aria-hidden="true" />
+      <AmbientBackdrop />
 
-      {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md animate-burn-header">
-        <div className="max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] mx-auto px-3 sm:px-6 py-2.5 md:py-0 md:h-16 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 md:overflow-x-auto md:whitespace-nowrap">
+      {/* Floating Liquid-Glass Top Navigation Bar */}
+      <header className="dash-header animate-burn-header">
+        <div
+          ref={dashHeaderInnerRef}
+          className="dash-header-inner max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] mx-auto px-3 sm:px-5 py-2.5 lg:py-2 flex flex-wrap lg:flex-nowrap items-center justify-between gap-x-2.5 xl:gap-x-3 gap-y-2"
+        >
           {/* Brand & Live Status */}
-          <div className="flex items-center gap-2.5 shrink-0 group">
+          <div className="order-1 flex items-center gap-2.5 min-w-0 shrink-0 group">
             <img
               src="/logo.svg"
               alt="ai-burnrate-tool"
-              className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg border border-zinc-800/90 shadow-inner shrink-0 transition-all duration-200 group-hover:border-emerald-500/45 group-hover:shadow-[0_0_16px_-4px_rgba(16,185,129,0.45)] group-hover:scale-105"
+              className="h-8 w-8 rounded-lg border border-[var(--border-hairline)] shadow-sm shrink-0 transition-transform duration-200 group-hover:scale-105"
             />
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-bold tracking-tight text-zinc-100 text-sm sm:text-base transition-colors duration-200 group-hover:text-white">ai-burnrate-tool</span>
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 transition-colors duration-200">
+                <span className="font-bold tracking-tight text-[var(--ink-primary)] text-sm sm:text-[15px] whitespace-nowrap">
+                  ai-burnrate-tool
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono font-semibold bg-[var(--accent-teal-soft)] text-[var(--accent-teal)] border border-[var(--accent-teal-border)] shrink-0">
                   <span className="relative flex h-2 w-2">
                     <span
-                      className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                        sseConnected ? 'bg-emerald-400' : 'bg-amber-400'
-                      }`}
+                      className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                      style={{ backgroundColor: sseConnected ? 'var(--accent-teal)' : 'var(--accent-amber)' }}
                     />
                     <span
-                      className={`relative inline-flex rounded-full h-2 w-2 ${
-                        sseConnected ? 'bg-emerald-500' : 'bg-amber-500'
-                      }`}
+                      className="relative inline-flex rounded-full h-2 w-2"
+                      style={{ backgroundColor: sseConnected ? 'var(--accent-teal)' : 'var(--accent-amber)' }}
                     />
                   </span>
                   {sseConnected ? 'LIVE' : 'SYNC'}
                 </span>
               </div>
               <p
-                className="text-[11px] text-zinc-500 font-mono hidden xl:block max-w-[260px] 2xl:max-w-[380px] truncate transition-colors duration-200"
+                className="text-[11px] text-[var(--ink-tertiary)] font-mono hidden xl:block max-w-[240px] 2xl:max-w-[360px] truncate"
                 title={`Watching ${snapshot.watchedPaths.join(' & ')}`}
               >
                 Watching {snapshot.watchedPaths.join(' & ')} {lastSyncTime && `• Synced ${lastSyncTime}`}
@@ -1479,24 +1583,24 @@ export default function App() {
             </div>
           </div>
 
-          {/* Controls: Tool Filter, Time Selector, Currency, Settings, Rescan */}
-          <div className="flex flex-wrap md:flex-nowrap items-center justify-between sm:justify-start gap-1.5 sm:gap-2.5 w-full md:w-auto md:shrink-0">
+          {/* Primary Filters: Tool, Time Range, Currency */}
+          <div className="order-3 lg:order-2 w-full lg:w-auto lg:ml-auto flex flex-wrap lg:flex-nowrap items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Tool Filter (with smooth sliding indicator) */}
             <div
               ref={toolGroupRef}
-              className="relative inline-flex items-center gap-0.5 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs shrink-0 select-none overflow-x-auto max-w-full"
+              className="relative inline-flex items-center gap-0.5 rounded-lg glass-control p-1 text-[11px] sm:text-xs shrink-0 select-none max-w-full"
             >
               {toolPill.ready && (
                 <span
                   aria-hidden="true"
                   className={`pointer-events-none absolute top-1 bottom-1 left-0 rounded-md border transition-[transform,width,background-color,border-color] duration-200 ease-out motion-reduce:transition-none ${
                     toolFilter === 'antigravity'
-                      ? 'bg-cyan-500/20 border-cyan-500/30'
+                      ? 'bg-[var(--accent-sky-soft)] border-[var(--accent-sky-border)]'
                       : toolFilter === 'claude'
-                        ? 'bg-fuchsia-500/20 border-fuchsia-500/30'
+                        ? 'bg-[var(--accent-violet-soft)] border-[var(--accent-violet-border)]'
                         : toolFilter === 'codex'
-                          ? 'bg-amber-500/20 border-amber-500/30'
-                          : 'bg-zinc-800 border-zinc-700/70 shadow-sm'
+                          ? 'bg-[var(--accent-amber-soft)] border-[var(--accent-amber-border)]'
+                          : 'bg-[var(--bg-surface)] border-[var(--border-strong)] shadow-sm'
                   }`}
                   style={{
                     width: `${toolPill.width}px`,
@@ -1510,8 +1614,10 @@ export default function App() {
                 }}
                 type="button"
                 onClick={() => selectToolFilter('all')}
-                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
-                  toolFilter === 'all' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+                className={`relative z-10 px-2 xl:px-2.5 py-1 rounded-md font-medium whitespace-nowrap border border-transparent transition-colors duration-200 cursor-pointer ${
+                  toolFilter === 'all'
+                    ? 'text-[var(--ink-primary)] font-semibold'
+                    : 'text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]'
                 }`}
               >
                 All
@@ -1522,11 +1628,13 @@ export default function App() {
                 }}
                 type="button"
                 onClick={() => selectToolFilter('antigravity')}
-                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50 flex items-center gap-1.5 ${
-                  toolFilter === 'antigravity' ? 'text-cyan-300' : 'text-zinc-400 hover:text-zinc-200'
+                className={`relative z-10 px-2 xl:px-2.5 py-1 rounded-md font-medium whitespace-nowrap border border-transparent transition-colors duration-200 flex items-center gap-1.5 cursor-pointer ${
+                  toolFilter === 'antigravity'
+                    ? 'text-[var(--tool-antigravity)] font-semibold'
+                    : 'text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]'
                 }`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
+                <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: 'var(--tool-antigravity)' }} />
                 <span>Antigravity</span>
               </button>
               <button
@@ -1535,11 +1643,13 @@ export default function App() {
                 }}
                 type="button"
                 onClick={() => selectToolFilter('claude')}
-                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-fuchsia-500/50 flex items-center gap-1.5 ${
-                  toolFilter === 'claude' ? 'text-fuchsia-300' : 'text-zinc-400 hover:text-zinc-200'
+                className={`relative z-10 px-2 xl:px-2.5 py-1 rounded-md font-medium whitespace-nowrap border border-transparent transition-colors duration-200 flex items-center gap-1.5 cursor-pointer ${
+                  toolFilter === 'claude'
+                    ? 'text-[var(--tool-claude)] font-semibold'
+                    : 'text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]'
                 }`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-fuchsia-400 shrink-0" />
+                <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: 'var(--tool-claude)' }} />
                 <span>Claude</span>
               </button>
               <button
@@ -1548,20 +1658,22 @@ export default function App() {
                 }}
                 type="button"
                 onClick={() => selectToolFilter('codex')}
-                className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md font-medium border border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-500/50 flex items-center gap-1.5 ${
-                  toolFilter === 'codex' ? 'text-amber-300' : 'text-zinc-400 hover:text-zinc-200'
+                className={`relative z-10 px-2 xl:px-2.5 py-1 rounded-md font-medium whitespace-nowrap border border-transparent transition-colors duration-200 flex items-center gap-1.5 cursor-pointer ${
+                  toolFilter === 'codex'
+                    ? 'text-[var(--tool-codex)] font-semibold'
+                    : 'text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]'
                 }`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: 'var(--tool-codex)' }} />
                 <span>Codex</span>
               </button>
             </div>
 
-            {/* Time Range Selector (with smooth sliding indicator) */}
-            <div className="relative inline-grid grid-cols-4 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs font-mono shrink-0 select-none">
+            {/* Time Range Selector */}
+            <div className="relative inline-grid grid-cols-4 rounded-lg glass-control p-1 text-[11px] sm:text-xs font-mono shrink-0 select-none">
               <span
                 aria-hidden="true"
-                className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/4)] rounded-md bg-emerald-500/20 border border-emerald-500/30 transition-transform duration-200 ease-out motion-reduce:transition-none"
+                className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/4)] rounded-md bg-[var(--accent-teal-soft)] border border-[var(--accent-teal-border)] transition-transform duration-200 ease-out motion-reduce:transition-none"
                 style={{
                   transform: `translateX(${(['24h', '7d', '30d', 'all'] as TimeRange[]).indexOf(timeRange) * 100}%)`,
                 }}
@@ -1571,10 +1683,10 @@ export default function App() {
                   type="button"
                   key={range}
                   onClick={() => selectTimeRange(range)}
-                  className={`relative z-10 px-2 sm:px-2.5 py-1 rounded-md uppercase font-medium text-center transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
+                  className={`relative z-10 px-1.5 sm:px-2 xl:px-2.5 py-1 rounded-md uppercase font-medium whitespace-nowrap text-center transition-colors duration-200 cursor-pointer ${
                     timeRange === range
-                      ? 'text-emerald-300'
-                      : 'text-zinc-400 hover:text-zinc-200'
+                      ? 'text-[var(--accent-teal)] font-semibold'
+                      : 'text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]'
                   }`}
                 >
                   {range}
@@ -1582,21 +1694,21 @@ export default function App() {
               ))}
             </div>
 
-            {/* Currency Toggle ($ USD / € EUR with smooth sliding indicator) */}
-            <div className="relative inline-grid grid-cols-2 rounded-lg bg-zinc-900/90 p-1 border border-zinc-800/90 text-xs font-mono shrink-0 select-none">
+            {/* Currency Toggle ($ USD / € EUR) */}
+            <div className="relative inline-grid grid-cols-2 rounded-lg glass-control p-1 text-[11px] sm:text-xs font-mono shrink-0 select-none">
               <span
                 aria-hidden="true"
-                className={`pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/2)] rounded-md bg-emerald-500/20 border border-emerald-500/30 transition-transform duration-200 ease-out motion-reduce:transition-none ${
+                className={`pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/2)] rounded-md bg-[var(--accent-teal-soft)] border border-[var(--accent-teal-border)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
                   currency === 'EUR' ? 'translate-x-full' : 'translate-x-0'
                 }`}
               />
               <button
                 type="button"
                 onClick={() => toggleCurrency('USD')}
-                className={`relative z-10 px-2 py-1 min-w-[56px] text-center rounded-md font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
+                className={`relative z-10 px-1.5 sm:px-2 py-1 min-w-[48px] sm:min-w-[52px] text-center rounded-md font-medium whitespace-nowrap transition-colors duration-200 cursor-pointer ${
                   currency === 'USD'
-                    ? 'text-emerald-300'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                    ? 'text-[var(--accent-teal)] font-semibold'
+                    : 'text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]'
                 }`}
               >
                 $ USD
@@ -1604,15 +1716,36 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => toggleCurrency('EUR')}
-                className={`relative z-10 px-2 py-1 min-w-[56px] text-center rounded-md font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 ${
+                className={`relative z-10 px-1.5 sm:px-2 py-1 min-w-[48px] sm:min-w-[52px] text-center rounded-md font-medium whitespace-nowrap transition-colors duration-200 cursor-pointer ${
                   currency === 'EUR'
-                    ? 'text-emerald-300'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                    ? 'text-[var(--accent-teal)] font-semibold'
+                    : 'text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)]'
                 }`}
               >
                 € EUR
               </button>
             </div>
+          </div>
+
+          {/* Utility Icon Actions: Theme, Settings & Rescan (Row 1 right on <lg, far right on lg+) */}
+          <div className="order-2 lg:order-3 inline-flex items-center gap-1.5 shrink-0">
+            {/* Two-State Light / Dark Theme Toggle (CSS-branched options) */}
+            <button
+              id="theme-toggle-btn"
+              type="button"
+              onClick={toggleColorScheme}
+              title="Toggle light or dark theme"
+              className="h-8 w-8 rounded-lg glass-control hover:border-[var(--border-strong)] text-xs font-mono text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] inline-flex items-center justify-center transition-colors duration-200 select-none shrink-0 cursor-pointer"
+            >
+              <span className="theme-opt-dark">
+                <Moon className="w-3.5 h-3.5 text-[var(--ink-secondary)]" aria-hidden="true" />
+                <span className="sr-only">Switch to dark theme</span>
+              </span>
+              <span className="theme-opt-light">
+                <Sun className="w-3.5 h-3.5 text-[var(--accent-amber)]" aria-hidden="true" />
+                <span className="sr-only">Switch to light theme</span>
+              </span>
+            </button>
 
             {/* Plans & Layout Settings */}
             <button
@@ -1620,7 +1753,7 @@ export default function App() {
               onClick={() => setIsSettingsOpen(true)}
               title="Subscription plans, dashboard layout & settings"
               aria-label="Open plans and layout settings"
-              className="group p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-300 hover:text-emerald-300 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 select-none shrink-0 cursor-pointer"
+              className="group h-8 w-8 rounded-lg glass-control hover:border-[var(--accent-teal-border)] text-[var(--ink-secondary)] hover:text-[var(--accent-teal)] inline-flex items-center justify-center transition-colors duration-200 select-none shrink-0 cursor-pointer"
             >
               <SlidersHorizontal className="w-4 h-4" />
             </button>
@@ -1630,12 +1763,13 @@ export default function App() {
               type="button"
               onClick={triggerManualRescan}
               title="Force Rescan Logs"
-              className="group p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-300 hover:text-emerald-300 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 select-none shrink-0 cursor-pointer"
+              aria-label="Force rescan logs"
+              className="group h-8 w-8 rounded-lg glass-control hover:border-[var(--accent-teal-border)] text-[var(--ink-secondary)] hover:text-[var(--accent-teal)] inline-flex items-center justify-center transition-colors duration-200 select-none shrink-0 cursor-pointer"
             >
               <RefreshCw
                 className={`w-4 h-4 ${
                   isRescanning
-                    ? 'animate-spin text-emerald-400'
+                    ? 'animate-spin text-[var(--accent-teal)]'
                     : 'transition-transform duration-300 group-hover:rotate-90 motion-reduce:transition-none'
                 }`}
               />
@@ -1645,19 +1779,20 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 flex flex-col gap-4 sm:gap-6">
+      <main className="flex-1 max-w-7xl xl:max-w-[1440px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 flex flex-col gap-4 sm:gap-5">
         {/* Live Event Banner if a file just updated */}
         {lastChangedFile && (
           <div
             style={{ order: -2 }}
-            className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-3.5 py-2 flex items-center justify-between text-xs font-mono text-emerald-300 animate-burn-expand"
+            className="glass-panel rounded-xl px-3.5 py-2 flex items-center justify-between text-xs font-mono text-[var(--accent-teal)] border-[var(--accent-teal-border)] animate-burn-expand"
           >
             <span className="truncate">
-              ● Live update received from: <span className="text-emerald-200">{lastChangedFile}</span>
+              ● Live update received from: <span className="text-[var(--ink-primary)] font-medium">{lastChangedFile}</span>
             </span>
             <button
+              type="button"
               onClick={() => setLastChangedFile(null)}
-              className="text-emerald-400/70 hover:text-emerald-300 ml-4 transition-colors"
+              className="text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] ml-4 transition-colors cursor-pointer"
             >
               Dismiss
             </button>
@@ -1668,17 +1803,17 @@ export default function App() {
         {activeTrackingCutoffs.length > 0 && (
           <div
             style={{ order: -1 }}
-            className="rounded-lg bg-amber-950/25 border border-amber-500/30 px-3.5 py-2 flex flex-col gap-2 text-xs font-mono text-amber-200 animate-burn-expand"
+            className="glass-panel rounded-xl px-3.5 py-2.5 flex flex-col gap-2 text-xs font-mono text-[var(--accent-amber)] border-[var(--accent-amber-border)] animate-burn-expand"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span className="truncate">
+                <Clock className="w-3.5 h-3.5 text-[var(--accent-amber)] shrink-0" />
+                <span className="truncate text-[var(--ink-secondary)]">
                   Tracking reset active:{' '}
                   {activeTrackingCutoffs.map((c, idx) => (
                     <span key={c.key}>
                       {idx > 0 ? ' · ' : ''}
-                      <span className="text-amber-100 font-semibold">{c.label}</span> from {c.display}
+                      <span className="text-[var(--ink-primary)] font-semibold">{c.label}</span> from {c.display}
                     </span>
                   ))}
                 </span>
@@ -1693,8 +1828,8 @@ export default function App() {
                   }
                   className={`px-2 py-0.5 rounded-md border text-[11px] transition-colors cursor-pointer ${
                     isBannerRestoreOpen
-                      ? 'border-amber-400/60 bg-amber-500/25 text-amber-100'
-                      : 'border-amber-500/35 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200'
+                      ? 'border-[var(--accent-amber)] bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] font-semibold'
+                      : 'border-[var(--accent-amber-border)] bg-[var(--accent-amber-soft)] text-[var(--accent-amber)]'
                   }`}
                 >
                   Restore from date
@@ -1702,7 +1837,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={restoreVisibleTrackingCutoffs}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-zinc-700 bg-zinc-900/90 hover:bg-zinc-800 text-[11px] text-zinc-200 transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md glass-control hover:border-[var(--border-strong)] text-[11px] text-[var(--ink-primary)] transition-colors cursor-pointer"
                 >
                   <RotateCcw className="w-3 h-3" />
                   From beginning
@@ -1710,7 +1845,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsSettingsOpen(true)}
-                  className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                  className="px-2 py-0.5 rounded-md glass-control hover:border-[var(--border-strong)] text-[11px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                 >
                   Settings
                 </button>
@@ -1718,7 +1853,7 @@ export default function App() {
             </div>
 
             {isBannerRestoreOpen && (
-              <div className="pt-2 border-t border-amber-500/20 flex flex-wrap items-center gap-2">
+              <div className="pt-2 border-t border-[var(--border-hairline)] flex flex-wrap items-center gap-2">
                 {activeTrackingCutoffs.length > 1 && (
                   <div className="flex items-center gap-1">
                     <button
@@ -1726,8 +1861,8 @@ export default function App() {
                       onClick={() => setBannerRestoreTarget('all')}
                       className={`px-2 py-1 rounded-md text-[10.5px] border transition-colors cursor-pointer ${
                         effectiveBannerRestoreTarget === 'all'
-                          ? 'bg-amber-500/20 border-amber-500/45 text-amber-100'
-                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                          ? 'bg-[var(--accent-amber-soft)] border-[var(--accent-amber-border)] text-[var(--accent-amber)] font-semibold'
+                          : 'glass-control text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]'
                       }`}
                     >
                       All ({activeTrackingCutoffs.length})
@@ -1742,8 +1877,8 @@ export default function App() {
                         }}
                         className={`px-2 py-1 rounded-md text-[10.5px] border transition-colors cursor-pointer ${
                           effectiveBannerRestoreTarget === c.key
-                            ? 'bg-amber-500/20 border-amber-500/45 text-amber-100'
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                            ? 'bg-[var(--accent-amber-soft)] border-[var(--accent-amber-border)] text-[var(--accent-amber)] font-semibold'
+                            : 'glass-control text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]'
                         }`}
                       >
                         {c.label}
@@ -1758,7 +1893,7 @@ export default function App() {
                   value={bannerRestoreDate}
                   onChange={(e) => setBannerRestoreDate(e.target.value)}
                   aria-label="Restore expenses starting from date"
-                  className="h-7 px-2 rounded-md bg-zinc-950 border border-amber-500/35 focus:border-amber-400 focus:outline-none text-[11px] font-mono text-zinc-100 [color-scheme:dark]"
+                  className="glass-input h-7 px-2 rounded-md text-[11px] font-mono"
                 />
 
                 <div className="flex flex-wrap items-center gap-1">
@@ -1774,7 +1909,7 @@ export default function App() {
                       key={preset.id}
                       type="button"
                       onClick={() => setBannerRestoreDate(getQuickRestoreLocalInput(preset.id))}
-                      className="px-2 py-1 rounded-md text-[10px] bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+                      className="px-2 py-1 rounded-md text-[10px] glass-control hover:border-[var(--border-strong)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                     >
                       {preset.label}
                     </button>
@@ -1786,14 +1921,14 @@ export default function App() {
                     type="button"
                     disabled={!bannerRestoreDate}
                     onClick={applyBannerRestoreFromDate}
-                    className="h-7 px-2.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-[11px] transition-colors disabled:opacity-40 cursor-pointer"
+                    className="btn-primary-brand h-7 px-2.5 rounded-md font-semibold text-[11px] transition-colors disabled:opacity-40 cursor-pointer"
                   >
                     Apply
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsBannerRestoreOpen(false)}
-                    className="h-7 px-2 rounded-md border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                    className="h-7 px-2 rounded-md glass-control hover:border-[var(--border-strong)] text-[11px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -1806,23 +1941,23 @@ export default function App() {
         {/* 4 KPI Cards */}
         {!hiddenSections.has('kpis') && (
         <section
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-burn-fade-up"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch animate-burn-fade-up"
           style={{ order: getSectionOrderIndex('kpis') }}
         >
-          {/* Card 1: Estimated API Spend, Plan Comparison & Monthly Projection */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between relative overflow-hidden transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+          {/* Card 1: Estimated API Spend & Plan Comparison */}
+          <div className="glass-panel glass-interactive rounded-2xl p-5 flex flex-col">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-tertiary)]">
                 API Equivalent Spend
               </span>
-              <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
+              <div className="p-2 rounded-xl bg-[var(--accent-teal-soft)] border border-[var(--accent-teal-border)] text-[var(--accent-teal)] shrink-0">
                 <DollarSign className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="my-3">
+            <div className="mb-4">
               <div className="flex flex-wrap items-baseline gap-2">
-                <div className="text-3xl font-bold font-mono tracking-tight text-white">
+                <div className="text-3xl font-bold font-mono tabular tracking-tight text-[var(--ink-primary)]">
                   {formatMoney(analytics.totalCostUSD, currency)}
                 </div>
                 {analytics.deltas && (
@@ -1831,19 +1966,17 @@ export default function App() {
               </div>
               {(toolFilter === 'all' ||
                 (analytics.deletedCostUSD > 0 && userSettings.includeDeletedInTotals)) && (
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400">
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-[var(--ink-tertiary)]">
                   {toolFilter === 'all' && (
                     <>
-                      <span className="text-cyan-400 font-mono">
-                        AGY: {formatMoney(analytics.antigravityCost, currency)}
+                      <span className="text-[var(--tool-antigravity)] font-mono tabular font-medium whitespace-nowrap">
+                        AGY {formatMoney(analytics.antigravityCost, currency)}
                       </span>
-                      <span>•</span>
-                      <span className="text-fuchsia-400 font-mono">
-                        Claude: {formatMoney(analytics.claudeCost, currency)}
+                      <span className="text-[var(--tool-claude)] font-mono tabular font-medium whitespace-nowrap">
+                        Claude {formatMoney(analytics.claudeCost, currency)}
                       </span>
-                      <span>•</span>
-                      <span className="text-amber-400 font-mono">
-                        Codex: {formatMoney(analytics.codexCost, currency)}
+                      <span className="text-[var(--tool-codex)] font-mono tabular font-medium whitespace-nowrap">
+                        Codex {formatMoney(analytics.codexCost, currency)}
                       </span>
                     </>
                   )}
@@ -1852,7 +1985,7 @@ export default function App() {
                       type="button"
                       onClick={() => setIsDeletedModalOpen(true)}
                       title="View deleted chats included in total API spend"
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 hover:bg-rose-500/20 font-mono text-[10px] transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--accent-rose-soft)] text-[var(--accent-rose)] border border-[var(--accent-rose-border)] hover:brightness-110 font-mono text-[10px] transition-all cursor-pointer"
                     >
                       <Trash2 className="w-2.5 h-2.5" />
                       incl. {formatMoney(analytics.deletedCostUSD, currency)} deleted
@@ -1862,28 +1995,31 @@ export default function App() {
               )}
             </div>
 
-            <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
+            <div className="mt-auto space-y-1.5 pt-3 border-t border-[var(--border-hairline)] min-h-[68px] flex flex-col justify-center">
               <div className="flex items-center justify-between text-xs gap-2">
                 <button
                   type="button"
                   onClick={() => setIsSettingsOpen(true)}
                   title={`Includes ${taxLabel} · Customize your monthly subscription plans & dashboard layout`}
-                  className="text-zinc-400 hover:text-zinc-200 underline decoration-dotted underline-offset-2 transition-colors cursor-pointer text-left truncate"
+                  className="text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] underline decoration-dotted underline-offset-2 transition-colors cursor-pointer text-left truncate"
                 >
                   vs {formatSubscriptionMoney(analytics.referenceSubUSD, currency)}/mo Plan
                 </button>
-                <span className="font-mono font-semibold text-emerald-400 shrink-0">
+                <span className="font-mono tabular font-semibold text-[var(--accent-teal)] shrink-0">
                   {analytics.referenceSubUSD > 0 ? `${subMultiplier}x value` : 'Pay-as-you-go'}
                 </span>
               </div>
-              <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+              <div className="h-1.5 w-full rounded-full bg-[var(--track-bg)] overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-500"
-                  style={{ width: `${Math.max(4, subPercentage)}%` }}
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.max(4, subPercentage)}%`,
+                    background: 'linear-gradient(90deg, var(--accent-teal) 0%, var(--tool-antigravity) 100%)',
+                  }}
                 />
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-1 pt-0.5 text-[10.5px] font-mono">
-                <span className="text-zinc-500">
+              <div className="flex flex-wrap items-center justify-end gap-1 pt-0.5 text-[10.5px] font-mono tabular">
+                <span className="text-[var(--ink-tertiary)]">
                   Today {formatMoney(analytics.projection.todayUSD, currency)}
                 </span>
               </div>
@@ -1891,101 +2027,104 @@ export default function App() {
           </div>
 
           {/* Card 2: Total Tokens */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+          <div className="glass-panel glass-interactive rounded-2xl p-5 flex flex-col">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-tertiary)]">
                 Total Tokens
               </span>
-              <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+              <div className="p-2 rounded-xl bg-[var(--accent-sky-soft)] border border-[var(--accent-sky-border)] text-[var(--tool-antigravity)] shrink-0">
                 <Cpu className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="my-3">
+            <div className="mb-4">
               <div className="flex flex-wrap items-baseline gap-2">
-                <div className="text-3xl font-bold font-mono tracking-tight text-white">
+                <div className="text-3xl font-bold font-mono tabular tracking-tight text-[var(--ink-primary)]">
                   {formatTokens(analytics.totalTokens)}
                 </div>
                 {analytics.deltas && (
                   <DeltaPill deltaPct={analytics.deltas.tokensPct} label={analytics.deltas.label} />
                 )}
               </div>
-              <div className="mt-1 text-xs text-zinc-400 font-mono">
+              <div className="mt-1.5 text-xs text-[var(--ink-tertiary)] font-mono tabular">
                 Across {analytics.totalTurns.toLocaleString()} LLM turns
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800/80 text-[11px] font-mono">
+            <div className="mt-auto grid grid-cols-3 gap-2 pt-3 border-t border-[var(--border-hairline)] min-h-[68px] items-center text-[11px] font-mono tabular">
               <div>
-                <span className="text-zinc-500 block">Input</span>
-                <span className="text-zinc-200 font-medium">{formatTokens(analytics.totalInputTokens)}</span>
+                <span className="text-[var(--ink-tertiary)] block">Input</span>
+                <span className="text-[var(--ink-primary)] font-medium">{formatTokens(analytics.totalInputTokens)}</span>
               </div>
               <div>
-                <span className="text-zinc-500 block">Output</span>
-                <span className="text-zinc-200 font-medium">{formatTokens(analytics.totalOutputTokens)}</span>
+                <span className="text-[var(--ink-tertiary)] block">Output</span>
+                <span className="text-[var(--ink-primary)] font-medium">{formatTokens(analytics.totalOutputTokens)}</span>
               </div>
               <div>
-                <span className="text-zinc-500 block">Cached</span>
-                <span className="text-cyan-400 font-medium">{formatTokens(analytics.totalCacheReadTokens)}</span>
+                <span className="text-[var(--ink-tertiary)] block">Cached</span>
+                <span className="text-[var(--tool-antigravity)] font-medium">{formatTokens(analytics.totalCacheReadTokens)}</span>
               </div>
             </div>
           </div>
 
           {/* Card 3: Prompt Cache Savings */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+          <div className="glass-panel glass-interactive rounded-2xl p-5 flex flex-col">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-tertiary)]">
                 Cache Savings
               </span>
-              <div className="p-2 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400">
+              <div className="p-2 rounded-xl bg-[var(--accent-violet-soft)] border border-[var(--accent-violet-border)] text-[var(--tool-claude)] shrink-0">
                 <Sparkles className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="my-3">
+            <div className="mb-4">
               <div className="flex flex-wrap items-baseline gap-2">
-                <div className="text-3xl font-bold font-mono tracking-tight text-fuchsia-400">
+                <div className="text-3xl font-bold font-mono tabular tracking-tight text-[var(--tool-claude)]">
                   {formatMoney(analytics.totalCacheSavingsUSD, currency)}
                 </div>
                 {analytics.deltas && (
                   <DeltaPill deltaPct={analytics.deltas.savingsPct} label={analytics.deltas.label} higherIsBetter />
                 )}
               </div>
-              <div className="mt-1 text-xs text-zinc-400">
+              <div className="mt-1.5 text-xs text-[var(--ink-tertiary)]">
                 Saved via context caching
               </div>
             </div>
 
-            <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
+            <div className="mt-auto space-y-1.5 pt-3 border-t border-[var(--border-hairline)] min-h-[68px] flex flex-col justify-center">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Cache Hit Ratio</span>
-                <span className="font-mono font-semibold text-fuchsia-300">
+                <span className="text-[var(--ink-secondary)]">Cache Hit Ratio</span>
+                <span className="font-mono tabular font-semibold text-[var(--tool-claude)]">
                   {analytics.cacheHitRate.toFixed(1)}%
                 </span>
               </div>
-              <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+              <div className="h-1.5 w-full rounded-full bg-[var(--track-bg)] overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-fuchsia-500 to-purple-400 transition-all duration-500"
-                  style={{ width: `${Math.min(100, Math.max(3, analytics.cacheHitRate))}%` }}
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, Math.max(3, analytics.cacheHitRate))}%`,
+                    background: 'linear-gradient(90deg, var(--tool-claude) 0%, var(--tool-antigravity) 100%)',
+                  }}
                 />
               </div>
             </div>
           </div>
 
           {/* Card 4: Active Sessions & Workspaces */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col justify-between transition-colors duration-200 hover:border-zinc-700/80 hover:bg-zinc-900/75">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
-                Sessions & Projects
+          <div className="glass-panel glass-interactive rounded-2xl p-5 flex flex-col">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-tertiary)]">
+                Sessions &amp; Projects
               </span>
-              <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              <div className="p-2 rounded-xl bg-[var(--accent-amber-soft)] border border-[var(--accent-amber-border)] text-[var(--accent-amber)] shrink-0">
                 <Layers className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="my-3">
+            <div className="mb-4">
               <div className="flex flex-wrap items-baseline gap-2">
-                <span className="text-3xl font-bold font-mono tracking-tight text-white">
+                <span className="text-3xl font-bold font-mono tabular tracking-tight text-[var(--ink-primary)]">
                   {analytics.totalSessionsCount}
                 </span>
                 {analytics.deletedSessionsCount > 0 && (
@@ -1993,7 +2132,7 @@ export default function App() {
                     type="button"
                     onClick={() => setIsDeletedModalOpen(true)}
                     title="View deleted chats archive"
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 hover:bg-rose-500/20 font-mono text-[10px] transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--accent-rose-soft)] text-[var(--accent-rose)] border border-[var(--accent-rose-border)] hover:brightness-110 font-mono text-[10px] transition-all cursor-pointer"
                   >
                     <Trash2 className="w-2.5 h-2.5" />
                     +{analytics.deletedSessionsCount} deleted
@@ -2003,14 +2142,14 @@ export default function App() {
                   <DeltaPill deltaPct={analytics.deltas.turnsPct} label={`${analytics.deltas.label} turns`} />
                 )}
               </div>
-              <div className="mt-1 text-xs text-zinc-400">
+              <div className="mt-1.5 text-xs text-[var(--ink-tertiary)]">
                 Active in {analytics.workspacesCount} distinct workspaces
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-xs font-mono">
-              <span className="text-zinc-400">Avg Cost / Session</span>
-              <span className="text-amber-300 font-semibold">
+            <div className="mt-auto flex items-center justify-between pt-3 border-t border-[var(--border-hairline)] min-h-[68px] text-xs font-mono tabular">
+              <span className="text-[var(--ink-secondary)]">Avg Cost / Session</span>
+              <span className="text-[var(--accent-flame)] font-semibold">
                 {formatMoney(
                   analytics.totalAllSessionsCount > 0
                     ? analytics.totalCostUSD / analytics.totalAllSessionsCount
@@ -2026,18 +2165,18 @@ export default function App() {
         {/* Charts Row */}
         {!hiddenSections.has('charts') && (
         <section
-          className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-burn-fade-up"
+          className="grid grid-cols-1 lg:grid-cols-3 gap-5 animate-burn-fade-up"
           style={{ order: getSectionOrderIndex('charts'), animationDelay: '50ms' }}
         >
           {/* Daily Burn Rate Timeline (2 cols) */}
-          <div className="lg:col-span-2 rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col transition-colors duration-200 hover:border-zinc-700/80">
+          <div className="lg:col-span-2 glass-panel rounded-2xl p-5 flex flex-col">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-emerald-400" />
+                <h2 className="text-sm font-semibold text-[var(--ink-primary)] flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-[var(--accent-teal)]" />
                   Daily API Burn Rate ({currency})
                 </h2>
-                <p className="text-xs text-zinc-400 mt-0.5">
+                <p className="text-xs text-[var(--ink-tertiary)] mt-0.5">
                   {toolFilter === 'all'
                     ? 'Independent equivalent API spend curves across Antigravity, Claude Code & Codex CLI'
                     : `Equivalent API spend over time for ${
@@ -2051,18 +2190,18 @@ export default function App() {
               </div>
               <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
                 {(toolFilter === 'all' || toolFilter === 'antigravity') && (
-                  <span className="flex items-center gap-1.5 text-cyan-300">
-                    <span className="h-2 w-2 rounded-full bg-cyan-400" /> Antigravity
+                  <span className="flex items-center gap-1.5 text-[var(--tool-antigravity)] font-medium">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--tool-antigravity)' }} /> Antigravity
                   </span>
                 )}
                 {(toolFilter === 'all' || toolFilter === 'claude') && (
-                  <span className="flex items-center gap-1.5 text-fuchsia-300">
-                    <span className="h-2 w-2 rounded-full bg-fuchsia-400" /> Claude Code
+                  <span className="flex items-center gap-1.5 text-[var(--tool-claude)] font-medium">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--tool-claude)' }} /> Claude Code
                   </span>
                 )}
                 {(toolFilter === 'all' || toolFilter === 'codex') && (
-                  <span className="flex items-center gap-1.5 text-amber-300">
-                    <span className="h-2 w-2 rounded-full bg-amber-400" /> Codex CLI
+                  <span className="flex items-center gap-1.5 text-[var(--tool-codex)] font-medium">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--tool-codex)' }} /> Codex CLI
                   </span>
                 )}
               </div>
@@ -2070,7 +2209,7 @@ export default function App() {
 
             <div className="h-64 w-full">
               {analytics.timelineData.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-xs text-zinc-500 font-mono">
+                <div className="h-full flex items-center justify-center text-xs text-[var(--ink-tertiary)] font-mono">
                   No activity recorded for this filter window.
                 </div>
               ) : (
@@ -2078,43 +2217,44 @@ export default function App() {
                   <AreaChart data={analytics.timelineData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="colorAgy" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.32} />
-                        <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.0} />
+                        <stop offset="5%" stopColor="var(--tool-antigravity)" stopOpacity={0.32} />
+                        <stop offset="95%" stopColor="var(--tool-antigravity)" stopOpacity={0.0} />
                       </linearGradient>
                       <linearGradient id="colorClaude" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#d946ef" stopOpacity={0.32} />
-                        <stop offset="95%" stopColor="#d946ef" stopOpacity={0.0} />
+                        <stop offset="5%" stopColor="var(--tool-claude)" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="var(--tool-claude)" stopOpacity={0.0} />
                       </linearGradient>
                       <linearGradient id="colorCodex" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.32} />
-                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                        <stop offset="5%" stopColor="var(--tool-codex)" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="var(--tool-codex)" stopOpacity={0.0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
                     <XAxis
                       dataKey="date"
-                      stroke="#71717a"
-                      fontSize={11}
+                      stroke="var(--ink-tertiary)"
+                      tick={{ fill: 'var(--ink-tertiary)', fontSize: 11 }}
                       tickLine={false}
                       axisLine={false}
                     />
                     <YAxis
-                      stroke="#71717a"
-                      fontSize={11}
+                      stroke="var(--ink-tertiary)"
+                      tick={{ fill: 'var(--ink-tertiary)', fontSize: 11 }}
                       tickLine={false}
                       axisLine={false}
                       tickFormatter={(v) => `${currencySymbol}${(Number(v) * rateMultiplier).toFixed(0)}`}
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: '#09090b',
-                        borderColor: '#27272a',
-                        borderRadius: '0.5rem',
+                        backgroundColor: 'var(--bg-tooltip)',
+                        borderColor: 'var(--border-strong)',
+                        borderRadius: '0.75rem',
                         fontSize: '12px',
-                        fontFamily: 'JetBrains Mono, monospace',
-                        color: '#f4f4f5',
+                        fontFamily: '"JetBrains Mono", monospace',
+                        color: 'var(--ink-primary)',
+                        boxShadow: '0 12px 28px -8px var(--header-shadow)',
                       }}
-                      labelStyle={{ color: '#e4e4e7', fontWeight: 600, marginBottom: '2px' }}
+                      labelStyle={{ color: 'var(--ink-primary)', fontWeight: 600, marginBottom: '2px' }}
                       formatter={(val: number, name: string) => [
                         formatMoney(Number(val), currency),
                         name === 'antigravityUSD'
@@ -2128,7 +2268,7 @@ export default function App() {
                       <Area
                         type="monotone"
                         dataKey="antigravityUSD"
-                        stroke="#06b6d4"
+                        stroke="var(--tool-antigravity)"
                         strokeWidth={2}
                         fillOpacity={1}
                         fill="url(#colorAgy)"
@@ -2138,7 +2278,7 @@ export default function App() {
                       <Area
                         type="monotone"
                         dataKey="claudeUSD"
-                        stroke="#d946ef"
+                        stroke="var(--tool-claude)"
                         strokeWidth={2}
                         fillOpacity={1}
                         fill="url(#colorClaude)"
@@ -2148,7 +2288,7 @@ export default function App() {
                       <Area
                         type="monotone"
                         dataKey="codexUSD"
-                        stroke="#f59e0b"
+                        stroke="var(--tool-codex)"
                         strokeWidth={2}
                         fillOpacity={1}
                         fill="url(#colorCodex)"
@@ -2161,20 +2301,20 @@ export default function App() {
           </div>
 
           {/* Model Spend Breakdown (1 col) */}
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-5 flex flex-col transition-colors duration-200 hover:border-zinc-700/80">
+          <div className="glass-panel rounded-2xl p-5 flex flex-col">
             <div className="mb-4">
-              <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <Database className="w-4 h-4 text-cyan-400" />
+              <h2 className="text-sm font-semibold text-[var(--ink-primary)] flex items-center gap-2">
+                <Database className="w-4 h-4 text-[var(--tool-antigravity)]" />
                 Cost by Model ({currency})
               </h2>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Distribution across Gemini, Claude & Codex models
+              <p className="text-xs text-[var(--ink-tertiary)] mt-0.5">
+                Distribution across Gemini, Claude &amp; Codex models
               </p>
             </div>
 
             <div className="h-64 w-full overflow-y-auto overflow-x-hidden pr-1">
               {analytics.modelData.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-xs text-zinc-500 font-mono">
+                <div className="h-full flex items-center justify-center text-xs text-[var(--ink-tertiary)] font-mono">
                   No model usage data available.
                 </div>
               ) : (
@@ -2185,11 +2325,11 @@ export default function App() {
                       layout="vertical"
                       margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
                     >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
                       <XAxis
                         type="number"
-                        stroke="#71717a"
-                        fontSize={11}
+                        stroke="var(--ink-tertiary)"
+                        tick={{ fill: 'var(--ink-tertiary)', fontSize: 11 }}
                         tickLine={false}
                         axisLine={false}
                         tickFormatter={(v) => `${currencySymbol}${(Number(v) * rateMultiplier).toFixed(0)}`}
@@ -2198,24 +2338,25 @@ export default function App() {
                         type="category"
                         dataKey="model"
                         interval={0}
-                        stroke="#a1a1aa"
-                        fontSize={11}
+                        stroke="var(--ink-secondary)"
+                        tick={{ fill: 'var(--ink-secondary)', fontSize: 11 }}
                         width={115}
                         tickLine={false}
                         axisLine={false}
                       />
                       <Tooltip
-                        cursor={{ fill: '#18181b' }}
+                        cursor={{ fill: 'var(--chart-cursor)' }}
                         contentStyle={{
-                          backgroundColor: '#09090b',
-                          borderColor: '#27272a',
-                          borderRadius: '0.5rem',
+                          backgroundColor: 'var(--bg-tooltip)',
+                          borderColor: 'var(--border-strong)',
+                          borderRadius: '0.75rem',
                           fontSize: '12px',
-                          fontFamily: 'JetBrains Mono, monospace',
-                          color: '#f4f4f5',
+                          fontFamily: '"JetBrains Mono", monospace',
+                          color: 'var(--ink-primary)',
+                          boxShadow: '0 12px 28px -8px var(--header-shadow)',
                         }}
-                        labelStyle={{ color: '#f4f4f5', fontWeight: 600, marginBottom: '2px' }}
-                        itemStyle={{ color: '#34d399' }}
+                        labelStyle={{ color: 'var(--ink-primary)', fontWeight: 600, marginBottom: '2px' }}
+                        itemStyle={{ color: 'var(--accent-teal)' }}
                         formatter={(val: number) => [formatMoney(Number(val), currency), 'API Spend']}
                       />
                       <Bar dataKey="costUSD" radius={[0, 6, 6, 0]} barSize={20} minPointSize={3}>
@@ -2235,7 +2376,7 @@ export default function App() {
         {/* Central Widget: Total Token Usage per Model */}
         {!hiddenSections.has('modelUsage') && (
         <section
-          className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 overflow-hidden animate-burn-fade-up transition-colors duration-200 hover:border-zinc-700/80"
+          className="glass-panel rounded-2xl overflow-hidden animate-burn-fade-up"
           style={{ order: getSectionOrderIndex('modelUsage'), animationDelay: '90ms' }}
         >
           {canCollapseModels ? (
@@ -2244,8 +2385,8 @@ export default function App() {
               onClick={toggleModelUsageExpanded}
               aria-expanded={isModelUsageExpanded}
               title={isModelUsageExpanded ? 'Collapse extra models' : `Show all ${sortedModels.length} models`}
-              className={`w-full px-5 py-4 flex flex-wrap items-center justify-between gap-3 text-left hover:bg-zinc-800/30 transition-colors cursor-pointer select-none group ${
-                isModelUsageExpanded ? 'bg-zinc-900/40' : ''
+              className={`w-full px-5 py-4 flex flex-wrap items-center justify-between gap-3 text-left hover:bg-[var(--table-hover)] transition-colors cursor-pointer select-none group ${
+                isModelUsageExpanded ? 'bg-[var(--bg-elevated)]' : ''
               }`}
             >
               {modelUsageHeaderContent}
@@ -2256,9 +2397,9 @@ export default function App() {
             </div>
           )}
 
-          <div className="px-5 pb-5 pt-4 border-t border-zinc-800/70">
+          <div className="px-5 pb-5 pt-4 border-t border-[var(--border-hairline)]">
             {sortedModels.length === 0 ? (
-              <div className="py-8 text-center text-xs text-zinc-500 font-mono">
+              <div className="py-8 text-center text-xs text-[var(--ink-tertiary)] font-mono">
                 No model token data available.
               </div>
             ) : (
@@ -2281,12 +2422,12 @@ export default function App() {
                         <button
                           type="button"
                           onClick={toggleModelUsageExpanded}
-                          className="mt-3 w-full py-2 px-3 rounded-lg border border-dashed border-zinc-800 bg-zinc-950/40 hover:bg-zinc-800/40 hover:border-zinc-700 text-xs font-mono text-zinc-400 hover:text-zinc-200 flex items-center justify-center gap-2 transition-colors cursor-pointer select-none"
+                          className="mt-3 w-full py-2 px-3 rounded-xl border border-dashed border-[var(--border-hairline)] bg-[var(--bg-subcard)] hover:bg-[var(--table-hover)] hover:border-[var(--border-strong)] text-xs font-mono text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center justify-center gap-2 transition-colors cursor-pointer select-none"
                         >
                           <span>
                             +{extraModels.length} more {extraModels.length === 1 ? 'model' : 'models'} collapsed · Click to view all {sortedModels.length}
                           </span>
-                          <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />
+                          <ChevronRight className="w-3.5 h-3.5 text-[var(--ink-tertiary)]" />
                         </button>
                       </div>
                     </div>
@@ -2328,28 +2469,28 @@ export default function App() {
         {/* Live Sessions / Workspaces Table */}
         {!hiddenSections.has('sessions') && (
         <section
-          className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 animate-burn-fade-up"
+          className="glass-panel-overflow rounded-2xl animate-burn-fade-up"
           style={{ order: getSectionOrderIndex('sessions'), animationDelay: '130ms' }}
         >
-          <div className="relative z-20 p-4 sm:p-5 border-b border-zinc-800/80 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
+          <div className="relative z-20 p-4 sm:p-5 border-b border-[var(--border-hairline)] rounded-t-2xl flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <Activity className="w-4 h-4 text-emerald-400" />
-                Live Sessions & Workspaces
+              <h2 className="text-sm font-semibold text-[var(--ink-primary)] flex items-center gap-2">
+                <Activity className="w-4 h-4 text-[var(--accent-teal)]" />
+                Live Sessions &amp; Workspaces
               </h2>
-              <div className="text-xs text-zinc-400 mt-0.5 flex flex-wrap items-center gap-1.5">
+              <div className="text-xs text-[var(--ink-tertiary)] mt-0.5 flex flex-wrap items-center gap-1.5">
                 <span>
                   Real-time telemetry grouped by workspace ({tableData.workspaces.length} workspaces · {tableData.chatsCount} chats)
                 </span>
                 {hasTableFilters && (
                   <>
-                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
+                    <span className="px-1.5 py-0.5 rounded bg-[var(--accent-teal-soft)] text-[var(--accent-teal)] border border-[var(--accent-teal-border)] text-[10px] font-mono">
                       filtered
                     </span>
                     <button
                       type="button"
                       onClick={resetTableFilters}
-                      className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 underline underline-offset-2 cursor-pointer"
+                      className="text-[10px] font-mono text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] underline underline-offset-2 cursor-pointer"
                     >
                       Reset filters
                     </button>
@@ -2361,20 +2502,20 @@ export default function App() {
             {/* Search, Model Filter, Sort & Export */}
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <div className="relative flex-1 min-w-[180px] sm:w-56">
-                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-3.5 h-3.5 text-[var(--ink-tertiary)] absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Filter workspace, chat, model..."
-                  className="w-full h-8 pl-8 pr-7 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono transition-colors"
+                  className="glass-input w-full h-8 pl-8 pr-7 rounded-lg text-xs font-mono transition-colors"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
                     aria-label="Clear search"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 cursor-pointer"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -2397,7 +2538,7 @@ export default function App() {
                 menuAlign="left"
               />
 
-              <div className="inline-flex items-stretch h-8 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus-within:border-emerald-500/50 transition-colors shrink-0">
+              <div className="inline-flex items-stretch h-8 rounded-lg glass-control hover:border-[var(--border-strong)] focus-within:border-[var(--accent-teal)] transition-colors shrink-0">
                 <FilterDropdown
                   value={sortBy}
                   options={SORT_OPTIONS}
@@ -2416,7 +2557,7 @@ export default function App() {
                   onClick={() => setSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
                   aria-label={`Sort direction ${sortDir === 'desc' ? 'descending' : 'ascending'}`}
                   title={sortDir === 'desc' ? 'Descending (click for ascending)' : 'Ascending (click for descending)'}
-                  className="h-full w-8 border-l border-zinc-800 hover:bg-zinc-800/70 rounded-r-lg text-emerald-400 hover:text-emerald-300 flex items-center justify-center transition-colors cursor-pointer select-none"
+                  className="h-full w-8 border-l border-[var(--border-hairline)] hover:bg-[var(--table-hover)] rounded-r-lg text-[var(--accent-teal)] flex items-center justify-center transition-colors cursor-pointer select-none"
                 >
                   {sortDir === 'asc' ? (
                     <ArrowUp className="w-3.5 h-3.5" />
@@ -2433,27 +2574,23 @@ export default function App() {
                   title="Inspect deleted chats and their preserved API cost"
                   className={`h-8 px-2.5 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer select-none ${
                     analytics.deletedSessionsCount > 0
-                      ? 'bg-rose-500/10 border-rose-500/30 text-rose-200 hover:bg-rose-500/20 hover:border-rose-400/40'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/80 hover:text-zinc-200'
+                      ? 'bg-[var(--accent-rose-soft)] border-[var(--accent-rose-border)] text-[var(--accent-rose)] hover:brightness-110'
+                      : 'glass-control text-[var(--ink-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--ink-primary)]'
                   }`}
                 >
-                  <Trash2
-                    className={`w-3.5 h-3.5 ${
-                      analytics.deletedSessionsCount > 0 ? 'text-rose-400' : 'text-zinc-500'
-                    }`}
-                  />
+                  <Trash2 className="w-3.5 h-3.5" />
                   <span>Deleted</span>
                   <span
-                    className={`px-1 py-0.2 rounded text-[10px] ${
+                    className={`px-1 rounded text-[10px] tabular ${
                       analytics.deletedSessionsCount > 0
-                        ? 'bg-rose-500/20 text-rose-200'
-                        : 'bg-zinc-800/80 text-zinc-400'
+                        ? 'bg-[var(--accent-rose-soft)] text-[var(--accent-rose)] font-semibold'
+                        : 'bg-[var(--track-bg)] text-[var(--ink-secondary)]'
                     }`}
                   >
                     {analytics.deletedSessionsCount}
                   </span>
                   {analytics.deletedCostUSD > 0 && (
-                    <span className="text-[10px] text-emerald-300 font-semibold hidden sm:inline">
+                    <span className="text-[10px] text-[var(--accent-teal)] font-semibold hidden sm:inline tabular">
                       {formatMoney(analytics.deletedCostUSD, currency)}
                     </span>
                   )}
@@ -2465,12 +2602,12 @@ export default function App() {
                     disabled={tableData.workspaces.length === 0}
                     onClick={() => exportReport(fmt)}
                     title={`Export ${hasTableFilters ? 'filtered & sorted' : 'sorted'} report (${tableData.workspaces.length} workspaces, ${currency}) as ${fmt.toUpperCase()}`}
-                    className="h-8 px-2.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/80 text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="h-8 px-2.5 rounded-lg glass-control hover:border-[var(--border-strong)] hover:bg-[var(--table-hover)] text-xs font-mono text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center gap-1.5 transition-colors cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    <Download className="w-3.5 h-3.5 text-emerald-400" />
+                    <Download className="w-3.5 h-3.5 text-[var(--accent-teal)]" />
                     <span>{fmt.toUpperCase()}</span>
                     {hasTableFilters && (
-                      <span className="text-[10px] text-emerald-400">
+                      <span className="text-[10px] text-[var(--accent-teal)] tabular">
                         ({tableData.workspaces.length})
                       </span>
                     )}
@@ -2480,10 +2617,10 @@ export default function App() {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-b-xl">
+          <div className="overflow-x-auto rounded-b-2xl">
             <table className="w-full text-left border-collapse min-w-[1020px] xl:min-w-0">
               <thead>
-                <tr className="border-b border-zinc-800/80 text-[10px] xl:text-[11px] font-mono uppercase text-zinc-400 bg-zinc-950/40">
+                <tr className="border-b border-[var(--border-hairline)] text-[10px] xl:text-[11px] font-mono uppercase text-[var(--ink-tertiary)] bg-[var(--table-head)]">
                   <th className="py-2.5 px-2 w-7 sm:w-8 text-center"></th>
                   {renderSortTh('Tool', 'tool', 'left', 'py-2.5 px-2 xl:px-3')}
                   {renderSortTh('Workspace Folder', 'workspaceName', 'left', 'py-2.5 px-2 xl:px-3')}
@@ -2501,36 +2638,36 @@ export default function App() {
               {tableData.workspaces.slice(0, 60).map((ws) => {
                 const isExpanded = expandedWorkspaces.has(ws.workspaceKey);
 
-                  return (
+                return (
                   <tbody
                     key={ws.workspaceKey}
-                    className="text-xs border-b border-zinc-800/60 last:border-b-0"
+                    className="text-xs border-b border-[var(--border-hairline)] last:border-b-0"
                   >
                     <tr
                       onClick={() => toggleSetKey(setExpandedWorkspaces, ws.workspaceKey)}
-                      className={`hover:bg-zinc-800/30 transition-colors group cursor-pointer ${
-                        isExpanded ? 'bg-zinc-900/40' : ''
+                      className={`hover:bg-[var(--table-hover)] transition-colors group cursor-pointer ${
+                        isExpanded ? 'bg-[var(--table-hover)]' : ''
                       }`}
                     >
-                      <td className="py-2 px-2 text-center">
+                      <td className="py-2.5 px-2 text-center">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleSetKey(setExpandedWorkspaces, ws.workspaceKey);
                           }}
-                          className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition select-none"
+                          className="p-1 rounded hover:bg-[var(--table-hover)] text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] transition select-none"
                           title={isExpanded ? 'Collapse workspace chats' : 'Expand workspace chats'}
                         >
                           <ChevronRight
                             className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
-                              isExpanded ? 'rotate-90 text-emerald-400' : ''
+                              isExpanded ? 'rotate-90 text-[var(--accent-teal)]' : ''
                             }`}
                           />
                         </button>
                       </td>
 
-                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap">
+                      <td className="py-2.5 px-2 xl:px-3 whitespace-nowrap">
                         <div className="flex flex-wrap items-center gap-1">
                           {ws.sources.map((src) => (
                             <ToolBadge key={src} source={src} compact={ws.sources.length > 1} />
@@ -2538,9 +2675,9 @@ export default function App() {
                         </div>
                       </td>
 
-                      <td className="py-2 px-2 xl:px-3">
-                        <div className="flex items-center gap-1.5 font-medium text-zinc-200">
-                          <FolderGit2 className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                      <td className="py-2.5 px-2 xl:px-3">
+                        <div className="flex items-center gap-1.5 font-medium text-[var(--ink-primary)]">
+                          <FolderGit2 className="w-3.5 h-3.5 text-[var(--ink-tertiary)] shrink-0" />
                           <span
                             className="truncate max-w-[120px] sm:max-w-[150px] lg:max-w-[180px] xl:max-w-[220px]"
                             title={ws.workspace}
@@ -2548,22 +2685,22 @@ export default function App() {
                             {ws.workspaceName}
                           </span>
                         </div>
-                        <div className="text-[10.5px] text-zinc-400 font-mono flex items-center gap-1.5 mt-0.5">
+                        <div className="text-[10.5px] text-[var(--ink-tertiary)] font-mono flex items-center gap-1.5 mt-0.5">
                           <span>
                             {ws.chats.length} {ws.chats.length === 1 ? 'chat' : 'chats'}
                           </span>
-                          <span className="text-zinc-600 hidden xl:inline truncate max-w-[160px]" title={ws.workspace}>
+                          <span className="opacity-70 hidden xl:inline truncate max-w-[160px]" title={ws.workspace}>
                             · {ws.workspace}
                           </span>
                         </div>
                       </td>
 
-                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap font-mono text-[11px] xl:text-xs text-zinc-300">
+                      <td className="py-2.5 px-2 xl:px-3 whitespace-nowrap font-mono text-[11px] xl:text-xs text-[var(--ink-secondary)]">
                         <div className="inline-flex items-center gap-1.5">
                           <span>{ws.primaryModelLabel}</span>
                           {ws.distinctModels.length > 1 && (
                             <span
-                              className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/80 text-[10px]"
+                              className="px-1.5 py-0.5 rounded glass-control text-[var(--ink-tertiary)] text-[10px]"
                               title={ws.distinctModels.join(', ')}
                             >
                               +{ws.distinctModels.length - 1}
@@ -2572,45 +2709,45 @@ export default function App() {
                         </div>
                       </td>
 
-                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-300 text-[11px] xl:text-xs">
+                      <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[var(--ink-secondary)] text-[11px] xl:text-xs">
                         {ws.turns}
                       </td>
 
-                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-zinc-400 text-[11px] xl:text-xs">
-                        <span className="text-zinc-200">{formatTokens(ws.inputTokens)}</span>
-                        <span className="text-zinc-600 mx-0.5">/</span>
-                        <span className="text-zinc-300">{formatTokens(ws.outputTokens)}</span>
+                      <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[var(--ink-tertiary)] text-[11px] xl:text-xs">
+                        <span className="text-[var(--ink-primary)]">{formatTokens(ws.inputTokens)}</span>
+                        <span className="mx-0.5">/</span>
+                        <span className="text-[var(--ink-secondary)]">{formatTokens(ws.outputTokens)}</span>
                       </td>
 
-                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-cyan-400 text-[11px] xl:text-xs">
+                      <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[var(--tool-antigravity)] text-[11px] xl:text-xs">
                         {formatTokens(ws.cacheReadTokens)}
                       </td>
 
-                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono font-medium text-zinc-200 text-[11px] xl:text-xs">
+                      <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular font-medium text-[var(--ink-primary)] text-[11px] xl:text-xs">
                         {formatTokens(ws.totalTokens)}
                       </td>
 
-                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-fuchsia-400 text-[11px] xl:text-xs">
+                      <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[var(--tool-claude)] text-[11px] xl:text-xs">
                         {formatMoney(ws.cacheSavingsUSD, currency)}
                       </td>
 
-                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono font-semibold text-emerald-400 text-[11px] xl:text-xs">
+                      <td className="py-2.5 px-2 xl:px-3 whitespace-nowrap text-right font-mono tabular font-semibold text-[var(--accent-teal)] text-[11px] xl:text-xs">
                         {formatMoney(ws.costUSD, currency)}
                       </td>
 
-                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
-                        <div className="text-zinc-200">{formatPreciseDateTime(ws.startedAt).date}</div>
-                        <div className="text-[10px] text-zinc-500">{formatPreciseDateTime(ws.startedAt).time}</div>
+                      <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[11px] xl:text-xs">
+                        <div className="text-[var(--ink-primary)]">{formatPreciseDateTime(ws.startedAt).date}</div>
+                        <div className="text-[10px] text-[var(--ink-tertiary)]">{formatPreciseDateTime(ws.startedAt).time}</div>
                       </td>
 
-                      <td className="py-2 px-2 xl:px-3 whitespace-nowrap text-right font-mono text-[11px] xl:text-xs">
-                        <div className="text-zinc-200">{formatPreciseDateTime(ws.lastActiveAt).date}</div>
+                      <td className="py-2.5 px-2 xl:px-3 whitespace-nowrap text-right font-mono tabular text-[11px] xl:text-xs">
+                        <div className="text-[var(--ink-primary)]">{formatPreciseDateTime(ws.lastActiveAt).date}</div>
                         <div
-                          className="text-[10px] text-emerald-400/90 flex items-center justify-end gap-1"
+                          className="text-[10px] text-[var(--accent-teal)] flex items-center justify-end gap-1"
                           title={formatRelativeTime(ws.lastActiveAt)}
                         >
                           <span>{formatPreciseDateTime(ws.lastActiveAt).time}</span>
-                          <span className="text-zinc-500 hidden xl:inline">
+                          <span className="text-[var(--ink-tertiary)] hidden xl:inline">
                             ({formatRelativeTime(ws.lastActiveAt)})
                           </span>
                         </div>
@@ -2621,7 +2758,7 @@ export default function App() {
                       aria-hidden={!isExpanded}
                       className={
                         isExpanded
-                          ? 'bg-zinc-950/80 border-t border-zinc-800/60'
+                          ? 'bg-[var(--bg-subcard)] border-t border-[var(--border-hairline)]'
                           : 'pointer-events-none'
                       }
                     >
@@ -2637,19 +2774,19 @@ export default function App() {
                           }`}
                         >
                           <div className="overflow-hidden min-h-0 text-xs leading-normal">
-                            <div className="rounded-lg bg-zinc-900/60 border border-zinc-800/90 p-3 sm:p-4 space-y-3">
+                            <div className="glass-subcard rounded-xl p-3 sm:p-4 space-y-3">
                               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-semibold text-zinc-200 flex items-center gap-2">
-                                    <MessageSquare className="w-4 h-4 text-emerald-400" />
+                                  <span className="font-semibold text-[var(--ink-primary)] flex items-center gap-2">
+                                    <MessageSquare className="w-4 h-4 text-[var(--accent-teal)]" />
                                     Workspace Chats ({ws.chats.length})
                                   </span>
-                                  <span className="text-[11px] font-mono text-zinc-500">{ws.workspace}</span>
+                                  <span className="text-[11px] font-mono text-[var(--ink-tertiary)]">{ws.workspace}</span>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-zinc-400">
+                                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono tabular text-[var(--ink-tertiary)]">
                                   <span>
                                     Created:{' '}
-                                    <span className="text-zinc-200">
+                                    <span className="text-[var(--ink-primary)]">
                                       {formatPreciseDateTime(ws.startedAt).date}{' '}
                                       {formatPreciseDateTime(ws.startedAt).time}
                                     </span>
@@ -2657,7 +2794,7 @@ export default function App() {
                                   <span>•</span>
                                   <span>
                                     Last modified:{' '}
-                                    <span className="text-emerald-400">
+                                    <span className="text-[var(--accent-teal)] font-medium">
                                       {formatPreciseDateTime(ws.lastActiveAt).date}{' '}
                                       {formatPreciseDateTime(ws.lastActiveAt).time}
                                     </span>
@@ -2674,14 +2811,14 @@ export default function App() {
                                   const created = formatPreciseDateTime(chat.startedAt);
                                   const modified = formatPreciseDateTime(chat.lastActiveAt);
 
-                                    return (
+                                  return (
                                     <div
                                       key={chatKey}
-                                      className="rounded-lg bg-zinc-950/75 border border-zinc-800/80 overflow-hidden transition-colors duration-150 hover:border-zinc-700/80"
+                                      className="glass-control rounded-xl overflow-hidden transition-colors duration-150 hover:border-[var(--border-strong)]"
                                     >
                                       <div
                                         onClick={() => toggleSetKey(setExpandedChats, chatKey)}
-                                        className="p-3 hover:bg-zinc-900/50 transition-colors cursor-pointer space-y-2"
+                                        className="p-3 hover:bg-[var(--table-hover)] transition-colors cursor-pointer space-y-2"
                                       >
                                         <div className="flex flex-wrap items-center justify-between gap-3">
                                           <div className="flex flex-wrap items-center gap-2 min-w-0">
@@ -2691,7 +2828,7 @@ export default function App() {
                                                 e.stopPropagation();
                                                 toggleSetKey(setExpandedChats, chatKey);
                                               }}
-                                              className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition shrink-0 select-none"
+                                              className="p-0.5 rounded hover:bg-[var(--table-hover)] text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] transition shrink-0 select-none"
                                               title={
                                                 isChatExpanded
                                                   ? 'Hide detailed model & subagent metrics'
@@ -2700,7 +2837,7 @@ export default function App() {
                                             >
                                               <ChevronRight
                                                 className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
-                                                  isChatExpanded ? 'rotate-90 text-emerald-400' : ''
+                                                  isChatExpanded ? 'rotate-90 text-[var(--accent-teal)]' : ''
                                                 }`}
                                               />
                                             </button>
@@ -2708,7 +2845,7 @@ export default function App() {
                                             <ToolBadge source={chat.source} compact />
 
                                             <span
-                                              className="text-xs font-medium text-zinc-100 truncate max-w-[240px] sm:max-w-[380px] lg:max-w-[480px]"
+                                              className="text-xs font-medium text-[var(--ink-primary)] truncate max-w-[240px] sm:max-w-[380px] lg:max-w-[480px]"
                                               title={`${chat.sessionTitle || chat.sessionId} (${chat.sessionId})`}
                                             >
                                               {chat.sessionTitle || chat.sessionId}
@@ -2725,7 +2862,7 @@ export default function App() {
                                                 <>
                                                   {regularSubs.length > 0 && (
                                                     <span
-                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/30 text-[10px] font-mono text-violet-300 shrink-0"
+                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--accent-violet-soft)] border border-[var(--accent-violet-border)] text-[10px] font-mono text-[var(--accent-violet)] shrink-0"
                                                       title={`Includes ${regularSubs.length} rolled-up subagent tool(s): ${regularSubs.map((s) => s.subagentName).join(', ')}`}
                                                     >
                                                       <Bot className="w-2.5 h-2.5 shrink-0" />
@@ -2740,7 +2877,7 @@ export default function App() {
                                                         e.stopPropagation();
                                                         toggleSetKey(setExpandedBtwRows, `${chatKey}::/btw`);
                                                       }}
-                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-[10px] font-mono text-sky-300 shrink-0 transition-colors cursor-pointer"
+                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--accent-sky-soft)] hover:brightness-110 border border-[var(--accent-sky-border)] text-[10px] font-mono text-[var(--accent-sky)] shrink-0 transition-all cursor-pointer"
                                                       title={`Click to show /btw titles (${btwEntry.runs?.length || 1} side-chat${(btwEntry.runs?.length || 1) === 1 ? '' : 's'} · ${btwEntry.turns}t · ${formatTokens(btwEntry.totalTokens)} tok · ${formatMoney(btwEntry.costUSD, currency)})`}
                                                     >
                                                       <MessageSquare className="w-2.5 h-2.5 shrink-0" />
@@ -2756,44 +2893,44 @@ export default function App() {
                                               );
                                             })()}
 
-                                            <span className="text-[10.5px] font-mono text-zinc-500">
+                                            <span className="text-[10.5px] font-mono tabular text-[var(--ink-tertiary)]">
                                               {created.date} {created.time} →{' '}
-                                              <span className="text-emerald-400/90">
+                                              <span className="text-[var(--accent-teal)]">
                                                 {modified.date} {modified.time}
                                               </span>{' '}
                                               <span>({formatRelativeTime(chat.lastActiveAt)})</span>
                                             </span>
                                           </div>
 
-                                          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono">
-                                            <span className="text-zinc-400">
-                                              Turns <strong className="text-zinc-200">{chat.turns}</strong>
+                                          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono tabular">
+                                            <span className="text-[var(--ink-tertiary)]">
+                                              Turns <strong className="text-[var(--ink-primary)]">{chat.turns}</strong>
                                             </span>
-                                            <span className="text-zinc-400">
+                                            <span className="text-[var(--ink-tertiary)]">
                                               In/Out{' '}
-                                              <span className="text-zinc-200">{formatTokens(chat.inputTokens)}</span>
-                                              <span className="text-zinc-600 mx-0.5">/</span>
-                                              <span className="text-zinc-300">{formatTokens(chat.outputTokens)}</span>
+                                              <span className="text-[var(--ink-primary)]">{formatTokens(chat.inputTokens)}</span>
+                                              <span className="mx-0.5">/</span>
+                                              <span className="text-[var(--ink-secondary)]">{formatTokens(chat.outputTokens)}</span>
                                             </span>
-                                            <span className="text-cyan-400">
+                                            <span className="text-[var(--tool-antigravity)]">
                                               Cache {formatTokens(chat.cacheReadTokens)}
                                             </span>
-                                            <span className="text-zinc-200">
+                                            <span className="text-[var(--ink-primary)] font-medium">
                                               Total {formatTokens(chat.totalTokens)}
                                             </span>
-                                            <span className="text-fuchsia-400">
+                                            <span className="text-[var(--tool-claude)]">
                                               Saved {formatMoney(chat.cacheSavingsUSD, currency)}
                                             </span>
-                                            <span className="text-emerald-400 font-semibold">
+                                            <span className="text-[var(--accent-teal)] font-semibold">
                                               {formatMoney(chat.costUSD, currency)}
                                             </span>
                                           </div>
                                         </div>
 
-                                        {/* Models used in this chat (always visible per chat) */}
+                                        {/* Models used in this chat */}
                                         <div className="flex flex-wrap items-center gap-1.5 pl-6">
-                                          <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-zinc-400 mr-1">
-                                            <Cpu className="w-3 h-3 text-emerald-400" />
+                                          <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-[var(--ink-tertiary)] mr-1">
+                                            <Cpu className="w-3 h-3 text-[var(--accent-teal)]" />
                                             Models ({chatModels.length}):
                                           </span>
                                           {chatModels.map((m) => {
@@ -2804,34 +2941,34 @@ export default function App() {
                                               m.modelLabel,
                                               snapshot?.pricing
                                             );
-                                              return (
+                                            return (
                                               <span
                                                 key={m.modelLabel}
-                                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-[10.5px] font-mono text-zinc-300"
+                                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md glass-subcard text-[10.5px] font-mono tabular text-[var(--ink-secondary)]"
                                                 title={`Input: ${formatTokens(m.inputTokens)} · Cache Read: ${formatTokens(m.cacheReadTokens)} · Output: ${formatTokens(m.outputTokens)} · Saved: ${formatMoney(m.cacheSavingsUSD, currency)}`}
                                               >
-                                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
-                                                <span className="text-zinc-200 font-medium">{m.modelLabel}</span>
+                                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-teal)] shrink-0" />
+                                                <span className="text-[var(--ink-primary)] font-medium">{m.modelLabel}</span>
                                                 {isPromoActive(modelRate) && (
                                                   <span
-                                                    className="px-1 py-0 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                                    className="px-1 py-0 rounded text-[9px] font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]"
                                                     title={modelRate?.promoNote || 'Active promotional rate'}
                                                   >
                                                     PROMO
                                                   </span>
                                                 )}
-                                                <span className="text-zinc-500">· {m.turns}t</span>
-                                                <span className="text-zinc-400">· {formatTokens(m.totalTokens)}</span>
-                                                <span className="text-emerald-400 font-semibold">
+                                                <span className="text-[var(--ink-tertiary)]">· {m.turns}t</span>
+                                                <span className="text-[var(--ink-secondary)]">· {formatTokens(m.totalTokens)}</span>
+                                                <span className="text-[var(--accent-teal)] font-semibold">
                                                   · {formatMoney(m.costUSD, currency)}
                                                 </span>
-                                                <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
+                                                <span className="text-[var(--ink-tertiary)]">({costShare.toFixed(0)}%)</span>
                                               </span>
                                             );
                                           })}
                                         </div>
 
-                                        {/* Rolled-up subagent tools & /btw side-chats with their individual consumption */}
+                                        {/* Rolled-up subagent tools & /btw side-chats */}
                                         {subagentSummary.subagents.length > 0 && (() => {
                                           const btwSub = subagentSummary.subagents.find(
                                             (s) => s.subagentName === '/btw'
@@ -2841,8 +2978,8 @@ export default function App() {
                                           return (
                                             <div className="space-y-1.5 pl-6">
                                               <div className="flex flex-wrap items-center gap-1.5">
-                                                <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-violet-300/90 mr-1">
-                                                  <Bot className="w-3 h-3 text-violet-400" />
+                                                <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-[var(--accent-violet)] mr-1">
+                                                  <Bot className="w-3 h-3" />
                                                   {btwSub
                                                     ? subagentSummary.subagents.every((s) => s.subagentName === '/btw')
                                                       ? 'Side Chats:'
@@ -2871,71 +3008,69 @@ export default function App() {
                                                           e.stopPropagation();
                                                           toggleSetKey(setExpandedBtwRows, btwRowKey);
                                                         }}
-                                                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono bg-sky-950/35 hover:bg-sky-950/60 border border-sky-500/35 hover:border-sky-400/50 text-sky-100 transition-colors cursor-pointer"
+                                                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono tabular bg-[var(--accent-sky-soft)] hover:brightness-110 border border-[var(--accent-sky-border)] text-[var(--ink-primary)] transition-all cursor-pointer"
                                                         title={`Click to ${isBtwExpanded ? 'hide' : 'show'} /btw titles · Input: ${formatTokens(sub.inputTokens)} · Cache Read: ${formatTokens(sub.cacheReadTokens)} · Output: ${formatTokens(sub.outputTokens)} · Saved: ${formatMoney(sub.cacheSavingsUSD, currency)}${modelsTooltip ? ` · Models: ${modelsTooltip}` : ''}`}
                                                       >
                                                         <ChevronRight
-                                                          className={`w-3 h-3 text-sky-400 shrink-0 transition-transform duration-150 ${
+                                                          className={`w-3 h-3 text-[var(--accent-sky)] shrink-0 transition-transform duration-150 ${
                                                             isBtwExpanded ? 'rotate-90' : ''
                                                           }`}
                                                         />
-                                                        <span className="font-medium text-sky-200">
+                                                        <span className="font-semibold text-[var(--accent-sky)]">
                                                           {sub.subagentName}
                                                           {runCount > 1 ? ` (${runCount})` : ''}
                                                         </span>
                                                         {primarySubModel && (
-                                                          <span className="text-zinc-400">
+                                                          <span className="text-[var(--ink-secondary)]">
                                                             [{primarySubModel}
                                                             {extraSubModels > 0 ? ` +${extraSubModels}` : ''}]
                                                           </span>
                                                         )}
-                                                        <span className="text-zinc-500">· {sub.turns}t</span>
-                                                        <span className="text-zinc-400">
+                                                        <span className="text-[var(--ink-tertiary)]">· {sub.turns}t</span>
+                                                        <span className="text-[var(--ink-secondary)]">
                                                           · {formatTokens(sub.totalTokens)}
                                                         </span>
-                                                        <span className="text-emerald-400 font-semibold">
+                                                        <span className="text-[var(--accent-teal)] font-semibold">
                                                           · {formatMoney(sub.costUSD, currency)}
                                                         </span>
-                                                        <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
+                                                        <span className="text-[var(--ink-tertiary)]">({costShare.toFixed(0)}%)</span>
                                                       </button>
                                                     );
                                                   }
                                                   return (
                                                     <span
                                                       key={sub.subagentId}
-                                                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono ${
+                                                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono tabular border ${
                                                         isBtw
-                                                          ? 'bg-sky-950/35 border border-sky-500/35 text-sky-100'
-                                                          : 'bg-violet-950/35 border border-violet-500/30 text-violet-100'
+                                                          ? 'bg-[var(--accent-sky-soft)] border-[var(--accent-sky-border)] text-[var(--ink-primary)]'
+                                                          : 'bg-[var(--accent-violet-soft)] border-[var(--accent-violet-border)] text-[var(--ink-primary)]'
                                                       }`}
                                                       title={`${isBtw ? 'Side-chat /btw (preserved after Esc)' : `Subagent: ${sub.subagentName} (${sub.subagentId})`} · Input: ${formatTokens(sub.inputTokens)} · Cache Read: ${formatTokens(sub.cacheReadTokens)} · Output: ${formatTokens(sub.outputTokens)} · Saved: ${formatMoney(sub.cacheSavingsUSD, currency)}${modelsTooltip ? ` · Models: ${modelsTooltip}` : ''}`}
                                                     >
                                                       <span
-                                                        className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                                                          isBtw ? 'bg-sky-400' : 'bg-violet-400'
-                                                        }`}
+                                                        className="h-1.5 w-1.5 rounded-full shrink-0"
+                                                        style={{ backgroundColor: isBtw ? 'var(--accent-sky)' : 'var(--accent-violet)' }}
                                                       />
                                                       <span
-                                                        className={`font-medium ${
-                                                          isBtw ? 'text-sky-200' : 'text-violet-200'
-                                                        }`}
+                                                        className="font-semibold"
+                                                        style={{ color: isBtw ? 'var(--accent-sky)' : 'var(--accent-violet)' }}
                                                       >
                                                         {sub.subagentName}
                                                       </span>
                                                       {primarySubModel && (
-                                                        <span className="text-zinc-400">
+                                                        <span className="text-[var(--ink-secondary)]">
                                                           [{primarySubModel}
                                                           {extraSubModels > 0 ? ` +${extraSubModels}` : ''}]
                                                         </span>
                                                       )}
-                                                      <span className="text-zinc-500">· {sub.turns}t</span>
-                                                      <span className="text-zinc-400">
+                                                      <span className="text-[var(--ink-tertiary)]">· {sub.turns}t</span>
+                                                      <span className="text-[var(--ink-secondary)]">
                                                         · {formatTokens(sub.totalTokens)}
                                                       </span>
-                                                      <span className="text-emerald-400 font-semibold">
+                                                      <span className="text-[var(--accent-teal)] font-semibold">
                                                         · {formatMoney(sub.costUSD, currency)}
                                                       </span>
-                                                      <span className="text-zinc-500">({costShare.toFixed(0)}%)</span>
+                                                      <span className="text-[var(--ink-tertiary)]">({costShare.toFixed(0)}%)</span>
                                                     </span>
                                                   );
                                                 })}
@@ -2944,44 +3079,44 @@ export default function App() {
                                               {btwSub && btwSub.runs && btwSub.runs.length > 0 && isBtwExpanded && (
                                                 <div
                                                   onClick={(e) => e.stopPropagation()}
-                                                  className="rounded-md bg-sky-950/20 border border-sky-500/25 px-2.5 py-2 space-y-1.5 cursor-default"
+                                                  className="rounded-lg bg-[var(--accent-sky-soft)] border border-[var(--accent-sky-border)] px-2.5 py-2 space-y-1.5 cursor-default"
                                                 >
-                                                  <div className="text-[10px] font-mono uppercase tracking-wider text-sky-300/90 flex items-center gap-1.5">
-                                                    <MessageSquare className="w-3 h-3 text-sky-400" />
+                                                  <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--accent-sky)] font-semibold flex items-center gap-1.5">
+                                                    <MessageSquare className="w-3 h-3" />
                                                     <span>/btw Side Chats ({btwSub.runs.length})</span>
                                                   </div>
-                                                  <div className="divide-y divide-sky-500/10">
+                                                  <div className="divide-y divide-[var(--border-hairline)]">
                                                     {btwSub.runs.map((run) => {
                                                       const runDt = formatPreciseDateTime(run.lastActiveAt || run.startedAt);
                                                       const runModel = run.models[0]?.modelLabel || '';
                                                       return (
                                                         <div
                                                           key={run.runId}
-                                                          className="py-1 first:pt-0.5 last:pb-0 flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-mono"
+                                                          className="py-1 first:pt-0.5 last:pb-0 flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-mono tabular"
                                                         >
                                                           <div className="flex items-center gap-1.5 min-w-0">
-                                                            <span className="text-sky-500/80 shrink-0">↳</span>
+                                                            <span className="text-[var(--accent-sky)] shrink-0">↳</span>
                                                             <span
-                                                              className="text-sky-100 font-medium truncate max-w-[260px] sm:max-w-[440px]"
+                                                              className="text-[var(--ink-primary)] font-medium truncate max-w-[260px] sm:max-w-[440px]"
                                                               title={run.title}
                                                             >
                                                               {run.title}
                                                             </span>
                                                             {runDt.date !== '—' && (
-                                                              <span className="text-[10px] text-zinc-500 shrink-0">
+                                                              <span className="text-[10px] text-[var(--ink-tertiary)] shrink-0">
                                                                 ({runDt.date} {runDt.time})
                                                               </span>
                                                             )}
                                                           </div>
                                                           <div className="flex items-center gap-2 shrink-0 text-[10px]">
                                                             {runModel && (
-                                                              <span className="text-zinc-400">[{runModel}]</span>
+                                                              <span className="text-[var(--ink-secondary)]">[{runModel}]</span>
                                                             )}
-                                                            <span className="text-zinc-400">{run.turns}t</span>
-                                                            <span className="text-zinc-300">
+                                                            <span className="text-[var(--ink-tertiary)]">{run.turns}t</span>
+                                                            <span className="text-[var(--ink-secondary)]">
                                                               {formatTokens(run.totalTokens)}
                                                             </span>
-                                                            <span className="text-emerald-400 font-semibold">
+                                                            <span className="text-[var(--accent-teal)] font-semibold">
                                                               {formatMoney(run.costUSD, currency)}
                                                             </span>
                                                           </div>
@@ -3005,10 +3140,10 @@ export default function App() {
                                         }`}
                                       >
                                         <div className="overflow-hidden min-h-0">
-                                          <div className="border-t border-zinc-800/80 bg-zinc-900/40 px-3 py-2.5 overflow-x-auto space-y-3">
+                                          <div className="border-t border-[var(--border-hairline)] bg-[var(--bg-subcard)] px-3 py-2.5 overflow-x-auto space-y-3">
                                             <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
                                               <thead>
-                                                <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
+                                                <tr className="border-b border-[var(--border-hairline)] text-[10px] font-mono uppercase text-[var(--ink-tertiary)]">
                                                   <th className="py-1.5 px-2">Model</th>
                                                   <th className="py-1.5 px-2 text-right">Turns</th>
                                                   <th className="py-1.5 px-2 text-right">Input</th>
@@ -3020,7 +3155,7 @@ export default function App() {
                                                   <th className="py-1.5 px-2 text-right">Cost Share</th>
                                                 </tr>
                                               </thead>
-                                              <tbody className="divide-y divide-zinc-800/50">
+                                              <tbody className="divide-y divide-[var(--border-hairline)] tabular">
                                                 {chatModels.map((m) => {
                                                   const costShare =
                                                     chat.costUSD > 0 ? (m.costUSD / chat.costUSD) * 100 : 0;
@@ -3029,14 +3164,14 @@ export default function App() {
                                                     m.modelLabel,
                                                     snapshot?.pricing
                                                   );
-                                                    return (
-                                                    <tr key={m.modelLabel} className="hover:bg-zinc-800/20">
-                                                      <td className="py-1.5 px-2 font-mono font-medium text-zinc-200 flex items-center gap-1.5 whitespace-nowrap">
-                                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                                  return (
+                                                    <tr key={m.modelLabel} className="hover:bg-[var(--table-hover)]">
+                                                      <td className="py-1.5 px-2 font-mono font-medium text-[var(--ink-primary)] flex items-center gap-1.5 whitespace-nowrap">
+                                                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-teal)] shrink-0" />
                                                         <span>{m.modelLabel}</span>
                                                         {isPromoActive(modelRate) && (
                                                           <span
-                                                            className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                                            className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]"
                                                             title={
                                                               modelRate?.promoNote || 'Active promotional rate'
                                                             }
@@ -3045,28 +3180,28 @@ export default function App() {
                                                           </span>
                                                         )}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                         {m.turns}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                         {formatTokens(m.inputTokens)}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
                                                         {formatTokens(m.cacheReadTokens)}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                         {formatTokens(m.outputTokens)}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] font-medium text-[11px]">
                                                         {formatTokens(m.totalTokens)}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
                                                         {formatMoney(m.cacheSavingsUSD, currency)}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
                                                         {formatMoney(m.costUSD, currency)}
                                                       </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                         {costShare.toFixed(1)}%
                                                       </td>
                                                     </tr>
@@ -3076,14 +3211,14 @@ export default function App() {
                                             </table>
 
                                             {subagentSummary.subagents.length > 0 && (
-                                              <div className="pt-2.5 border-t border-zinc-800/80">
-                                                <div className="flex items-center gap-1.5 mb-1.5 px-2 text-[10px] font-mono uppercase tracking-wider text-violet-300">
-                                                  <Bot className="w-3 h-3 text-violet-400" />
+                                              <div className="pt-2.5 border-t border-[var(--border-hairline)]">
+                                                <div className="flex items-center gap-1.5 mb-1.5 px-2 text-[10px] font-mono uppercase tracking-wider text-[var(--accent-violet)] font-semibold">
+                                                  <Bot className="w-3 h-3" />
                                                   <span>Main Chat vs Subagent Tools Consumption</span>
                                                 </div>
                                                 <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
                                                   <thead>
-                                                    <tr className="border-b border-zinc-800/80 text-[10px] font-mono uppercase text-zinc-400">
+                                                    <tr className="border-b border-[var(--border-hairline)] text-[10px] font-mono uppercase text-[var(--ink-tertiary)]">
                                                       <th className="py-1.5 px-2">Agent / Tool</th>
                                                       <th className="py-1.5 px-2 text-right">Turns</th>
                                                       <th className="py-1.5 px-2 text-right">Input</th>
@@ -3095,37 +3230,37 @@ export default function App() {
                                                       <th className="py-1.5 px-2 text-right">Cost Share</th>
                                                     </tr>
                                                   </thead>
-                                                  <tbody className="divide-y divide-zinc-800/50">
+                                                  <tbody className="divide-y divide-[var(--border-hairline)] tabular">
                                                     {subagentSummary.main.turns > 0 && (
-                                                      <tr className="hover:bg-zinc-800/20">
-                                                        <td className="py-1.5 px-2 font-mono font-medium text-zinc-200 whitespace-nowrap">
+                                                      <tr className="hover:bg-[var(--table-hover)]">
+                                                        <td className="py-1.5 px-2 font-mono font-medium text-[var(--ink-primary)] whitespace-nowrap">
                                                           <span className="inline-flex items-center gap-1.5">
-                                                            <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 shrink-0" />
+                                                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--tool-antigravity)] shrink-0" />
                                                             <span>Main Chat</span>
                                                           </span>
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                           {subagentSummary.main.turns}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                           {formatTokens(subagentSummary.main.inputTokens)}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
                                                           {formatTokens(subagentSummary.main.cacheReadTokens)}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                           {formatTokens(subagentSummary.main.outputTokens)}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] font-medium text-[11px]">
                                                           {formatTokens(subagentSummary.main.totalTokens)}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
                                                           {formatMoney(subagentSummary.main.cacheSavingsUSD, currency)}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
                                                           {formatMoney(subagentSummary.main.costUSD, currency)}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                           {(chat.costUSD > 0
                                                             ? (subagentSummary.main.costUSD / chat.costUSD) * 100
                                                             : 0
@@ -3149,31 +3284,26 @@ export default function App() {
                                                                 ? () => toggleSetKey(setExpandedBtwRows, subRowKey)
                                                                 : undefined
                                                             }
-                                                            className={`${
-                                                              isBtw ? 'hover:bg-sky-500/5' : 'hover:bg-violet-500/5'
-                                                            } ${canExpandRuns ? 'cursor-pointer' : ''}`}
+                                                            className={`hover:bg-[var(--table-hover)] ${canExpandRuns ? 'cursor-pointer' : ''}`}
                                                           >
                                                             <td
-                                                              className={`py-1.5 px-2 font-mono font-medium whitespace-nowrap ${
-                                                                isBtw ? 'text-sky-200' : 'text-violet-200'
-                                                              }`}
+                                                              className="py-1.5 px-2 font-mono font-medium whitespace-nowrap"
+                                                              style={{ color: isBtw ? 'var(--accent-sky)' : 'var(--accent-violet)' }}
                                                             >
                                                               <div className="inline-flex items-center gap-1.5">
                                                                 {canExpandRuns ? (
                                                                   <ChevronRight
-                                                                    className={`w-3 h-3 text-sky-400 shrink-0 transition-transform duration-150 ${
+                                                                    className={`w-3 h-3 shrink-0 transition-transform duration-150 ${
                                                                       isSubExpanded ? 'rotate-90' : ''
                                                                     }`}
                                                                   />
                                                                 ) : (
-                                                                  <span className={isBtw ? 'text-sky-500/80' : 'text-violet-500/80'}>
-                                                                    ↳
-                                                                  </span>
+                                                                  <span>↳</span>
                                                                 )}
                                                                 {isBtw ? (
-                                                                  <MessageSquare className="w-3 h-3 text-sky-400 shrink-0" />
+                                                                  <MessageSquare className="w-3 h-3 shrink-0" />
                                                                 ) : (
-                                                                  <Bot className="w-3 h-3 text-violet-400 shrink-0" />
+                                                                  <Bot className="w-3 h-3 shrink-0" />
                                                                 )}
                                                                 <span title={sub.subagentId}>
                                                                   {sub.subagentName}
@@ -3182,34 +3312,34 @@ export default function App() {
                                                                     : ''}
                                                                 </span>
                                                                 {sub.models.length > 0 && (
-                                                                  <span className="text-[10px] font-normal text-zinc-400">
+                                                                  <span className="text-[10px] font-normal text-[var(--ink-tertiary)]">
                                                                     ({sub.models.map((m) => m.modelLabel).join(', ')})
                                                                   </span>
                                                                 )}
                                                               </div>
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                               {sub.turns}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                               {formatTokens(sub.inputTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
                                                               {formatTokens(sub.cacheReadTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                               {formatTokens(sub.outputTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-200 font-medium text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] font-medium text-[11px]">
                                                               {formatTokens(sub.totalTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
                                                               {formatMoney(sub.cacheSavingsUSD, currency)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
                                                               {formatMoney(sub.costUSD, currency)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                               {subShare.toFixed(1)}%
                                                             </td>
                                                           </tr>
@@ -3223,11 +3353,11 @@ export default function App() {
                                                               return (
                                                                 <tr
                                                                   key={`${sub.subagentId}-${run.runId}`}
-                                                                  className="bg-sky-950/15 hover:bg-sky-500/10"
+                                                                  className="bg-[var(--accent-sky-soft)] hover:brightness-105"
                                                                 >
-                                                                  <td className="py-1.5 pl-8 pr-2 font-mono text-[11px] text-sky-100">
+                                                                  <td className="py-1.5 pl-8 pr-2 font-mono text-[11px] text-[var(--ink-primary)]">
                                                                     <div className="flex items-center gap-1.5 min-w-0">
-                                                                      <span className="text-sky-500/70 shrink-0">↳</span>
+                                                                      <span className="text-[var(--accent-sky)] shrink-0">↳</span>
                                                                       <span
                                                                         className="truncate max-w-[260px] lg:max-w-[360px]"
                                                                         title={run.title}
@@ -3235,34 +3365,34 @@ export default function App() {
                                                                         {run.title}
                                                                       </span>
                                                                       {runDt.date !== '—' && (
-                                                                        <span className="text-[10px] text-zinc-500 shrink-0">
+                                                                        <span className="text-[10px] text-[var(--ink-tertiary)] shrink-0">
                                                                           ({runDt.date} {runDt.time})
                                                                         </span>
                                                                       )}
                                                                     </div>
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                                     {run.turns}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                                     {formatTokens(run.inputTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-cyan-400 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
                                                                     {formatTokens(run.cacheReadTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-300 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
                                                                     {formatTokens(run.outputTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-200 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] text-[11px]">
                                                                     {formatTokens(run.totalTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-fuchsia-400 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
                                                                     {formatMoney(run.cacheSavingsUSD, currency)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono font-semibold text-emerald-400 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
                                                                     {formatMoney(run.costUSD, currency)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-zinc-400 text-[11px]">
+                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
                                                                     {runShare.toFixed(1)}%
                                                                   </td>
                                                                 </tr>
@@ -3294,7 +3424,7 @@ export default function App() {
               {tableData.workspaces.length === 0 && (
                 <tbody className="text-xs">
                   <tr>
-                    <td colSpan={12} className="py-10 text-center text-zinc-500 font-mono">
+                    <td colSpan={12} className="py-10 text-center text-[var(--ink-tertiary)] font-mono">
                       No matching workspaces or chats found.
                     </td>
                   </tr>
@@ -3306,10 +3436,10 @@ export default function App() {
         )}
 
         {visibleSectionCount === 0 ? (
-          <div className="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-10 text-center space-y-3 animate-burn-fade-up">
-            <LayoutGrid className="w-7 h-7 text-zinc-500 mx-auto" />
-            <p className="text-sm font-semibold text-zinc-200">All dashboard sections are currently hidden</p>
-            <p className="text-xs text-zinc-400">
+          <div className="glass-panel rounded-2xl p-10 text-center space-y-3 animate-burn-fade-up">
+            <LayoutGrid className="w-7 h-7 text-[var(--ink-tertiary)] mx-auto" />
+            <p className="text-sm font-semibold text-[var(--ink-primary)]">All dashboard sections are currently hidden</p>
+            <p className="text-xs text-[var(--ink-tertiary)]">
               Re-enable sections or restore the default order from Settings.
             </p>
             <div className="flex items-center justify-center gap-2 pt-1">
@@ -3321,14 +3451,14 @@ export default function App() {
                     layout: { order: DEFAULT_SECTION_ORDER, hidden: [] },
                   })
                 }
-                className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs font-mono transition-colors cursor-pointer"
+                className="btn-primary-brand h-8 px-3.5 rounded-lg font-semibold text-xs font-mono transition-colors cursor-pointer"
               >
                 Restore Default Layout
               </button>
               <button
                 type="button"
                 onClick={() => setIsSettingsOpen(true)}
-                className="h-8 px-3 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs font-mono text-zinc-200 transition-colors cursor-pointer"
+                className="h-8 px-3 rounded-lg glass-control hover:border-[var(--border-strong)] text-xs font-mono text-[var(--ink-primary)] transition-colors cursor-pointer"
               >
                 Open Settings
               </button>
@@ -3339,9 +3469,9 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsSettingsOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-800/90 bg-zinc-900/50 hover:bg-zinc-800/70 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg glass-control hover:border-[var(--border-strong)] text-[11px] font-mono text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
             >
-              <LayoutGrid className="w-3.5 h-3.5 text-cyan-400" />
+              <LayoutGrid className="w-3.5 h-3.5 text-[var(--tool-antigravity)]" />
               <span>
                 {hiddenSections.size} {hiddenSections.size === 1 ? 'section' : 'sections'} hidden · Customize layout
               </span>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- MANDATORY: Declare support for both light and dark themes -->
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        var saved = localStorage.getItem('color-scheme');
+        if (saved === 'light' || saved === 'dark') {
+          document.querySelector('meta[name="color-scheme"]').content = saved;
+        }
+      } catch (e) {}
+    </script>
+    <meta
+      name="description"
+      content="Real-time local token and API equivalent cost tracker for Antigravity CLI, Claude Code, and Codex CLI. 100% local, zero cloud uploads."
+    />
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+    <title>ai-burnrate-tool — Local AI CLI Token &amp; Spend Telemetry</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

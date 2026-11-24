@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   Check,
@@ -80,7 +80,7 @@ function fmtPreciseDate(iso: string): { date: string; time: string } {
 function CompactSourceBadge({ source }: { source: ToolSource }) {
   if (source === 'antigravity') {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-md font-mono font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/25 whitespace-nowrap">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-md font-mono font-medium bg-[var(--accent-sky-soft)] text-[var(--tool-antigravity)] border border-[var(--accent-sky-border)] whitespace-nowrap">
         <Terminal className="w-2.5 h-2.5 shrink-0" />
         Antigravity
       </span>
@@ -88,14 +88,14 @@ function CompactSourceBadge({ source }: { source: ToolSource }) {
   }
   if (source === 'claude') {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-md font-mono font-medium bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/25 whitespace-nowrap">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-md font-mono font-medium bg-[var(--accent-violet-soft)] text-[var(--tool-claude)] border border-[var(--accent-violet-border)] whitespace-nowrap">
         <Sparkles className="w-2.5 h-2.5 shrink-0" />
         Claude Code
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-md font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/25 whitespace-nowrap">
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-md font-mono font-medium bg-[var(--accent-amber-soft)] text-[var(--tool-codex)] border border-[var(--accent-amber-border)] whitespace-nowrap">
       <Terminal className="w-2.5 h-2.5 shrink-0" />
       Codex CLI
     </span>
@@ -124,45 +124,62 @@ export function DeletedChatsModal({
   isClearingLegacyBulk,
   isRestoringLegacy,
 }: DeletedChatsModalProps) {
-  const [rendered, setRendered] = useState(false);
-  const [visible, setVisible] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [confirmClearLegacy, setConfirmClearLegacy] = useState(false);
 
   useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
     if (isOpen) {
-      setRendered(true);
-      let raf2 = 0;
-      const raf1 = requestAnimationFrame(() => {
-        raf2 = requestAnimationFrame(() => setVisible(true));
-      });
-      return () => {
-        cancelAnimationFrame(raf1);
-        if (raf2) cancelAnimationFrame(raf2);
-      };
-    }
-    setVisible(false);
-    setConfirmClearLegacy(false);
-    const timer = setTimeout(() => {
-      setRendered(false);
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+    } else if (dialog.open) {
+      dialog.close();
+      setConfirmClearLegacy(false);
       setSearchQuery('');
-    }, 220);
-    return () => clearTimeout(timer);
+    }
   }, [isOpen]);
 
   useEffect(() => {
-    if (!isOpen) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const handleClose = () => {
+      dialog.returnValue = '';
+      setConfirmClearLegacy(false);
+      setSearchQuery('');
+      onClose();
     };
-    document.addEventListener('keydown', onKey);
+    dialog.addEventListener('close', handleClose);
+
+    if ('closedBy' in HTMLDialogElement.prototype) {
+      return () => dialog.removeEventListener('close', handleClose);
+    }
+
+    let pressedOutside = false;
+    const isOutside = (e: PointerEvent) => {
+      const r = dialog.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      pressedOutside = isOutside(e);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (pressedOutside && isOutside(e)) dialog.close();
+      pressedOutside = false;
+    };
+
+    dialog.addEventListener('pointerdown', onPointerDown);
+    dialog.addEventListener('pointerup', onPointerUp);
     return () => {
-      document.body.style.overflow = prevOverflow;
-      document.removeEventListener('keydown', onKey);
+      dialog.removeEventListener('close', handleClose);
+      dialog.removeEventListener('pointerdown', onPointerDown);
+      dialog.removeEventListener('pointerup', onPointerUp);
     };
-  }, [isOpen, onClose]);
+  }, [onClose]);
 
   useEffect(() => {
     setConfirmClearLegacy(false);
@@ -204,8 +221,6 @@ export function DeletedChatsModal({
     [visibleDeletedSessions]
   );
 
-  if (!rendered) return null;
-
   const activeHookTools: string[] = [];
   if (hooksStatus?.antigravity) activeHookTools.push('Antigravity');
   if (hooksStatus?.claude) activeHookTools.push('Claude Code');
@@ -213,111 +228,97 @@ export function DeletedChatsModal({
   const hooksActive = activeHookTools.length > 0;
 
   return (
-    <div
-      className={`fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-2 sm:p-4 transition-opacity duration-200 ease-out motion-reduce:transition-none ${
-        visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
-      }`}
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Deleted Chats Archive"
+    <dialog
+      ref={dialogRef}
+      {...({ closedby: 'any' } as Record<string, string>)}
+      aria-labelledby="deleted-modal-title"
+      className="dash-dialog w-[min(calc(100vw-1rem),42rem)]"
     >
-      <div
-        className={`w-full max-w-2xl max-h-[92dvh] sm:max-h-[84vh] min-h-0 flex flex-col rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden transition-all duration-200 ease-out motion-reduce:transition-none ${
-          visible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-3 scale-[0.985]'
-        }`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Modal Header */}
-        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-zinc-800/90 flex items-start justify-between gap-2.5 bg-zinc-950/60 shrink-0 animate-burn-header">
-          <div className="flex items-start gap-2.5 sm:gap-3 min-w-0">
-            <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-400 mt-0.5 shrink-0">
-              <Trash2 className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-zinc-100 leading-snug">
-                Deleted Chats & Preserved API Spend
-              </h3>
-              <p className="text-[11px] sm:text-xs text-zinc-400 mt-0.5 leading-relaxed">
-                Removed chats stay out of active workspaces while preserving their spent API cost & models.
-              </p>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={onToggleIncludeInTotals}
-                  aria-pressed={includeDeletedInTotals}
-                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border transition-colors cursor-pointer ${
-                    includeDeletedInTotals
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
-                      : 'bg-zinc-900 border-zinc-700/80 text-zinc-400 hover:text-zinc-200'
-                  }`}
+      {/* Modal Header */}
+      <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[var(--border-hairline)] flex items-start justify-between gap-2.5 bg-[var(--bg-modal-band)] shrink-0">
+        <div className="flex items-start gap-2.5 sm:gap-3 min-w-0">
+          <div className="p-2 rounded-xl bg-[var(--accent-rose-soft)] border border-[var(--accent-rose-border)] text-[var(--accent-rose)] mt-0.5 shrink-0">
+            <Trash2 className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <h1 id="deleted-modal-title" className="text-sm font-semibold text-[var(--ink-primary)] leading-snug">
+              Deleted Chats &amp; Preserved API Spend
+            </h1>
+            <p className="text-[11px] sm:text-xs text-[var(--ink-tertiary)] mt-0.5 leading-relaxed">
+              Removed chats stay out of active workspaces while preserving their spent API cost &amp; models.
+            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onToggleIncludeInTotals}
+                aria-pressed={includeDeletedInTotals}
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border transition-colors cursor-pointer ${
+                  includeDeletedInTotals
+                    ? 'bg-[var(--accent-teal-soft)] border-[var(--accent-teal-border)] text-[var(--accent-teal)] font-medium'
+                    : 'glass-control text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]'
+                }`}
+              >
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: includeDeletedInTotals ? 'var(--accent-teal)' : 'var(--ink-tertiary)' }}
+                />
+                {includeDeletedInTotals ? 'Included in totals & CSV' : 'Excluded from totals'}
+              </button>
+              {hooksActive && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-[var(--accent-sky-soft)] border border-[var(--accent-sky-border)] text-[var(--accent-sky)]"
+                  title={`Auto-archive hooks active for ${activeHookTools.join(', ')} — snapshots turns even when burn is closed`}
                 >
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${
-                      includeDeletedInTotals ? 'bg-emerald-400' : 'bg-zinc-500'
-                    }`}
-                  />
-                  {includeDeletedInTotals ? 'Included in totals & CSV' : 'Excluded from totals'}
-                </button>
-                {hooksActive && (
-                  <span
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-cyan-500/10 border border-cyan-500/25 text-cyan-300"
-                    title={`Auto-archive hooks active for ${activeHookTools.join(', ')} — snapshots turns even when burn is closed`}
-                  >
-                    <ShieldCheck className="w-3 h-3 shrink-0" />
-                    Offline hooks active ({activeHookTools.join(' · ')})
-                  </span>
-                )}
-              </div>
+                  <ShieldCheck className="w-3 h-3 shrink-0" />
+                  Offline hooks active ({activeHookTools.join(' · ')})
+                </span>
+              )}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close deleted chats popup"
-            className="group p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors duration-200 cursor-pointer shrink-0"
-          >
-            <X className="w-4 h-4 transition-transform duration-200 group-hover:rotate-90 motion-reduce:transition-none" />
-          </button>
         </div>
-
-        {/* Mobile: single smooth scroll body below header; Desktop (sm+): sticky summary/toolbar + scrollable list */}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain sm:overflow-hidden sm:flex sm:flex-col">
-        {/* Responsive Summary Strip (2 cols on mobile, 3 cols on sm+) */}
-        <div
-          className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 px-3.5 sm:px-5 py-3 border-b border-zinc-800/80 bg-zinc-950/30 shrink-0 animate-burn-fade-up"
-          style={{ animationDelay: '40ms' }}
+        <button
+          type="button"
+          onClick={() => dialogRef.current?.close()}
+          aria-label="Close deleted chats popup"
+          className="group p-1.5 rounded-lg text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] hover:bg-[var(--table-hover)] transition-colors duration-200 cursor-pointer shrink-0"
         >
-          <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 px-2.5 sm:px-3 py-2 min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 truncate">
+          <X className="w-4 h-4 transition-transform duration-200 group-hover:rotate-90 motion-reduce:transition-none" />
+        </button>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain sm:overflow-hidden sm:flex sm:flex-col">
+        {/* Responsive Summary Strip */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 px-3.5 sm:px-5 py-3 border-b border-[var(--border-hairline)] bg-transparent shrink-0">
+          <div className="glass-subcard rounded-lg px-2.5 sm:px-3 py-2 min-w-0">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ink-tertiary)] truncate">
               Deleted Chats
             </div>
-            <div className="text-base sm:text-lg font-bold font-mono text-zinc-100 mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
+            <div className="text-base sm:text-lg font-bold font-mono tabular text-[var(--ink-primary)] mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
               <span>{deletedSessions.length}</span>
               {legacyDeletedCount > 0 && (
-                <span className="text-[10px] font-normal text-zinc-500 whitespace-nowrap">
+                <span className="text-[10px] font-normal text-[var(--ink-tertiary)] whitespace-nowrap">
                   ({trackedDeletedCount} tracked · {legacyDeletedCount} legacy)
                 </span>
               )}
             </div>
           </div>
 
-          <div className="rounded-lg bg-zinc-950/70 border border-zinc-800/80 px-2.5 sm:px-3 py-2 min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 truncate">
+          <div className="glass-subcard rounded-lg px-2.5 sm:px-3 py-2 min-w-0">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ink-tertiary)] truncate">
               API Cost Preserved
             </div>
-            <div className="text-base sm:text-lg font-bold font-mono text-emerald-400 mt-0.5 truncate">
+            <div className="text-base sm:text-lg font-bold font-mono tabular text-[var(--accent-teal)] mt-0.5 truncate">
               {formatMoney(deletedCostUSD, currency)}
             </div>
           </div>
 
-          <div className="col-span-2 sm:col-span-1 rounded-lg bg-zinc-950/70 border border-zinc-800/80 px-2.5 sm:px-3 py-2 min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 truncate">
+          <div className="col-span-2 sm:col-span-1 glass-subcard rounded-lg px-2.5 sm:px-3 py-2 min-w-0">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ink-tertiary)] truncate">
               Tokens / Cache Saved
             </div>
-            <div className="text-xs sm:text-sm font-semibold font-mono text-zinc-200 mt-1 truncate">
+            <div className="text-xs sm:text-sm font-semibold font-mono tabular text-[var(--ink-primary)] mt-1 truncate">
               {fmtTokens(deletedTokens)}{' '}
-              <span className="text-fuchsia-400 text-[11px] sm:text-xs">
+              <span className="text-[var(--accent-violet)] text-[11px] sm:text-xs">
                 ({formatMoney(deletedCacheSavingsUSD, currency)})
               </span>
             </div>
@@ -333,35 +334,32 @@ export function DeletedChatsModal({
             }`}
           >
             <div className="overflow-hidden">
-              <div className="px-3.5 sm:px-5 py-2 border-b border-zinc-800/70 bg-amber-500/5 text-[10.5px] sm:text-[11px] text-amber-200/90 font-mono leading-relaxed">
+              <div className="px-3.5 sm:px-5 py-2 border-b border-[var(--border-hairline)] bg-[var(--accent-amber-soft)] text-[10.5px] sm:text-[11px] text-[var(--accent-amber)] font-mono leading-relaxed">
                 {legacyDeletedCount} older chat(s) were deleted before burnrate archived their logs (shown as N/A). New chats are snapshotted automatically via offline hooks even when burnrate is closed.
               </div>
             </div>
           </div>
         )}
 
-        {/* Search Bar & Legacy Actions (mobile-safe stacked/wrapping layout) */}
+        {/* Search Bar & Legacy Actions */}
         {(deletedSessions.length > 0 || dismissedLegacyCount > 0) && (
-          <div
-            className="px-3.5 sm:px-5 py-2.5 sm:py-3 border-b border-zinc-800/80 bg-zinc-950/40 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 shrink-0 animate-burn-fade-up"
-            style={{ animationDelay: '70ms' }}
-          >
+          <div className="px-3.5 sm:px-5 py-2.5 sm:py-3 border-b border-[var(--border-hairline)] bg-[var(--bg-modal-band)] flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 shrink-0">
             {deletedSessions.length > 0 && (
               <div className="relative w-full sm:flex-1 sm:min-w-[180px]">
-                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-3.5 h-3.5 text-[var(--ink-tertiary)] absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search deleted chat, workspace, model..."
-                  className="w-full h-8 pl-8 pr-7 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/50 font-mono transition-colors duration-200"
+                  className="glass-input w-full h-8 pl-8 pr-7 rounded-lg text-xs font-mono transition-colors duration-200"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
                     aria-label="Clear deleted chats search"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] transition-colors cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -377,14 +375,14 @@ export function DeletedChatsModal({
                   aria-pressed={hideLegacyDeleted}
                   className={`h-8 px-2.5 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] cursor-pointer select-none ${
                     hideLegacyDeleted
-                      ? 'bg-amber-500/15 border-amber-500/35 text-amber-200 hover:bg-amber-500/25'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/80 hover:text-white'
+                      ? 'bg-[var(--accent-amber-soft)] border-[var(--accent-amber-border)] text-[var(--accent-amber)]'
+                      : 'glass-control text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:border-[var(--border-strong)]'
                   }`}
                 >
                   {hideLegacyDeleted ? (
-                    <Eye className="w-3.5 h-3.5 text-amber-300" />
+                    <Eye className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
                   ) : (
-                    <EyeOff className="w-3.5 h-3.5 text-zinc-400" />
+                    <EyeOff className="w-3.5 h-3.5 text-[var(--ink-tertiary)]" />
                   )}
                   <span>{hideLegacyDeleted ? 'Show Legacy' : 'Hide Legacy'}</span>
                   <span className="text-[10px] opacity-75">({legacyDeletedCount})</span>
@@ -401,9 +399,9 @@ export function DeletedChatsModal({
                         setConfirmClearLegacy(false);
                         void onDismissLegacy(visibleLegacySessions, true);
                       }}
-                      className="h-8 px-2.5 rounded-lg border bg-rose-500/20 border-rose-500/45 text-rose-200 hover:bg-rose-500/30 text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] disabled:opacity-50 cursor-pointer select-none"
+                      className="h-8 px-2.5 rounded-lg border bg-[var(--accent-rose-soft)] border-[var(--accent-rose-border)] text-[var(--accent-rose)] font-medium text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] disabled:opacity-50 cursor-pointer select-none"
                     >
-                      <Check className="w-3.5 h-3.5 text-rose-300" />
+                      <Check className="w-3.5 h-3.5" />
                       <span>Confirm ({visibleLegacySessions.length})</span>
                     </button>
                     <button
@@ -411,7 +409,7 @@ export function DeletedChatsModal({
                       disabled={isClearingLegacyBulk}
                       onClick={() => setConfirmClearLegacy(false)}
                       aria-label="Cancel clear legacy chats"
-                      className="h-8 w-8 rounded-lg border bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-700 flex items-center justify-center transition-colors cursor-pointer"
+                      className="h-8 w-8 rounded-lg glass-control text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center justify-center transition-colors cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -421,9 +419,9 @@ export function DeletedChatsModal({
                     type="button"
                     disabled={isClearingLegacyBulk}
                     onClick={() => setConfirmClearLegacy(true)}
-                    className="h-8 px-2.5 rounded-lg border bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-rose-500/40 hover:bg-rose-500/15 hover:text-rose-200 text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] disabled:opacity-50 cursor-pointer select-none"
+                    className="h-8 px-2.5 rounded-lg glass-control text-[var(--ink-secondary)] hover:border-[var(--accent-rose-border)] hover:bg-[var(--accent-rose-soft)] hover:text-[var(--accent-rose)] text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] disabled:opacity-50 cursor-pointer select-none"
                   >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-400/85" />
+                    <Trash2 className="w-3.5 h-3.5 text-[var(--accent-rose)]" />
                     <span>Clear Legacy</span>
                     <span className="text-[10px] opacity-75">({visibleLegacySessions.length})</span>
                   </button>
@@ -436,15 +434,15 @@ export function DeletedChatsModal({
                   disabled={isRestoringLegacy}
                   onClick={() => void onRestoreLegacy()}
                   title={`Restore ${dismissedLegacyCount} dismissed legacy chat(s)`}
-                  className="h-8 px-2.5 rounded-lg border bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-emerald-500/40 hover:bg-emerald-500/15 hover:text-emerald-200 text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] disabled:opacity-50 cursor-pointer select-none"
+                  className="h-8 px-2.5 rounded-lg glass-control text-[var(--ink-secondary)] hover:border-[var(--accent-teal-border)] hover:bg-[var(--accent-teal-soft)] hover:text-[var(--accent-teal)] text-xs font-mono flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] disabled:opacity-50 cursor-pointer select-none"
                 >
-                  <RotateCcw className={`w-3.5 h-3.5 text-emerald-400 ${isRestoringLegacy ? 'animate-spin' : ''}`} />
+                  <RotateCcw className={`w-3.5 h-3.5 text-[var(--accent-teal)] ${isRestoringLegacy ? 'animate-spin' : ''}`} />
                   <span>Restore ({dismissedLegacyCount})</span>
                 </button>
               )}
 
               {(searchQuery.trim() || hideLegacyDeleted) && deletedSessions.length > 0 && (
-                <span className="text-[11px] font-mono text-zinc-400 ml-auto sm:ml-0">
+                <span className="text-[11px] font-mono text-[var(--ink-tertiary)] ml-auto sm:ml-0">
                   {visibleDeletedSessions.length}/{deletedSessions.length}
                 </span>
               )}
@@ -455,18 +453,18 @@ export function DeletedChatsModal({
         {/* Scrollable Deleted Chats List */}
         <div className="sm:flex-1 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain p-3.5 sm:p-5 space-y-2.5">
           {deletedSessions.length === 0 ? (
-            <div className="py-10 text-center space-y-2 animate-burn-fade-up">
-              <div className="w-10 h-10 rounded-full bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center mx-auto text-zinc-500">
+            <div className="py-10 text-center space-y-2">
+              <div className="w-10 h-10 rounded-full glass-control flex items-center justify-center mx-auto text-[var(--ink-tertiary)]">
                 <Trash2 className="w-4 h-4" />
               </div>
-              <p className="text-xs font-medium text-zinc-300">No deleted chats in this filter</p>
-              <p className="text-[11px] text-zinc-500 max-w-sm mx-auto">
+              <p className="text-xs font-medium text-[var(--ink-primary)]">No deleted chats in this filter</p>
+              <p className="text-[11px] text-[var(--ink-tertiary)] max-w-sm mx-auto">
                 Whenever you delete a chat in Antigravity, Claude Code or Codex CLI, its API spend and models stay archived here automatically.
               </p>
             </div>
           ) : visibleDeletedSessions.length === 0 ? (
-            <div className="py-10 text-center space-y-2 animate-burn-expand">
-              <p className="text-xs font-mono text-zinc-400">
+            <div className="py-10 text-center space-y-2">
+              <p className="text-xs font-mono text-[var(--ink-secondary)]">
                 {searchQuery.trim()
                   ? `No deleted chats matching "${searchQuery.trim()}".`
                   : 'No tracked deleted chats yet (legacy chats are hidden).'}
@@ -476,7 +474,7 @@ export function DeletedChatsModal({
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="text-[11px] font-mono text-emerald-400 hover:text-emerald-300 underline underline-offset-2 cursor-pointer"
+                    className="text-[11px] font-mono text-[var(--accent-teal)] hover:underline underline-offset-2 cursor-pointer"
                   >
                     Clear search
                   </button>
@@ -485,7 +483,7 @@ export function DeletedChatsModal({
                   <button
                     type="button"
                     onClick={onToggleHideLegacy}
-                    className="text-[11px] font-mono text-amber-300 hover:text-amber-200 underline underline-offset-2 cursor-pointer"
+                    className="text-[11px] font-mono text-[var(--accent-amber)] hover:underline underline-offset-2 cursor-pointer"
                   >
                     Show legacy ({legacyDeletedCount})
                   </button>
@@ -493,7 +491,7 @@ export function DeletedChatsModal({
               </div>
             </div>
           ) : (
-            visibleDeletedSessions.map((chat, idx) => {
+            visibleDeletedSessions.map((chat) => {
               const delTs = fmtPreciseDate(chat.deletedAt || chat.lastActiveAt);
               const chatModels = getSessionModelBreakdown(chat.turnHistory);
               const chatSubagents = getSessionSubagentBreakdown(chat.turnHistory).subagents;
@@ -504,20 +502,15 @@ export function DeletedChatsModal({
               return (
                 <div
                   key={chatKey}
-                  style={{ animationDelay: `${Math.min(idx, 10) * 24}ms` }}
-                  className={`rounded-xl border p-3 sm:p-3.5 transition-all duration-200 animate-burn-fade-up ${
+                  className={`glass-subcard rounded-xl p-3 sm:p-3.5 transition-all duration-150 hover:border-[var(--border-strong)] ${
                     isDismissing ? 'opacity-45 scale-[0.99] pointer-events-none' : ''
-                  } ${
-                    isLegacy
-                      ? 'bg-zinc-950/45 border-zinc-800/60 hover:border-zinc-700/75 hover:bg-zinc-900/50'
-                      : 'bg-zinc-950/75 border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/65'
-                  }`}
+                  } ${isLegacy ? 'opacity-85' : ''}`}
                 >
                   <div className="flex items-start justify-between gap-2.5 sm:gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span
-                          className="text-xs font-semibold text-zinc-100 line-clamp-2 sm:truncate break-words min-w-0"
+                          className="text-xs font-semibold text-[var(--ink-primary)] line-clamp-2 sm:truncate break-words min-w-0"
                           title={chat.sessionTitle || chat.sessionId}
                         >
                           {chat.sessionTitle || chat.sessionId}
@@ -525,7 +518,7 @@ export function DeletedChatsModal({
                         <CompactSourceBadge source={chat.source} />
                         {isLegacy && (
                           <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/25 whitespace-nowrap"
+                            className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)] whitespace-nowrap"
                             title="Deleted before burnrate archived its token log"
                           >
                             Legacy · no token log
@@ -533,24 +526,24 @@ export function DeletedChatsModal({
                         )}
                       </div>
 
-                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-mono text-zinc-400">
-                        <span className="inline-flex items-center gap-1 text-zinc-300 max-w-full truncate" title={chat.workspace}>
-                          <FolderGit2 className="w-3 h-3 text-zinc-500 shrink-0" />
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-mono text-[var(--ink-tertiary)]">
+                        <span className="inline-flex items-center gap-1 text-[var(--ink-secondary)] max-w-full truncate" title={chat.workspace}>
+                          <FolderGit2 className="w-3 h-3 text-[var(--ink-tertiary)] shrink-0" />
                           <span className="truncate">{chat.workspaceName}</span>
                         </span>
-                        <span className="text-zinc-600">•</span>
+                        <span>•</span>
                         <span>
                           {chat.turns} {isLegacy ? 'prompts' : 'turns'}
                         </span>
                         {!isLegacy && (
                           <>
-                            <span className="text-zinc-600">•</span>
+                            <span>•</span>
                             <span>{fmtTokens(chat.totalTokens)} tok</span>
                           </>
                         )}
-                        <span className="text-zinc-600">•</span>
+                        <span>•</span>
                         <span
-                          className="text-rose-300/90"
+                          className="text-[var(--accent-rose)]"
                           title={`${isLegacy ? 'Last active' : 'Deleted'} ${delTs.date} ${delTs.time}`}
                         >
                           {isLegacy ? 'Last seen' : 'Deleted'} {fmtRelativeTime(chat.deletedAt || chat.lastActiveAt)} ({delTs.date})
@@ -562,7 +555,7 @@ export function DeletedChatsModal({
                       {isLegacy ? (
                         <div className="flex items-center gap-1.5 sm:gap-2">
                           <span
-                            className="text-xs font-mono text-zinc-500"
+                            className="text-xs font-mono text-[var(--ink-tertiary)]"
                             title="Token log was removed before burnrate ledger tracking"
                           >
                             N/A
@@ -573,18 +566,18 @@ export function DeletedChatsModal({
                             onClick={() => void onDismissLegacy([chat])}
                             aria-label={`Remove legacy chat ${chat.sessionTitle || chat.sessionId}`}
                             title="Remove this legacy chat from the deleted list"
-                            className="h-8 w-8 sm:h-7 sm:w-7 rounded-lg border border-zinc-800/90 bg-zinc-900/70 text-zinc-400 hover:text-rose-300 hover:bg-rose-500/15 hover:border-rose-500/35 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-40 cursor-pointer"
+                            className="h-8 w-8 sm:h-7 sm:w-7 rounded-lg glass-control text-[var(--ink-tertiary)] hover:text-[var(--accent-rose)] hover:bg-[var(--accent-rose-soft)] hover:border-[var(--accent-rose-border)] flex items-center justify-center transition-all duration-150 active:scale-95 disabled:opacity-40 cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ) : (
                         <>
-                          <div className="text-sm font-bold font-mono text-emerald-400">
+                          <div className="text-sm font-bold font-mono tabular text-[var(--accent-teal)]">
                             {formatMoney(chat.costUSD, currency)}
                           </div>
                           {chat.cacheSavingsUSD > 0 && (
-                            <div className="text-[10px] font-mono text-fuchsia-400">
+                            <div className="text-[10px] font-mono tabular text-[var(--accent-violet)]">
                               +{formatMoney(chat.cacheSavingsUSD, currency)} saved
                             </div>
                           )}
@@ -594,14 +587,14 @@ export function DeletedChatsModal({
                   </div>
 
                   {(chatModels.length > 0 || chatSubagents.length > 0) && (
-                    <div className="mt-2.5 pt-2 border-t border-zinc-800/70 flex flex-wrap items-center gap-1.5">
+                    <div className="mt-2.5 pt-2 border-t border-[var(--border-hairline)] flex flex-wrap items-center gap-1.5">
                       {chatModels.map((m) => (
                         <span
                           key={m.modelLabel}
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-[10px] font-mono text-zinc-300"
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md glass-control text-[10px] font-mono text-[var(--ink-secondary)]"
                         >
                           <span>{m.modelLabel}</span>
-                          <span className="text-emerald-400">
+                          <span className="text-[var(--accent-teal)] font-semibold">
                             {formatMoney(m.costUSD, currency)}
                           </span>
                         </span>
@@ -611,21 +604,21 @@ export function DeletedChatsModal({
                         return (
                           <span
                             key={sub.subagentId}
-                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono ${
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border ${
                               isBtw
-                                ? 'bg-sky-950/35 border border-sky-500/30 text-sky-200'
-                                : 'bg-violet-950/35 border border-violet-500/30 text-violet-200'
+                                ? 'bg-[var(--accent-sky-soft)] border-[var(--accent-sky-border)] text-[var(--accent-sky)]'
+                                : 'bg-[var(--accent-violet-soft)] border-[var(--accent-violet-border)] text-[var(--accent-violet)]'
                             }`}
                             title={`${isBtw ? 'Side-chat' : 'Subagent'}: ${sub.subagentName} · ${sub.turns}t · ${fmtTokens(sub.totalTokens)} tok`}
                           >
                             {isBtw ? (
-                              <MessageSquare className="w-2.5 h-2.5 text-sky-400 shrink-0" />
+                              <MessageSquare className="w-2.5 h-2.5 shrink-0" />
                             ) : (
-                              <Bot className="w-2.5 h-2.5 text-violet-400 shrink-0" />
+                              <Bot className="w-2.5 h-2.5 shrink-0" />
                             )}
                             <span>{sub.subagentName}</span>
-                            <span className="text-zinc-400">· {sub.turns}t</span>
-                            <span className="text-emerald-400">
+                            <span className="text-[var(--ink-tertiary)]">· {sub.turns}t</span>
+                            <span className="text-[var(--accent-teal)] font-semibold">
                               {formatMoney(sub.costUSD, currency)}
                             </span>
                           </span>
@@ -638,8 +631,7 @@ export function DeletedChatsModal({
             })
           )}
         </div>
-        </div>
       </div>
-    </div>
+    </dialog>
   );
 }

@@ -2,59 +2,822 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Self-hosted variable WOFF2 fonts: Schibsted Grotesk + JetBrains Mono */
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("./fonts/schibsted-grotesk-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("./fonts/schibsted-grotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ==========================================================================
+   Liquid-Glass Dual Theme System (Matched to burnrate website)
+   Light: Sunlit Porcelain Mist (#f4f3ee) — calibrated opacity for dense data
+   Dark:  Deep Ocean Petrol (#0f1c26) — marine sapphire glass, ZERO pure black
+   ========================================================================== */
+:root {
+  color-scheme: light dark;
+
+  /* Light primitives — 1:1 identical transparency & specular tokens to website */
+  --bg-canvas-light: #f4f3ee;
+  --bg-surface-light: rgba(255, 255, 255, 0.42);
+  --bg-elevated-light: rgba(250, 252, 252, 0.36);
+  --bg-subcard-light: rgba(255, 255, 255, 0.36);
+  --bg-modal-light: rgba(252, 252, 250, 0.52);
+  --bg-modal-band-light: rgba(255, 255, 255, 0.22);
+  --bg-tooltip-light: rgba(255, 255, 255, 0.94);
+  --bg-input-light: rgba(255, 255, 255, 0.56);
+  --glass-header-light: rgba(253, 252, 249, 0.34);
+  --glass-specular-light: rgba(255, 255, 255, 0.94);
+  --glass-bottom-rim-light: rgba(15, 34, 48, 0.08);
+  --border-hairline-light: rgba(15, 34, 48, 0.13);
+  --border-strong-light: rgba(15, 34, 48, 0.25);
+  --ink-primary-light: #0c1923;
+  --ink-secondary-light: #314454;
+  --ink-tertiary-light: #4b5f70;
+  --accent-teal-light: #0a786a;
+  --accent-teal-strong-light: #075c52;
+  --accent-teal-soft-light: rgba(10, 120, 106, 0.12);
+  --accent-teal-border-light: rgba(10, 120, 106, 0.3);
+  --accent-flame-light: #cb451b;
+  --accent-flame-soft-light: rgba(203, 69, 27, 0.11);
+  --accent-amber-light: #b05008;
+  --accent-amber-soft-light: rgba(180, 83, 9, 0.11);
+  --accent-amber-border-light: rgba(180, 83, 9, 0.3);
+  --accent-rose-light: #be123c;
+  --accent-rose-soft-light: rgba(190, 18, 60, 0.1);
+  --accent-rose-border-light: rgba(190, 18, 60, 0.28);
+  --accent-sky-light: #036998;
+  --accent-sky-soft-light: rgba(3, 105, 152, 0.11);
+  --accent-sky-border-light: rgba(3, 105, 152, 0.28);
+  --accent-violet-light: #6925d3;
+  --accent-violet-soft-light: rgba(105, 37, 211, 0.1);
+  --accent-violet-border-light: rgba(105, 37, 211, 0.28);
+  --tool-antigravity-light: #036998;
+  --tool-claude-light: #6925d3;
+  --tool-codex-light: #b05008;
+  --header-shadow-light: rgba(15, 34, 48, 0.12);
+  --card-shadow-light: rgba(15, 34, 48, 0.11);
+  --table-head-light: rgba(238, 243, 245, 0.65);
+  --table-hover-light: rgba(10, 120, 106, 0.055);
+  --track-bg-light: rgba(15, 34, 48, 0.1);
+  --backdrop-scrim-light: rgba(15, 31, 44, 0.22);
+  --scrollbar-track-light: #e7ebed;
+  --scrollbar-thumb-light: #93a3ae;
+  --chart-grid-light: rgba(15, 34, 48, 0.1);
+  --chart-cursor-light: rgba(10, 120, 106, 0.07);
+
+  /* Dark primitives — Deep Ocean Petrol (1:1 identical to website, ZERO pure black) */
+  --bg-canvas-dark: #0f1c26;
+  --bg-surface-dark: rgba(21, 39, 54, 0.4);
+  --bg-elevated-dark: rgba(28, 51, 70, 0.34);
+  --bg-subcard-dark: rgba(16, 31, 44, 0.36);
+  --bg-modal-dark: rgba(16, 31, 44, 0.5);
+  --bg-modal-band-dark: rgba(24, 46, 64, 0.24);
+  --bg-tooltip-dark: rgba(14, 28, 40, 0.94);
+  --bg-input-dark: rgba(14, 28, 40, 0.48);
+  --glass-header-dark: rgba(16, 31, 44, 0.36);
+  --glass-specular-dark: rgba(206, 240, 250, 0.22);
+  --glass-bottom-rim-dark: rgba(120, 184, 210, 0.1);
+  --border-hairline-dark: rgba(170, 212, 232, 0.18);
+  --border-strong-dark: rgba(170, 212, 232, 0.34);
+  --ink-primary-dark: #f2f8fb;
+  --ink-secondary-dark: #b6cbdc;
+  --ink-tertiary-dark: #94aec2;
+  --accent-teal-dark: #2dd4bf;
+  --accent-teal-strong-dark: #5eead4;
+  --accent-teal-soft-dark: rgba(45, 212, 191, 0.15);
+  --accent-teal-border-dark: rgba(45, 212, 191, 0.34);
+  --accent-flame-dark: #fb7349;
+  --accent-flame-soft-dark: rgba(251, 115, 73, 0.15);
+  --accent-amber-dark: #fbbf24;
+  --accent-amber-soft-dark: rgba(251, 191, 36, 0.14);
+  --accent-amber-border-dark: rgba(251, 191, 36, 0.34);
+  --accent-rose-dark: #fb7185;
+  --accent-rose-soft-dark: rgba(251, 113, 133, 0.14);
+  --accent-rose-border-dark: rgba(251, 113, 133, 0.34);
+  --accent-sky-dark: #38bdf8;
+  --accent-sky-soft-dark: rgba(56, 189, 248, 0.15);
+  --accent-sky-border-dark: rgba(56, 189, 248, 0.34);
+  --accent-violet-dark: #c084fc;
+  --accent-violet-soft-dark: rgba(192, 132, 252, 0.15);
+  --accent-violet-border-dark: rgba(192, 132, 252, 0.34);
+  --tool-antigravity-dark: #38bdf8;
+  --tool-claude-dark: #c084fc;
+  --tool-codex-dark: #fbbf24;
+  --header-shadow-dark: rgba(4, 12, 20, 0.48);
+  --card-shadow-dark: rgba(4, 12, 20, 0.4);
+  --table-head-dark: rgba(16, 31, 44, 0.68);
+  --table-hover-dark: rgba(45, 212, 191, 0.07);
+  --track-bg-dark: rgba(168, 206, 224, 0.13);
+  --backdrop-scrim-dark: rgba(5, 13, 21, 0.42);
+  --scrollbar-track-dark: #10202c;
+  --scrollbar-thumb-dark: #48647a;
+  --chart-grid-dark: rgba(170, 212, 232, 0.12);
+  --chart-cursor-dark: rgba(45, 212, 191, 0.08);
+
+  /* Light defaults */
+  --bg-canvas: var(--bg-canvas-light);
+  --bg-surface: var(--bg-surface-light);
+  --bg-elevated: var(--bg-elevated-light);
+  --bg-subcard: var(--bg-subcard-light);
+  --bg-modal: var(--bg-modal-light);
+  --bg-modal-band: var(--bg-modal-band-light);
+  --bg-tooltip: var(--bg-tooltip-light);
+  --bg-input: var(--bg-input-light);
+  --glass-header: var(--glass-header-light);
+  --glass-specular: var(--glass-specular-light);
+  --glass-bottom-rim: var(--glass-bottom-rim-light);
+  --border-hairline: var(--border-hairline-light);
+  --border-strong: var(--border-strong-light);
+  --ink-primary: var(--ink-primary-light);
+  --ink-secondary: var(--ink-secondary-light);
+  --ink-tertiary: var(--ink-tertiary-light);
+  --accent-teal: var(--accent-teal-light);
+  --accent-teal-strong: var(--accent-teal-strong-light);
+  --accent-teal-soft: var(--accent-teal-soft-light);
+  --accent-teal-border: var(--accent-teal-border-light);
+  --accent-flame: var(--accent-flame-light);
+  --accent-flame-soft: var(--accent-flame-soft-light);
+  --accent-amber: var(--accent-amber-light);
+  --accent-amber-soft: var(--accent-amber-soft-light);
+  --accent-amber-border: var(--accent-amber-border-light);
+  --accent-rose: var(--accent-rose-light);
+  --accent-rose-soft: var(--accent-rose-soft-light);
+  --accent-rose-border: var(--accent-rose-border-light);
+  --accent-sky: var(--accent-sky-light);
+  --accent-sky-soft: var(--accent-sky-soft-light);
+  --accent-sky-border: var(--accent-sky-border-light);
+  --accent-violet: var(--accent-violet-light);
+  --accent-violet-soft: var(--accent-violet-soft-light);
+  --accent-violet-border: var(--accent-violet-border-light);
+  --tool-antigravity: var(--tool-antigravity-light);
+  --tool-claude: var(--tool-claude-light);
+  --tool-codex: var(--tool-codex-light);
+  --header-shadow: var(--header-shadow-light);
+  --card-shadow: var(--card-shadow-light);
+  --table-head: var(--table-head-light);
+  --table-hover: var(--table-hover-light);
+  --track-bg: var(--track-bg-light);
+  --backdrop-scrim: var(--backdrop-scrim-light);
+  --scrollbar-track: var(--scrollbar-track-light);
+  --scrollbar-thumb: var(--scrollbar-thumb-light);
+  --chart-grid: var(--chart-grid-light);
+  --chart-cursor: var(--chart-cursor-light);
+
+  /* Thermal heatmap tiles */
+  --heat-0-bg: rgba(15, 34, 48, 0.07);
+  --heat-0-border: rgba(15, 34, 48, 0.12);
+  --heat-1-bg: rgba(34, 184, 166, 0.34);
+  --heat-1-border: rgba(10, 120, 106, 0.38);
+  --heat-2-bg: #1ca693;
+  --heat-2-border: #128979;
+  --heat-3-bg: #ec9229;
+  --heat-3-border: #d07610;
+  --heat-4-bg: #da4921;
+  --heat-4-border: #b63612;
+
+  /* Ambient orbs & arcs — 1:1 identical chromatic richness to website */
+  --orb-teal: rgba(13, 174, 152, 0.66);
+  --orb-flame: rgba(238, 95, 48, 0.6);
+  --orb-cyan: rgba(14, 154, 218, 0.54);
+  --orb-violet: rgba(132, 82, 244, 0.46);
+  --ring-teal: rgba(10, 148, 132, 0.48);
+  --ring-cyan: rgba(2, 132, 199, 0.38);
+  --ring-flame: rgba(226, 80, 36, 0.45);
+  --ring-violet: rgba(124, 58, 237, 0.36);
+
+  /* MANDATORY fallback for browsers without light-dark() */
+  @media (prefers-color-scheme: dark) {
+    --bg-canvas: var(--bg-canvas-dark);
+    --bg-surface: var(--bg-surface-dark);
+    --bg-elevated: var(--bg-elevated-dark);
+    --bg-subcard: var(--bg-subcard-dark);
+    --bg-modal: var(--bg-modal-dark);
+    --bg-modal-band: var(--bg-modal-band-dark);
+    --bg-tooltip: var(--bg-tooltip-dark);
+    --bg-input: var(--bg-input-dark);
+    --glass-header: var(--glass-header-dark);
+    --glass-specular: var(--glass-specular-dark);
+    --glass-bottom-rim: var(--glass-bottom-rim-dark);
+    --border-hairline: var(--border-hairline-dark);
+    --border-strong: var(--border-strong-dark);
+    --ink-primary: var(--ink-primary-dark);
+    --ink-secondary: var(--ink-secondary-dark);
+    --ink-tertiary: var(--ink-tertiary-dark);
+    --accent-teal: var(--accent-teal-dark);
+    --accent-teal-strong: var(--accent-teal-strong-dark);
+    --accent-teal-soft: var(--accent-teal-soft-dark);
+    --accent-teal-border: var(--accent-teal-border-dark);
+    --accent-flame: var(--accent-flame-dark);
+    --accent-flame-soft: var(--accent-flame-soft-dark);
+    --accent-amber: var(--accent-amber-dark);
+    --accent-amber-soft: var(--accent-amber-soft-dark);
+    --accent-amber-border: var(--accent-amber-border-dark);
+    --accent-rose: var(--accent-rose-dark);
+    --accent-rose-soft: var(--accent-rose-soft-dark);
+    --accent-rose-border: var(--accent-rose-border-dark);
+    --accent-sky: var(--accent-sky-dark);
+    --accent-sky-soft: var(--accent-sky-soft-dark);
+    --accent-sky-border: var(--accent-sky-border-dark);
+    --accent-violet: var(--accent-violet-dark);
+    --accent-violet-soft: var(--accent-violet-soft-dark);
+    --accent-violet-border: var(--accent-violet-border-dark);
+    --tool-antigravity: var(--tool-antigravity-dark);
+    --tool-claude: var(--tool-claude-dark);
+    --tool-codex: var(--tool-codex-dark);
+    --header-shadow: var(--header-shadow-dark);
+    --card-shadow: var(--card-shadow-dark);
+    --table-head: var(--table-head-dark);
+    --table-hover: var(--table-hover-dark);
+    --track-bg: var(--track-bg-dark);
+    --backdrop-scrim: var(--backdrop-scrim-dark);
+    --scrollbar-track: var(--scrollbar-track-dark);
+    --scrollbar-thumb: var(--scrollbar-thumb-dark);
+    --chart-grid: var(--chart-grid-dark);
+    --chart-cursor: var(--chart-cursor-dark);
+    --heat-0-bg: rgba(168, 206, 224, 0.09);
+    --heat-0-border: rgba(168, 206, 224, 0.16);
+    --heat-1-bg: rgba(45, 212, 191, 0.28);
+    --heat-1-border: rgba(45, 212, 191, 0.42);
+    --heat-2-bg: #179586;
+    --heat-2-border: #27b9a8;
+    --heat-3-bg: #df8620;
+    --heat-3-border: #f4a13f;
+    --heat-4-bg: #ec5c33;
+    --heat-4-border: #fd825e;
+    --orb-teal: rgba(45, 212, 191, 0.46);
+    --orb-flame: rgba(251, 115, 73, 0.4);
+    --orb-cyan: rgba(56, 189, 248, 0.36);
+    --orb-violet: rgba(192, 132, 252, 0.34);
+    --ring-teal: rgba(45, 212, 191, 0.22);
+    --ring-cyan: rgba(56, 189, 248, 0.16);
+    --ring-flame: rgba(251, 115, 73, 0.2);
+    --ring-violet: rgba(192, 132, 252, 0.16);
+  }
+
+  @supports (color: light-dark(white, black)) {
+    --bg-canvas: light-dark(var(--bg-canvas-light), var(--bg-canvas-dark));
+    --bg-surface: light-dark(var(--bg-surface-light), var(--bg-surface-dark));
+    --bg-elevated: light-dark(var(--bg-elevated-light), var(--bg-elevated-dark));
+    --bg-subcard: light-dark(var(--bg-subcard-light), var(--bg-subcard-dark));
+    --bg-modal: light-dark(var(--bg-modal-light), var(--bg-modal-dark));
+    --bg-modal-band: light-dark(var(--bg-modal-band-light), var(--bg-modal-band-dark));
+    --bg-tooltip: light-dark(var(--bg-tooltip-light), var(--bg-tooltip-dark));
+    --bg-input: light-dark(var(--bg-input-light), var(--bg-input-dark));
+    --glass-header: light-dark(var(--glass-header-light), var(--glass-header-dark));
+    --glass-specular: light-dark(var(--glass-specular-light), var(--glass-specular-dark));
+    --glass-bottom-rim: light-dark(var(--glass-bottom-rim-light), var(--glass-bottom-rim-dark));
+    --border-hairline: light-dark(var(--border-hairline-light), var(--border-hairline-dark));
+    --border-strong: light-dark(var(--border-strong-light), var(--border-strong-dark));
+    --ink-primary: light-dark(var(--ink-primary-light), var(--ink-primary-dark));
+    --ink-secondary: light-dark(var(--ink-secondary-light), var(--ink-secondary-dark));
+    --ink-tertiary: light-dark(var(--ink-tertiary-light), var(--ink-tertiary-dark));
+    --accent-teal: light-dark(var(--accent-teal-light), var(--accent-teal-dark));
+    --accent-teal-strong: light-dark(var(--accent-teal-strong-light), var(--accent-teal-strong-dark));
+    --accent-teal-soft: light-dark(var(--accent-teal-soft-light), var(--accent-teal-soft-dark));
+    --accent-teal-border: light-dark(var(--accent-teal-border-light), var(--accent-teal-border-dark));
+    --accent-flame: light-dark(var(--accent-flame-light), var(--accent-flame-dark));
+    --accent-flame-soft: light-dark(var(--accent-flame-soft-light), var(--accent-flame-soft-dark));
+    --accent-amber: light-dark(var(--accent-amber-light), var(--accent-amber-dark));
+    --accent-amber-soft: light-dark(var(--accent-amber-soft-light), var(--accent-amber-soft-dark));
+    --accent-amber-border: light-dark(var(--accent-amber-border-light), var(--accent-amber-border-dark));
+    --accent-rose: light-dark(var(--accent-rose-light), var(--accent-rose-dark));
+    --accent-rose-soft: light-dark(var(--accent-rose-soft-light), var(--accent-rose-soft-dark));
+    --accent-rose-border: light-dark(var(--accent-rose-border-light), var(--accent-rose-border-dark));
+    --accent-sky: light-dark(var(--accent-sky-light), var(--accent-sky-dark));
+    --accent-sky-soft: light-dark(var(--accent-sky-soft-light), var(--accent-sky-soft-dark));
+    --accent-sky-border: light-dark(var(--accent-sky-border-light), var(--accent-sky-border-dark));
+    --accent-violet: light-dark(var(--accent-violet-light), var(--accent-violet-dark));
+    --accent-violet-soft: light-dark(var(--accent-violet-soft-light), var(--accent-violet-soft-dark));
+    --accent-violet-border: light-dark(var(--accent-violet-border-light), var(--accent-violet-border-dark));
+    --tool-antigravity: light-dark(var(--tool-antigravity-light), var(--tool-antigravity-dark));
+    --tool-claude: light-dark(var(--tool-claude-light), var(--tool-claude-dark));
+    --tool-codex: light-dark(var(--tool-codex-light), var(--tool-codex-dark));
+    --header-shadow: light-dark(var(--header-shadow-light), var(--header-shadow-dark));
+    --card-shadow: light-dark(var(--card-shadow-light), var(--card-shadow-dark));
+    --table-head: light-dark(var(--table-head-light), var(--table-head-dark));
+    --table-hover: light-dark(var(--table-hover-light), var(--table-hover-dark));
+    --track-bg: light-dark(var(--track-bg-light), var(--track-bg-dark));
+    --backdrop-scrim: light-dark(var(--backdrop-scrim-light), var(--backdrop-scrim-dark));
+    --scrollbar-track: light-dark(var(--scrollbar-track-light), var(--scrollbar-track-dark));
+    --scrollbar-thumb: light-dark(var(--scrollbar-thumb-light), var(--scrollbar-thumb-dark));
+    --chart-grid: light-dark(var(--chart-grid-light), var(--chart-grid-dark));
+    --chart-cursor: light-dark(var(--chart-cursor-light), var(--chart-cursor-dark));
+    --heat-0-bg: light-dark(rgba(15, 34, 48, 0.07), rgba(168, 206, 224, 0.09));
+    --heat-0-border: light-dark(rgba(15, 34, 48, 0.12), rgba(168, 206, 224, 0.16));
+    --heat-1-bg: light-dark(rgba(34, 184, 166, 0.34), rgba(45, 212, 191, 0.28));
+    --heat-1-border: light-dark(rgba(10, 120, 106, 0.38), rgba(45, 212, 191, 0.42));
+    --heat-2-bg: light-dark(#1ca693, #179586);
+    --heat-2-border: light-dark(#128979, #27b9a8);
+    --heat-3-bg: light-dark(#ec9229, #df8620);
+    --heat-3-border: light-dark(#d07610, #f4a13f);
+    --heat-4-bg: light-dark(#da4921, #ec5c33);
+    --heat-4-border: light-dark(#b63612, #fd825e);
+    --orb-teal: light-dark(rgba(13, 174, 152, 0.66), rgba(45, 212, 191, 0.46));
+    --orb-flame: light-dark(rgba(238, 95, 48, 0.6), rgba(251, 115, 73, 0.4));
+    --orb-cyan: light-dark(rgba(14, 154, 218, 0.54), rgba(56, 189, 248, 0.36));
+    --orb-violet: light-dark(rgba(132, 82, 244, 0.46), rgba(192, 132, 252, 0.34));
+    --ring-teal: light-dark(rgba(10, 148, 132, 0.48), rgba(45, 212, 191, 0.22));
+    --ring-cyan: light-dark(rgba(2, 132, 199, 0.38), rgba(56, 189, 248, 0.16));
+    --ring-flame: light-dark(rgba(226, 80, 36, 0.45), rgba(251, 115, 73, 0.2));
+    --ring-violet: light-dark(rgba(124, 58, 237, 0.36), rgba(192, 132, 252, 0.16));
+  }
+
+  /* Reflect <meta name="color-scheme"> override back into CSS color-scheme */
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
+
+  accent-color: var(--accent-teal);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --bg-surface-light: rgba(255, 255, 255, 0.97);
+    --bg-elevated-light: rgba(244, 247, 248, 0.96);
+    --bg-subcard-light: rgba(255, 255, 255, 0.97);
+    --glass-header-light: rgba(252, 251, 248, 0.97);
+    --bg-surface-dark: rgba(21, 39, 54, 0.97);
+    --bg-elevated-dark: rgba(28, 51, 70, 0.96);
+    --bg-subcard-dark: rgba(16, 31, 44, 0.97);
+    --glass-header-dark: rgba(16, 31, 44, 0.97);
+  }
+}
+
+/* CSS-branched Sun/Moon toggle options (no JS class branching needed) */
+.theme-opt-dark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.theme-opt-light {
+  display: none;
+  align-items: center;
+  gap: 0.35rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:has(> head > meta[name="color-scheme"][content="light"])) .theme-opt-dark {
+    display: none;
+  }
+  :root:not(:has(> head > meta[name="color-scheme"][content="light"])) .theme-opt-light {
+    display: inline-flex;
+  }
+}
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .theme-opt-dark {
+  display: none;
+}
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .theme-opt-light {
+  display: inline-flex;
+}
+
+@supports not (scrollbar-color: auto) {
+  html::-webkit-scrollbar { width: 8px; height: 8px; }
+  html::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+  html::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
+  }
+}
+
 @layer base {
   html {
+    background-color: var(--bg-canvas);
+    color: var(--ink-primary);
     scroll-behavior: smooth;
   }
 
   body {
-    @apply bg-zinc-950 text-zinc-100 font-sans;
+    font-family: "Schibsted Grotesk", system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-canvas);
+    color: var(--ink-primary);
+    caret-color: var(--accent-teal);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: clip;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--accent-teal) 26%, transparent);
+    color: var(--ink-primary);
+  }
+
+  :where(a:any-link, button, input, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent-teal);
+    outline-offset: 2px;
   }
 }
 
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Scroll-Driven Parallax Chromatic Backdrop (Zero filter:blur() GPU cost)
+   ========================================================================== */
+.ambient-orb {
+  position: absolute;
+  border-radius: 9999px;
+}
+
+.ambient-orb-teal {
+  width: min(74vw, 940px);
+  height: min(74vw, 940px);
+  top: -220px;
+  left: -14%;
+  background: radial-gradient(
+    circle,
+    var(--orb-teal) 0%,
+    color-mix(in oklab, var(--orb-teal) 68%, transparent) 24%,
+    color-mix(in oklab, var(--orb-teal) 30%, transparent) 48%,
+    color-mix(in oklab, var(--orb-teal) 8%, transparent) 68%,
+    transparent 82%
+  );
+}
+
+.ambient-orb-flame {
+  width: min(68vw, 860px);
+  height: min(68vw, 860px);
+  top: -80px;
+  right: -14%;
+  background: radial-gradient(
+    circle,
+    var(--orb-flame) 0%,
+    color-mix(in oklab, var(--orb-flame) 66%, transparent) 24%,
+    color-mix(in oklab, var(--orb-flame) 28%, transparent) 48%,
+    color-mix(in oklab, var(--orb-flame) 7%, transparent) 68%,
+    transparent 82%
+  );
+}
+
+.ambient-orb-cyan {
+  width: min(66vw, 820px);
+  height: min(66vw, 820px);
+  top: 38%;
+  left: 2%;
+  background: radial-gradient(
+    circle,
+    var(--orb-cyan) 0%,
+    color-mix(in oklab, var(--orb-cyan) 64%, transparent) 24%,
+    color-mix(in oklab, var(--orb-cyan) 26%, transparent) 48%,
+    color-mix(in oklab, var(--orb-cyan) 6%, transparent) 68%,
+    transparent 82%
+  );
+}
+
+.ambient-orb-violet {
+  width: min(64vw, 780px);
+  height: min(64vw, 780px);
+  bottom: -16%;
+  right: 0%;
+  background: radial-gradient(
+    circle,
+    var(--orb-violet) 0%,
+    color-mix(in oklab, var(--orb-violet) 62%, transparent) 24%,
+    color-mix(in oklab, var(--orb-violet) 25%, transparent) 48%,
+    color-mix(in oklab, var(--orb-violet) 6%, transparent) 68%,
+    transparent 82%
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: scroll()) {
+    @keyframes orb-drift-teal {
+      from { transform: translate3d(0, 0, 0) scale(1); }
+      to { transform: translate3d(14vw, 18vh, 0) scale(1.08); }
+    }
+    @keyframes orb-drift-flame {
+      from { transform: translate3d(0, 0, 0) scale(1); }
+      to { transform: translate3d(-16vw, 24vh, 0) scale(0.94); }
+    }
+    @keyframes orb-drift-cyan {
+      from { transform: translate3d(0, 10vh, 0) scale(0.96); }
+      to { transform: translate3d(18vw, -16vh, 0) scale(1.08); }
+    }
+    @keyframes orb-drift-violet {
+      from { transform: translate3d(0, 10vh, 0) scale(1); }
+      to { transform: translate3d(-18vw, -20vh, 0) scale(1.1); }
+    }
+    @keyframes ring-parallax-a {
+      from { transform: translate3d(0, 0, 0) rotate(0deg); }
+      to { transform: translate3d(70px, -80px, 0) rotate(26deg); }
+    }
+    @keyframes ring-parallax-b {
+      from { transform: translate3d(0, 0, 0) rotate(0deg); }
+      to { transform: translate3d(-85px, 75px, 0) rotate(-32deg); }
+    }
+    @keyframes wave-parallax {
+      from { transform: translate3d(0, 40px, 0); }
+      to { transform: translate3d(0, -100px, 0); }
+    }
+
+    .ambient-orb-teal { animation: orb-drift-teal auto linear both; animation-timeline: scroll(root block); }
+    .ambient-orb-flame { animation: orb-drift-flame auto linear both; animation-timeline: scroll(root block); }
+    .ambient-orb-cyan { animation: orb-drift-cyan auto linear both; animation-timeline: scroll(root block); }
+    .ambient-orb-violet { animation: orb-drift-violet auto linear both; animation-timeline: scroll(root block); }
+    .ambient-ring-group-a { transform-origin: 200px 240px; animation: ring-parallax-a auto linear both; animation-timeline: scroll(root block); }
+    .ambient-ring-group-b { transform-origin: 1260px 400px; animation: ring-parallax-b auto linear both; animation-timeline: scroll(root block); }
+    .ambient-wave-arc { animation: wave-parallax auto linear both; animation-timeline: scroll(root block); }
+    .ambient-wave-arc-b { animation: wave-parallax auto linear reverse both; animation-timeline: scroll(root block); }
+  }
+}
+
+/* ==========================================================================
+   Liquid-Glass Dashboard Chrome & Panels
+   ========================================================================== */
+.scroll-progress-bar {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 2.5px;
+  z-index: 60;
+  background: linear-gradient(90deg, #17b983 0%, #22c0ec 45%, #f59e0b 78%, #fb7349 100%);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: scroll()) {
+    @keyframes grow-scroll-progress {
+      from { transform: scaleX(0); }
+      to { transform: scaleX(1); }
+    }
+    .scroll-progress-bar {
+      animation: grow-scroll-progress auto linear;
+      animation-timeline: scroll(root block);
+    }
+  }
+}
+
+.dash-header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 40;
+  padding: 0.65rem clamp(0.75rem, 2vw, 1.5rem) 0;
+  pointer-events: none;
+}
+
+.dash-header-inner {
+  pointer-events: auto;
+  transform-origin: 50% 0%;
+  background-color: var(--glass-header);
+  backdrop-filter: blur(8px) saturate(185%) brightness(1.02);
+  -webkit-backdrop-filter: blur(8px) saturate(185%) brightness(1.02);
+  border: 1px solid var(--border-hairline);
+  border-radius: 1.05rem;
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-bottom-rim),
+    0 14px 34px -12px var(--header-shadow);
+}
+
+:root.liquid-glass-ready .dash-header-inner {
+  backdrop-filter: url(#ios-liquid-glass-bar) blur(3px) saturate(192%) brightness(1.03);
+}
+
+/* Primary glass card — 1:1 identical liquid glass to website preview */
+.glass-panel {
+  position: relative;
+  background-color: var(--bg-surface);
+  backdrop-filter: blur(10px) saturate(180%) brightness(1.02);
+  -webkit-backdrop-filter: blur(10px) saturate(180%) brightness(1.02);
+  border: 1px solid var(--border-hairline);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-bottom-rim),
+    0 20px 44px -22px var(--card-shadow),
+    0 2px 6px -2px var(--card-shadow);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-panel:hover {
+  border-color: var(--border-strong);
+}
+
+/* Variant for panels hosting dropdown popovers */
+.glass-panel-overflow {
+  position: relative;
+  background-color: var(--bg-surface);
+  backdrop-filter: blur(10px) saturate(180%) brightness(1.02);
+  -webkit-backdrop-filter: blur(10px) saturate(180%) brightness(1.02);
+  border: 1px solid var(--border-hairline);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-bottom-rim),
+    0 20px 44px -22px var(--card-shadow),
+    0 2px 6px -2px var(--card-shadow);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.glass-panel-overflow:hover {
+  border-color: var(--border-strong);
+}
+
+/* Nested sub-cards & controls — NO nested backdrop-filter for locked 120fps */
+.glass-subcard {
+  background-color: var(--bg-subcard);
+  border: 1px solid var(--border-hairline);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-bottom-rim);
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease, transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Shared tactile glass hover across KPI cards and Model Usage cards */
+.glass-interactive:hover {
+  border-color: var(--border-strong);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-bottom-rim),
+    0 22px 46px -20px var(--card-shadow),
+    0 4px 12px -4px var(--card-shadow);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .glass-interactive:hover {
+    transform: translate3d(0, -1.5px, 0);
+  }
+}
+
+.glass-control {
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-hairline);
+  box-shadow: inset 0 1px 0 var(--glass-specular);
+}
+
+.glass-input {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-hairline);
+  color: var(--ink-primary);
+}
+.glass-input::placeholder {
+  color: var(--ink-tertiary);
+}
+.glass-input:hover {
+  border-color: var(--border-strong);
+}
+.glass-input:focus {
+  border-color: var(--accent-teal);
+  outline: none;
+}
+
+.glass-popover {
+  background-color: var(--bg-modal);
+  backdrop-filter: blur(16px) saturate(185%);
+  -webkit-backdrop-filter: blur(16px) saturate(185%);
+  border: 1px solid var(--border-strong);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-bottom-rim),
+    0 20px 44px -12px var(--header-shadow);
+}
+
+/* Primary action button with crisp contrast in both Light and Dark */
+.btn-primary-brand {
+  background-color: var(--accent-teal);
+  color: #ffffff;
+}
+.btn-primary-brand:hover {
+  background-color: var(--accent-teal-strong);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(:has(> head > meta[name="color-scheme"][content="light"])) .btn-primary-brand {
+    color: #062120;
+  }
+}
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .btn-primary-brand {
+  color: #062120;
+}
+
+/* Thermal heatmap levels (aligned to burnrate website palette) */
+.heat-lvl-0 { background-color: var(--heat-0-bg); border-color: var(--heat-0-border); }
+.heat-lvl-1 { background-color: var(--heat-1-bg); border-color: var(--heat-1-border); }
+.heat-lvl-2 { background-color: var(--heat-2-bg); border-color: var(--heat-2-border); }
+.heat-lvl-3 { background-color: var(--heat-3-bg); border-color: var(--heat-3-border); }
+.heat-lvl-4 {
+  background-color: var(--heat-4-bg);
+  border-color: var(--heat-4-border);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--heat-4-bg) 48%, transparent);
+}
+
+/* ==========================================================================
+   Native Accessible <dialog> Translucent Liquid-Glass Modals
+   ========================================================================== */
+dialog.dash-dialog {
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 1.15rem;
+  background-color: var(--bg-modal);
+  backdrop-filter: blur(14px) saturate(185%) brightness(1.03);
+  -webkit-backdrop-filter: blur(14px) saturate(185%) brightness(1.03);
+  color: var(--ink-primary);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-bottom-rim),
+    0 28px 64px -18px var(--header-shadow);
+  overflow: hidden;
+  max-height: min(90dvh, 840px);
+  margin: auto;
+}
+
+:root.liquid-glass-ready dialog.dash-dialog {
+  backdrop-filter: url(#ios-liquid-glass-card) blur(8px) saturate(190%) brightness(1.03);
+}
+
+/* Scope display strictly to [open] so closed native dialogs stay hidden */
+dialog.dash-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  animation: burnModalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+/* MANDATORY scroll containment pair for native modal dialogs */
+dialog.dash-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.dash-dialog::backdrop {
+  background-color: var(--backdrop-scrim);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass-panel,
+  .glass-panel-overflow,
+  .glass-popover,
+  .dash-header-inner,
+  dialog.dash-dialog,
+  dialog.dash-dialog::backdrop {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* Subtle entrance keyframes — backwards fill releases GPU layer immediately on finish */
 @keyframes burnHeader {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translate3d(0, -6px, 0); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes burnFadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes burnExpand {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translate3d(0, -4px, 0); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes burnModalIn {
+  from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.985); }
+  to { opacity: 1; transform: none; }
 }
 
 .animate-burn-header {
-  animation: burnHeader 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: burnHeader 0.24s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 .animate-burn-fade-up {
-  animation: burnFadeUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: burnFadeUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 .animate-burn-expand {
-  animation: burnExpand 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: burnExpand 0.2s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -63,25 +826,8 @@
   }
   .animate-burn-header,
   .animate-burn-fade-up,
-  .animate-burn-expand {
+  .animate-burn-expand,
+  dialog.dash-dialog[open] {
     animation: none !important;
   }
-}
-
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #09090b;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #27272a;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
 }

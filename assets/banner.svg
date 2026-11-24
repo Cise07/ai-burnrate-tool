@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 112" width="680" height="112" role="img" aria-label="AI BURNRATE">
+  <defs>
+    <!-- Flame icon gradient across all 4 rows: bright amber tip -> warm coral -> ember -->
+    <linearGradient id="flameGrad" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="94">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="52%" stop-color="#f97316" />
+      <stop offset="100%" stop-color="#e11d48" />
+    </linearGradient>
+
+    <!-- AI wordmark gradient: burnrate teal -> Antigravity sky -->
+    <linearGradient id="aiGrad" gradientUnits="userSpaceOnUse" x1="138" y1="0" x2="255" y2="0">
+      <stop offset="0%" stop-color="#0d9488" />
+      <stop offset="100%" stop-color="#0ea5e9" />
+    </linearGradient>
+
+    <!-- BURNRATE wordmark gradient: teal -> Antigravity cyan -> Claude violet -> Codex amber -> Flame -->
+    <linearGradient id="burnGrad" gradientUnits="userSpaceOnUse" x1="255" y1="0" x2="640" y2="0">
+      <stop offset="0%" stop-color="#14b8a6" />
+      <stop offset="28%" stop-color="#0ea5e9" />
+      <stop offset="56%" stop-color="#8b5cf6" />
+      <stop offset="82%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#f97316" />
+    </linearGradient>
+  </defs>
+
+  <g font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="16" font-weight="700" style="white-space: pre" xml:space="preserve">
+    <text x="42" y="32"><tspan fill="url(#flameGrad)">&#160;&#160;&#160;(&#160;&#160;.&#160;&#160;&#160;</tspan><tspan fill="url(#aiGrad)">&#160;&#160;&#160;_&#160;&#160;&#160;___&#160;&#160;</tspan><tspan fill="url(#burnGrad)">&#160;___&#160;_&#160;&#160;&#160;_&#160;___&#160;_&#160;&#160;_&#160;___&#160;&#160;&#160;&#160;_&#160;_____&#160;___&#160;&#160;</tspan></text>
+    <text x="42" y="52"><tspan fill="url(#flameGrad)">&#160;&#160;)&#160;&#160;)&#160;)&#160;&#160;</tspan><tspan fill="url(#aiGrad)">&#160;&#160;/_\&#160;|_&#160;_|&#160;</tspan><tspan fill="url(#burnGrad)">|&#160;_&#160;)&#160;|&#160;|&#160;|&#160;_&#160;\&#160;\|&#160;|&#160;_&#160;\&#160;&#160;/_\_&#160;&#160;&#160;_|&#160;__|&#160;</tspan></text>
+    <text x="42" y="72"><tspan fill="url(#flameGrad)">&#160;(&#160;(&#160;&#160;(&#160;&#160;&#160;</tspan><tspan fill="url(#aiGrad)">&#160;/&#160;_&#160;\&#160;|&#160;|&#160;&#160;</tspan><tspan fill="url(#burnGrad)">|&#160;_&#160;\&#160;|_|&#160;|&#160;&#160;&#160;/&#160;.`&#160;|&#160;&#160;&#160;/&#160;/&#160;_&#160;\|&#160;|&#160;|&#160;_|&#160;&#160;</tspan></text>
+    <text x="42" y="92"><tspan fill="url(#flameGrad)">&#160;&#160;\____)&#160;&#160;</tspan><tspan fill="url(#aiGrad)">/_/&#160;\_\___|&#160;</tspan><tspan fill="url(#burnGrad)">|___/\___/|_|_\_|\_|_|_\/_/&#160;\_\_|&#160;|___|&#160;</tspan></text>
+  </g>
+</svg>

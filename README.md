@@ -1,14 +1,12 @@
 <div align="center">
 
-<pre>
-   (  .      _   ___   ___ _   _ ___ _  _ ___    _ _____ ___  
-  )  ) )    /_\ |_ _| | _ ) | | | _ \ \| | _ \  /_\_   _| __| 
- ( (  (    / _ \ | |  | _ \ |_| |   / .` |   / / _ \| | | _|  
-  \____)  /_/ \_\___| |___/\___/|_|_\_|\_|_|_\/_/ \_\_| |___| 
-</pre>
+<a href="https://cise07.github.io/ai-burnrate-tool/">
+  <img src="https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/assets/banner.svg" alt="AI BURNRATE" width="660" />
+</a>
 
 ### **Real-Time Local Token & API Equivalent Cost Tracker for Antigravity CLI, Claude Code & Codex CLI**
 
+[![Website](https://img.shields.io/badge/Website-Live%20Showcase-0a786a.svg?style=flat-square)](https://cise07.github.io/ai-burnrate-tool/)
 [![npm version](https://img.shields.io/npm/v/ai-burnrate-tool?style=flat-square&color=10b981&label=npm)](https://www.npmjs.com/package/ai-burnrate-tool)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-06b6d4.svg?style=flat-square)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-a855f7.svg?style=flat-square)](https://github.com/Cise07/ai-burnrate-tool)
@@ -16,11 +14,15 @@
 
 Track live token consumption, **pay-as-you-go API equivalent spend (`$ USD` / `€ EUR`)**, Prompt Caching savings, subagents & `/btw` side-chats, and subscription ROI across **Antigravity CLI**, **Claude Code**, and **Codex CLI** — **100% locally, with zero cloud uploads.**
 
-[🚀&nbsp;Quick&nbsp;Install](#-quick-install) · [✨&nbsp;Features](#-key-features) · [🎮&nbsp;CLI&nbsp;Flags](#-usage--cli-flags) · [🔄&nbsp;Reset](#-per-tool-tracking-reset--resume) · [💾&nbsp;Backup](#-portable-backup--restore) · [🪝&nbsp;Hooks](#-offline-auto-archive-hooks--zero-daemon-background-sync) · [💰&nbsp;Pricing](#-how-pricing--historical-rate-versioning-work)
+[🌐&nbsp;Website](https://cise07.github.io/ai-burnrate-tool/) · [🚀&nbsp;Quick&nbsp;Install](#-quick-install) · [✨&nbsp;Features](#-key-features) · [🎮&nbsp;CLI&nbsp;Flags](#-usage--cli-flags) · [🔄&nbsp;Reset](#-per-tool-tracking-reset--resume) · [💾&nbsp;Backup](#-portable-backup--restore) · [🪝&nbsp;Hooks](#-offline-auto-archive-hooks--zero-daemon-background-sync) · [💰&nbsp;Pricing](#-how-pricing--historical-rate-versioning-work)
 
 <br />
 
-<img src="https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/assets/demo.gif" alt="ai-burnrate-tool live dashboard demo" width="100%" />
+<a href="https://cise07.github.io/ai-burnrate-tool/">
+  <img src="https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/assets/demo.gif" alt="ai-burnrate-tool live Liquid Glass dashboard demo (Dark & Light themes)" width="100%" />
+</a>
+
+<sub>🌐 Try the interactive showcase on the <a href="https://cise07.github.io/ai-burnrate-tool/"><b>official website</b></a>.</sub>
 
 </div>
 
@@ -78,9 +80,10 @@ burn --cli    # 🖥️ Print an instant colorized ANSI report directly in your 
 - 💾 **Portable Backup & Restore (`~/.burnrate`):** Export your entire local archive (sessions & deleted chats ledger, `/btw` turns, historical pricing snapshots, subscription plans, layout & tool cutoffs) into a single portable `.json` file and restore it in safe **Merge** (default) or **Replace** mode from either Settings UI or the CLI — even on a brand-new machine before installing your AI CLIs.
 - 🪝 **Offline Auto-Archive Hooks (`--sync-ledger`):** Automatically installs lightweight native lifecycle hooks (`Stop`, `SubagentStop`, `SessionEnd`) for Antigravity, Claude Code, and Codex CLI so completed turns, subagents, and `/btw` chats are atomically snapshotted into `~/.burnrate/sessions-ledger.json` even while `burn` is closed.
 - 📱 **Mobile & LAN Access (`ai-burnrate.local` mDNS + 6-Digit PIN + QR):** Running `burn` binds to `0.0.0.0`, advertises **`http://ai-burnrate.local:<port>`** via built-in mDNS/Bonjour (with LAN IP fallback), and prints a random **6-digit PIN** + scannable **terminal QR code**. Localhost stays instant-access, while LAN devices authenticate with constant-time PIN verification, per-IP rate limiting, and `HttpOnly` cookies.
+- 🫧 **Liquid Glass Light & Dark Dashboard:** Dual **Sunlit Porcelain Mist (Light)** and **Deep Ocean Petrol (Dark)** themes with frosted translucent surfaces, iOS-inspired refractive floating navigation bar, native accessible `<dialog>` modals, and self-hosted variable fonts (zero external CDN requests).
 - 🟢 **Live Dashboard & Server-Sent Events (SSE):** A background `chokidar` watcher streams instant updates to KPIs, charts, heatmap, and session tables via `/api/events`.
 - 🏷️ **30-Minute `ETag` Auto-Sync & Long-Context Tiers:** Keeps model tariffs fresh automatically at startup, every 30 minutes while running, on manual **Rescan**, and opportunistically in the background from offline hooks (`--sync-pricing` with atomic lock and `If-None-Match` → `304 Not Modified`), appending immutable `effectiveFrom` snapshots to `~/.burnrate/pricing-ledger.json` and applying **per-request long-context tiers** (`>272k` on GPT-5.4/5.5/5.6/6.x, `>200k` on Gemini 2.5 Pro) only on tiered models.
-- 💱 **Instant `$ USD` / `€ EUR` Switch & Tax-Accurate Subscriptions:** API equivalent spend remains pure net pay-as-you-go, while customizable monthly subscription plans automatically convert and include retail taxes (+22% VAT in EUR, +7.5% Sales Tax in USD).
+- 💱 **Instant `$ USD` / `€ EUR` Switch & Tax-Accurate Subscriptions:** API equivalent spend remains pure net pay-as-you-go, while customizable monthly subscription plans (including **Google AI Plus/Pro/Ultra**, **Claude Pro/Max**, and **ChatGPT Go/Plus/Pro** presets) automatically convert and include retail taxes (+22% VAT in EUR, +7.5% Sales Tax in USD).
 - 🧩 **Customizable Dashboard Layout:** Reorder (drag & drop) or hide any section from Settings with persistence in `~/.burnrate/settings.json`.
 - 🖥️ **Instant Terminal Mode (`--cli`):** Prints colorized ANSI tables (Tool Breakdown, Model Breakdown, Workspaces → Chats → Subagents hierarchy, and Deleted Chats) with `--eur`, `--tool`, `--range`, and `--json` support.
 
@@ -181,7 +184,7 @@ When an AI turn finishes — even while `burn` is closed — the tool triggers `
 
 ## 📊 Dashboard Overview
 
-- **🔝 Responsive Top Navigation Bar:** Displays the `ai-burnrate-tool` logo, pulsing `LIVE` SSE badge, tool filter (`All`, `Antigravity`, `Claude`, `Codex`), time range (`24h`, `7d`, `30d`, `all`), `$ USD` / `€ EUR` switch, Deleted Chats archive, Settings/Layout modal, and manual rescan button.
+- **🔝 Responsive Liquid Glass Top Navigation Bar:** Displays the `ai-burnrate-tool` logo, pulsing `LIVE` SSE badge, tool filter (`All`, `Antigravity`, `Claude`, `Codex`), time range (`24h`, `7d`, `30d`, `all`), `$ USD` / `€ EUR` switch, Light/Dark theme toggle, Settings/Layout modal, and manual rescan button with optical refraction while scrolling.
 - **💸 4 Top KPI Cards (with Period-over-Period Deltas):**
   1. **API Equivalent Spend:** Total net API spend, per-tool split (`AGY • Claude • Codex` in `All` view), customizable subscription plan ROI comparison, and today's spend.
   2. **Total Tokens:** Cumulative tokens split into `Input`, `Output`, and `Cached`.
@@ -199,7 +202,11 @@ When an AI turn finishes — even while `burn` is closed — the tool triggers `
 
 ```text
 ai-burnrate-tool/
+├── .github/workflows/
+│   ├── pages.yml                   # Automated GitHub Pages build & deploy for website/
+│   └── release.yml                 # Automated npm Trusted Publishing & version bump on release
 ├── assets/
+│   ├── banner.svg                  # Brand-colored ASCII hero wordmark for README
 │   └── demo.gif                    # Live interactive dashboard showcase for README
 ├── config/
 │   └── pricing.json                # Baseline model tariffs & subscription presets
@@ -226,13 +233,40 @@ ai-burnrate-tool/
 │   │   └── index.ts                # HTTP/SSE server (0.0.0.0 bind, LAN 6-digit PIN & cookie auth)
 │   └── web/
 │       ├── components/
+│       │   ├── AmbientBackdrop.tsx # Chromatic backdrop & iOS Liquid Glass SVG lenses
 │       │   ├── DeletedChatsModal.tsx
 │       │   ├── HeatmapAndWorkspaces.tsx
-│       │   └── SettingsModal.tsx
-│       ├── App.tsx                 # Responsive Dark Mode React Dashboard
+│       │   └── SettingsModal.tsx   # Native <dialog> plans (incl. Go & Plus), layout, reset & backup
+│       ├── fonts/                  # Self-hosted Schibsted Grotesk & JetBrains Mono WOFF2
+│       ├── App.tsx                 # Responsive Light/Dark Liquid Glass React Dashboard
 │       ├── main.tsx                # React entrypoint
-│       └── index.css               # Tailwind CSS styles
+│       └── index.css               # Tailwind CSS & Liquid Glass design tokens
+├── website/                        # Standalone showcase site deployed to GitHub Pages
+│   ├── public/
+│   │   └── logo.svg                # Website brand icon & favicon
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── AmbientBackdrop.tsx # Scroll-parallax orbs & iOS Liquid Glass SVG lenses
+│   │   │   ├── ArchitectureFlow.tsx
+│   │   │   ├── FaqAccordion.tsx
+│   │   │   ├── HeatmapShowcase.tsx
+│   │   │   ├── HeroSandbox.tsx     # Interactive multi-tool burn curve & ROI sandbox
+│   │   │   ├── Navbar.tsx          # Responsive Liquid Glass header with scroll scale
+│   │   │   └── PricingAndCliTables.tsx
+│   │   ├── data/
+│   │   │   └── siteData.ts         # Sample dataset, model tariffs & CLI flag catalog
+│   │   ├── fonts/                  # Self-hosted variable WOFF2 fonts
+│   │   ├── hooks/
+│   │   │   └── useToolVersion.ts   # Live tool version sync from GitHub package.json / releases
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   └── index.css               # Dual Light/Dark Liquid Glass styles & scroll choreography
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.ts
 ├── dist/                           # Prebuilt bundle (CLI + static web assets)
+├── index.html
+├── vite.config.ts
 └── package.json
 ```
 
