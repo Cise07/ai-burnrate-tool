@@ -1053,49 +1053,153 @@
   }
 
   /* Hero install command dock micro-animations (GPU compositor-only) */
-  @keyframes cmdSwapIn {
-    from { opacity: 0; transform: translate3d(0, 5px, 0); }
-    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  @keyframes cmdCursorBreathe {
+    0%, 100% {
+      opacity: 1;
+      transform: scaleY(1);
+    }
+    50% {
+      opacity: 0.14;
+      transform: scaleY(0.84);
+    }
   }
 
-  @keyframes cmdCursorBlink {
-    0%, 48% { opacity: 0.9; }
-    52%, 100% { opacity: 0; }
+  @keyframes promptSpark {
+    0% { transform: scale(0.85); opacity: 0.55; }
+    55% { transform: scale(1.22); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
   }
 
   @keyframes checkPop {
-    0% { opacity: 0.4; transform: scale(0.65); }
-    65% { opacity: 1; transform: scale(1.15); }
-    100% { opacity: 1; transform: scale(1); }
+    0% { opacity: 0.35; transform: scale(0.55) rotate(-14deg); }
+    65% { opacity: 1; transform: scale(1.18) rotate(3deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0deg); }
+  }
+
+  @keyframes labelSlideIn {
+    from { opacity: 0; transform: translate3d(0, 4px, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+
+  @keyframes copyRingPulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent-teal) 55%, transparent); }
+    100% { box-shadow: 0 0 0 9px transparent; }
   }
 
   .hero-install-pill {
-    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow:
+      inset 0 1px 0 var(--glass-specular),
+      0 2px 8px -2px var(--card-shadow);
+    transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .hero-cmd-swap {
-    animation: cmdSwapIn 200ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  .hero-cmd-track.is-ready {
+    transition: width 340ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .hero-mode-btn {
+    transition:
+      color 160ms ease,
+      transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .hero-mode-btn:hover {
+    transform: translate3d(0, -0.5px, 0);
+  }
+
+  .hero-mode-btn:active {
+    transform: scale(0.93);
+  }
+
+  .hero-prompt-pop {
+    display: inline-block;
+    animation: promptSpark 260ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
   }
 
   .hero-cmd-cursor {
     display: inline-block;
-    width: 6px;
-    height: 1.05em;
-    border-radius: 1.5px;
-    background-color: var(--accent-teal);
-    animation: cmdCursorBlink 1.15s steps(1, end) infinite;
+    width: 2.5px;
+    height: 1.12em;
+    border-radius: 2px;
+    background: linear-gradient(180deg, var(--accent-teal-strong) 0%, var(--accent-teal) 100%);
+    box-shadow: 0 0 9px color-mix(in oklab, var(--accent-teal) 72%, transparent);
+    transform-origin: center;
+    animation: cmdCursorBreathe 1.15s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  }
+
+  .hero-cmd-cursor.is-typing {
+    animation: none;
+    opacity: 1;
+    transform: scaleY(1.06);
+    box-shadow: 0 0 12px color-mix(in oklab, var(--accent-teal) 90%, transparent);
   }
 
   .hero-check-pop {
-    animation: checkPop 240ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    animation: checkPop 280ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  .hero-label-swap {
+    display: inline-block;
+    animation: labelSlideIn 180ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  .hero-copy-btn {
+    transition:
+      background-color 180ms ease,
+      transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 220ms ease;
+  }
+
+  .hero-copy-btn::before,
+  .hero-github-btn::before {
+    content: "";
+    position: absolute;
+    inset-block: -25%;
+    inset-inline-start: -65%;
+    width: 48%;
+    pointer-events: none;
+    background: linear-gradient(
+      108deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.34) 50%,
+      transparent 100%
+    );
+    transform: translate3d(-120%, 0, 0) skewX(-18deg);
+    transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .hero-copy-btn:hover {
+    transform: translate3d(0, -1px, 0);
+    box-shadow: 0 10px 24px -8px color-mix(in oklab, var(--accent-teal) 65%, transparent);
+  }
+
+  .hero-copy-btn:hover::before,
+  .hero-github-btn:hover::before {
+    transform: translate3d(380%, 0, 0) skewX(-18deg);
+  }
+
+  .hero-copy-btn:hover .hero-copy-icon {
+    transform: scale(1.1) rotate(-4deg);
+  }
+
+  .hero-copy-icon {
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .hero-copy-btn:active {
+    transform: scale(0.95);
+  }
+
+  .hero-copy-btn.is-copied {
+    animation: copyRingPulse 460ms ease-out;
   }
 
   .hero-install-dock,
   .hero-github-btn {
     transition:
       border-color 180ms ease,
-      box-shadow 200ms ease,
-      transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow 220ms ease,
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .hero-install-dock:hover,
@@ -1106,11 +1210,26 @@
       inset 0 1px 0 var(--glass-specular),
       inset 0 -1px 0 var(--glass-bottom-rim),
       0 22px 46px -20px var(--card-shadow),
-      0 0 0 1px color-mix(in oklab, var(--accent-teal) 24%, transparent);
+      0 0 0 1px color-mix(in oklab, var(--accent-teal) 26%, transparent);
   }
 
   .hero-github-btn:hover {
     transform: translate3d(0, -1.5px, 0);
+    box-shadow:
+      inset 0 1px 0 var(--glass-specular),
+      0 14px 28px -14px var(--card-shadow);
+  }
+
+  .hero-github-btn:active {
+    transform: scale(0.96);
+  }
+
+  .hero-gh-arrow {
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .hero-github-btn:hover .hero-gh-arrow {
+    transform: translate3d(2.5px, -2.5px, 0) scale(1.08);
   }
 
   .pipeline-flow-line {

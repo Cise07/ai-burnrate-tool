@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Check, Copy } from 'lucide-react';
 import { AmbientBackdrop } from './components/AmbientBackdrop';
 import { Navbar } from './components/Navbar';
@@ -42,6 +42,81 @@ export default function App() {
 
   const currentInstall =
     INSTALL_COMMANDS.find((c) => c.id === installMode) ?? INSTALL_COMMANDS[0];
+
+  const hasMountedCmdRef = useRef(false);
+  const cmdMeasureRef = useRef<HTMLSpanElement | null>(null);
+  const [cmdWidthPx, setCmdWidthPx] = useState<number | null>(null);
+  const [cmdWidthReady, setCmdWidthReady] = useState<boolean>(false);
+  const [displayedCmd, setDisplayedCmd] = useState<string>(currentInstall.cmd);
+  const [isTypingCmd, setIsTypingCmd] = useState<boolean>(false);
+
+  // Measure target command width so the glass dock smoothly glides to fit each command
+  useLayoutEffect(() => {
+    let rafId = 0;
+    const measure = () => {
+      const el = cmdMeasureRef.current;
+      if (!el) return;
+      const nextWidth = Math.ceil(el.getBoundingClientRect().width) + 12;
+      if (nextWidth > 0) {
+        setCmdWidthPx(nextWidth);
+        if (!cmdWidthReady) {
+          rafId = requestAnimationFrame(() => setCmdWidthReady(true));
+        }
+      }
+    };
+    measure();
+    if (document.fonts && document.fonts.status !== 'loaded') {
+      void document.fonts.ready.then(measure);
+    }
+    window.addEventListener('resize', measure, { passive: true });
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', measure);
+    };
+  }, [currentInstall.cmd, cmdWidthReady]);
+
+  // Smooth typewriter reveal when switching install mode (keeps caret gliding with the typed char)
+  useEffect(() => {
+    const target = currentInstall.cmd;
+    if (!hasMountedCmdRef.current) {
+      hasMountedCmdRef.current = true;
+      setDisplayedCmd(target);
+      return;
+    }
+    if (
+      typeof window === 'undefined' ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      setDisplayedCmd(target);
+      setIsTypingCmd(false);
+      return;
+    }
+
+    let rafId = 0;
+    const durationMs = Math.min(280, Math.max(170, target.length * 9));
+    const start = performance.now();
+    setIsTypingCmd(true);
+    setDisplayedCmd('');
+
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 2.2);
+      const chars = Math.max(1, Math.round(eased * target.length));
+      setDisplayedCmd(target.slice(0, chars));
+      if (t < 1) {
+        rafId = requestAnimationFrame(tick);
+      } else {
+        setDisplayedCmd(target);
+        setIsTypingCmd(false);
+      }
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(rafId);
+      setIsTypingCmd(false);
+    };
+  }, [currentInstall.cmd]);
 
   const announce = (msg: string) => {
     setAnnouncement('');
@@ -192,9 +267,9 @@ export default function App() {
                         type="button"
                         aria-pressed={installMode === item.id}
                         onClick={() => setInstallMode(item.id)}
-                        className={`relative z-10 min-h-[26px] min-w-[46px] px-2 rounded-md text-center transition-colors cursor-pointer ${
+                        className={`hero-mode-btn relative z-10 min-h-[26px] min-w-[48px] px-2 rounded-md text-center cursor-pointer ${
                           installMode === item.id
-                            ? 'text-ink font-semibold'
+                            ? 'is-active text-ink font-semibold'
                             : 'text-muted hover:text-ink'
                         }`}
                       >
@@ -203,12 +278,32 @@ export default function App() {
                     ))}
                   </div>
 
-                  <code className="font-mono text-xs sm:text-[13px] text-ink px-2 overflow-x-auto whitespace-nowrap inline-flex items-center">
-                    <span className="text-flame font-semibold select-none mr-1.5">$</span>
-                    <span key={currentInstall.id} className="hero-cmd-swap inline-block">
+                  <code className="relative font-mono text-xs sm:text-[13px] text-ink px-2 overflow-hidden whitespace-nowrap inline-flex items-center min-w-0">
+                    <span
+                      ref={cmdMeasureRef}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-0 top-0 invisible whitespace-nowrap select-none"
+                    >
                       {currentInstall.cmd}
                     </span>
-                    <span aria-hidden="true" className="hero-cmd-cursor ml-1" />
+                    <span
+                      key={`prompt-${currentInstall.id}`}
+                      className="hero-prompt-pop text-flame font-semibold select-none mr-1.5 shrink-0"
+                    >
+                      $
+                    </span>
+                    <span
+                      className={`hero-cmd-track inline-flex items-center overflow-hidden max-w-full ${
+                        cmdWidthReady ? 'is-ready' : ''
+                      }`}
+                      style={cmdWidthPx ? { width: `${cmdWidthPx}px` } : undefined}
+                    >
+                      <span>{displayedCmd}</span>
+                      <span
+                        aria-hidden="true"
+                        className={`hero-cmd-cursor ml-1 shrink-0 ${isTypingCmd ? 'is-typing' : ''}`}
+                      />
+                    </span>
                   </code>
 
                   <button
@@ -216,17 +311,19 @@ export default function App() {
                     type="button"
                     onClick={() => void handleCopy(currentInstall.cmd, 'hero')}
                     aria-label={`Copy ${currentInstall.cmd}`}
-                    className="btn-primary-brand inline-flex items-center gap-1.5 min-h-[32px] px-3 rounded-lg font-semibold text-xs transition-all active:scale-[0.97] shrink-0 cursor-pointer"
+                    className={`hero-copy-btn btn-primary-brand relative overflow-hidden inline-flex items-center justify-center gap-1.5 min-h-[32px] min-w-[84px] px-3 rounded-lg font-semibold text-xs shrink-0 cursor-pointer ${
+                      heroCopied ? 'is-copied' : ''
+                    }`}
                   >
                     {heroCopied ? (
                       <>
-                        <Check className="hero-check-pop w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Copied</span>
+                        <Check className="hero-check-pop w-3.5 h-3.5 relative z-10" aria-hidden="true" />
+                        <span className="hero-label-swap relative z-10">Copied</span>
                       </>
                     ) : (
                       <>
-                        <Copy className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Copy</span>
+                        <Copy className="hero-copy-icon w-3.5 h-3.5 relative z-10" aria-hidden="true" />
+                        <span className="relative z-10">Copy</span>
                       </>
                     )}
                   </button>
@@ -236,11 +333,11 @@ export default function App() {
                   href="https://github.com/Cise07/ai-burnrate-tool"
                   target="_blank"
                   rel="noreferrer"
-                  className="hero-github-btn group glass-control hidden sm:inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3.5 rounded-xl hover:border-hairlineStrong text-xs font-semibold text-ink transition-all shrink-0"
+                  className="hero-github-btn group glass-control relative overflow-hidden hidden sm:inline-flex items-center justify-center gap-1.5 min-h-[44px] px-3.5 rounded-xl hover:border-hairlineStrong text-xs font-semibold text-ink shrink-0"
                 >
-                  <span>GitHub</span>
+                  <span className="relative z-10">GitHub</span>
                   <ArrowUpRight
-                    className="w-3.5 h-3.5 text-brand transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 motion-reduce:transition-none"
+                    className="hero-gh-arrow relative z-10 w-3.5 h-3.5 text-brand"
                     aria-hidden="true"
                   />
                 </a>
