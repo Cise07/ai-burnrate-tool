@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://cise07.github.io/ai-burnrate-tool/">
-  <img src="assets/banner.svg" alt="AI BURNRATE" width="660" />
+  <img src="https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/assets/banner.svg?v=1.3.0" alt="AI BURNRATE" width="660" />
 </a>
 
 ### **Real-Time Local Token & API Equivalent Cost Tracker for Antigravity CLI, Claude Code & Codex CLI**
@@ -19,7 +19,7 @@ Track live token consumption, **pay-as-you-go API equivalent spend (`$ USD` / `‚
 <br />
 
 <a href="https://cise07.github.io/ai-burnrate-tool/">
-  <img src="assets/demo.gif" alt="ai-burnrate-tool live Liquid Glass dashboard demo (Dark & Light themes)" width="100%" />
+  <img src="https://raw.githubusercontent.com/Cise07/ai-burnrate-tool/main/assets/demo.gif?v=1.3.0" alt="ai-burnrate-tool live Liquid Glass dashboard demo (Dark & Light themes)" width="100%" />
 </a>
 
 <sub>üåê Try the interactive showcase on the <a href="https://cise07.github.io/ai-burnrate-tool/"><b>official website</b></a>.</sub>
