@@ -1,4 +1,4 @@
-import type { SessionStats, ToolSource, UsageTurn } from './types.js';
+import type { SessionStats, ToolSource, UsageTurn, UserSettings } from './types.js';
 
 export type ToolFilter = 'all' | ToolSource;
 export type TimeRange = '24h' | '7d' | '30d' | 'all';
@@ -36,6 +36,104 @@ export function formatSubscriptionMoney(usdAmount: number, currency: Currency, e
   const sym = currency === 'EUR' ? '€' : '$';
   if (val > 0 && val < 0.01) return `<${sym}0.01`;
   return `${sym}${val.toFixed(2)}`;
+}
+
+export function formatDisplayCurrencyAmount(displayAmount: number, currency: Currency): string {
+  const sym = currency === 'EUR' ? '€' : '$';
+  if (displayAmount > 0 && displayAmount < 0.01) return `<${sym}0.01`;
+  return `${sym}${displayAmount.toFixed(2)}`;
+}
+
+export interface SubscriptionPlanPreset {
+  id: string;
+  label: string;
+  usdNet: number;
+  eurRetail?: number;
+}
+
+export const SUBSCRIPTION_PLAN_PRESETS: Record<ToolSource, ReadonlyArray<SubscriptionPlanPreset>> = {
+  antigravity: [
+    { id: 'free', label: 'Free', usdNet: 0, eurRetail: 0 },
+    { id: 'plus', label: 'Plus', usdNet: 4.99, eurRetail: 4.99 },
+    { id: 'pro', label: 'Pro', usdNet: 19.99, eurRetail: 21.99 },
+    { id: 'ultra_5x', label: 'Ultra 5x', usdNet: 99.99, eurRetail: 99.99 },
+    { id: 'ultra_20x', label: 'Ultra 20x', usdNet: 199.99, eurRetail: 219.99 },
+  ],
+  claude: [
+    { id: 'free', label: 'API/Free', usdNet: 0 },
+    { id: 'pro', label: 'Pro', usdNet: 20 },
+    { id: 'max_5x', label: 'Max 5x', usdNet: 100 },
+    { id: 'max_20x', label: 'Max 20x', usdNet: 200 },
+  ],
+  codex: [
+    { id: 'free', label: 'API/Free', usdNet: 0, eurRetail: 0 },
+    { id: 'go', label: 'Go', usdNet: 8, eurRetail: 7.99 },
+    { id: 'plus', label: 'Plus', usdNet: 20, eurRetail: 22.99 },
+    { id: 'pro_100', label: 'Pro 100', usdNet: 100, eurRetail: 109.99 },
+    { id: 'pro_200', label: 'Pro 200', usdNet: 200, eurRetail: 229 },
+  ],
+};
+
+export function matchSubscriptionPreset(
+  tool: ToolSource,
+  storedUsd: number
+): SubscriptionPlanPreset | null {
+  if (!Number.isFinite(storedUsd) || storedUsd < 0) return null;
+  const eurMult = getSubscriptionMultiplier('EUR');
+  for (const p of SUBSCRIPTION_PLAN_PRESETS[tool]) {
+    if (Math.abs(storedUsd - p.usdNet) < 0.05) {
+      return p;
+    }
+    if (p.eurRetail !== undefined && Math.abs(storedUsd - p.eurRetail / eurMult) < 0.05) {
+      return p;
+    }
+  }
+  return null;
+}
+
+export function canonicalizeToolSubscriptionUsd(tool: ToolSource, storedUsd: number): number {
+  const matched = matchSubscriptionPreset(tool, storedUsd);
+  return matched ? matched.usdNet : storedUsd;
+}
+
+export function getPresetDisplayAmount(
+  preset: SubscriptionPlanPreset,
+  currency: Currency,
+  eurRate = EUR_RATE
+): number {
+  if (currency === 'EUR' && preset.eurRetail !== undefined) {
+    return preset.eurRetail;
+  }
+  return Number(convertSubscriptionMoney(preset.usdNet, currency, eurRate).toFixed(2));
+}
+
+export function getToolSubscriptionDisplayAmount(
+  tool: ToolSource,
+  storedUsd: number,
+  currency: Currency,
+  eurRate = EUR_RATE
+): number {
+  const matched = matchSubscriptionPreset(tool, storedUsd);
+  if (matched) {
+    return getPresetDisplayAmount(matched, currency, eurRate);
+  }
+  return Number(convertSubscriptionMoney(storedUsd, currency, eurRate).toFixed(2));
+}
+
+export function getTotalSubscriptionDisplayAmount(
+  subscriptions: UserSettings['subscriptions'],
+  toolFilter: ToolFilter,
+  currency: Currency,
+  eurRate = EUR_RATE
+): number {
+  if (toolFilter === 'all') {
+    const sum =
+      getToolSubscriptionDisplayAmount('antigravity', subscriptions.antigravity, currency, eurRate) +
+      getToolSubscriptionDisplayAmount('claude', subscriptions.claude, currency, eurRate) +
+      getToolSubscriptionDisplayAmount('codex', subscriptions.codex, currency, eurRate);
+    return Number(sum.toFixed(2));
+  }
+  return getToolSubscriptionDisplayAmount(toolFilter, subscriptions[toolFilter], currency, eurRate);
 }
 
 export function getWindowDurationMs(timeRange: TimeRange): number {
@@ -150,6 +248,66 @@ export function filterSessionsInWindow(
   return filtered;
 }
 
+export function getTurnDisplayModel(t: UsageTurn): string {
+  return t.orchestratorLabel || t.modelLabel || t.normalizedModel || 'Unknown';
+}
+
+export function getTurnDisplayModelKey(t: UsageTurn): string {
+  return t.orchestratorModel || t.normalizedModel;
+}
+
+export interface OrchestratorRoleSummary {
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  cacheSavingsUSD: number;
+  models: string[];
+}
+
+export interface OrchestratorBreakdown {
+  planner: OrchestratorRoleSummary;
+  executor: OrchestratorRoleSummary;
+}
+
+export function createEmptyOrchestratorBreakdown(): OrchestratorBreakdown {
+  const emptyRole = (): OrchestratorRoleSummary => ({
+    turns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: 0,
+    costUSD: 0,
+    cacheSavingsUSD: 0,
+    models: [],
+  });
+  return {
+    planner: emptyRole(),
+    executor: emptyRole(),
+  };
+}
+
+export function accumulateOrchestratorRole(
+  breakdown: OrchestratorBreakdown,
+  t: UsageTurn
+): void {
+  if (t.orchestratorRole !== 'planner' && t.orchestratorRole !== 'executor') return;
+  const bucket = breakdown[t.orchestratorRole];
+  bucket.turns += 1;
+  bucket.inputTokens += t.inputTokens;
+  bucket.outputTokens += t.outputTokens;
+  bucket.cacheReadTokens += t.cacheReadTokens;
+  bucket.totalTokens += t.totalTokens;
+  bucket.costUSD += t.costUSD;
+  bucket.cacheSavingsUSD += t.cacheSavingsUSD;
+  const physicalLabel = t.modelLabel || t.normalizedModel;
+  if (physicalLabel && !bucket.models.includes(physicalLabel)) {
+    bucket.models.push(physicalLabel);
+  }
+}
+
 export interface SessionModelItem {
   modelLabel: string;
   normalizedModel: string;
@@ -160,6 +318,7 @@ export interface SessionModelItem {
   totalTokens: number;
   costUSD: number;
   cacheSavingsUSD: number;
+  orchestratorRoles?: OrchestratorBreakdown;
 }
 
 export interface SessionSubagentRun {
@@ -319,10 +478,10 @@ export function getSessionSubagentBreakdown(turnHistory: UsageTurn[]): SessionSu
 export function getSessionModelBreakdown(turnHistory: UsageTurn[]): SessionModelItem[] {
   const map = new Map<string, SessionModelItem>();
   for (const t of turnHistory) {
-    const key = t.modelLabel || t.normalizedModel || 'Unknown';
+    const key = getTurnDisplayModel(t);
     const entry = map.get(key) || {
       modelLabel: key,
-      normalizedModel: t.normalizedModel,
+      normalizedModel: getTurnDisplayModelKey(t),
       turns: 0,
       inputTokens: 0,
       outputTokens: 0,
@@ -338,6 +497,12 @@ export function getSessionModelBreakdown(turnHistory: UsageTurn[]): SessionModel
     entry.totalTokens += t.totalTokens;
     entry.costUSD += t.costUSD;
     entry.cacheSavingsUSD += t.cacheSavingsUSD;
+    if (t.orchestratorRole === 'planner' || t.orchestratorRole === 'executor') {
+      if (!entry.orchestratorRoles) {
+        entry.orchestratorRoles = createEmptyOrchestratorBreakdown();
+      }
+      accumulateOrchestratorRole(entry.orchestratorRoles, t);
+    }
     map.set(key, entry);
   }
   return Array.from(map.values()).sort((a, b) => b.costUSD - a.costUSD);
@@ -438,8 +603,9 @@ export function filterSessions(
 
     if (targetModel) {
       validTurns = validTurns.filter((t) => {
-        const label = (t.modelLabel || t.normalizedModel || t.model || '').toLowerCase();
-        return label === targetModel;
+        const displayLabel = getTurnDisplayModel(t).toLowerCase();
+        const physicalLabel = (t.modelLabel || t.normalizedModel || t.model || '').toLowerCase();
+        return displayLabel === targetModel || physicalLabel === targetModel;
       });
     }
 
@@ -507,6 +673,8 @@ export function filterSessions(
             t.modelLabel.toLowerCase().includes(query) ||
             t.normalizedModel.toLowerCase().includes(query) ||
             t.model.toLowerCase().includes(query) ||
+            (t.orchestratorLabel || '').toLowerCase().includes(query) ||
+            (t.orchestratorRole || '').toLowerCase().includes(query) ||
             (t.subagentName || '').toLowerCase().includes(query) ||
             (t.subagentTitle || '').toLowerCase().includes(query)
         );
@@ -586,7 +754,7 @@ export function buildWorkspaceGroups(sessions: SessionStats[]): WorkspaceGroup[]
     }
 
     for (const t of s.turnHistory) {
-      const label = t.modelLabel || t.normalizedModel || 'Unknown';
+      const label = getTurnDisplayModel(t);
       const prev = entry.modelStats.get(label) || { turns: 0, costUSD: 0 };
       prev.turns += 1;
       prev.costUSD += t.costUSD;
@@ -935,6 +1103,7 @@ export function workspacesToJson(
             totalTokens: m.totalTokens,
             cacheSavings: roundMoney(m.cacheSavingsUSD),
             apiCost: roundMoney(m.costUSD),
+            ...(m.orchestratorRoles ? { orchestratorRoles: m.orchestratorRoles } : {}),
           })),
           ...(subagentSummary.subagents.length > 0
             ? {

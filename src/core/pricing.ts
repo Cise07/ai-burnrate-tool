@@ -216,29 +216,139 @@ export function loadPricing(forceReload = false): PricingConfig {
   return cachedPricing;
 }
 
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_REPO_PRICING_BYTES = 1 * 1024 * 1024;
+const MAX_LITELLM_PRICING_BYTES = 12 * 1024 * 1024;
+const MAX_COMMIT_META_BYTES = 512 * 1024;
+
 function isValidModelRate(rate: unknown): rate is ModelRate {
-  if (!rate || typeof rate !== 'object') return false;
+  if (!rate || typeof rate !== 'object' || Array.isArray(rate)) return false;
   const r = rate as Record<string, unknown>;
   return (
     typeof r.label === 'string' &&
     r.label.length > 0 &&
     typeof r.input === 'number' &&
     Number.isFinite(r.input) &&
+    r.input >= 0 &&
     typeof r.output === 'number' &&
     Number.isFinite(r.output) &&
+    r.output >= 0 &&
     typeof r.cacheRead === 'number' &&
     Number.isFinite(r.cacheRead) &&
+    r.cacheRead >= 0 &&
     typeof r.cacheWrite === 'number' &&
-    Number.isFinite(r.cacheWrite)
+    Number.isFinite(r.cacheWrite) &&
+    r.cacheWrite >= 0
   );
 }
 
-function sanitizeModelsRecord(raw: unknown): Record<string, ModelRate> {
+function sanitizeLongContextTier(raw: unknown): LongContextTier | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const t = raw as Record<string, unknown>;
+  if (
+    typeof t.thresholdTokens === 'number' &&
+    Number.isFinite(t.thresholdTokens) &&
+    t.thresholdTokens > 0 &&
+    typeof t.input === 'number' &&
+    Number.isFinite(t.input) &&
+    t.input >= 0 &&
+    typeof t.output === 'number' &&
+    Number.isFinite(t.output) &&
+    t.output >= 0 &&
+    typeof t.cacheRead === 'number' &&
+    Number.isFinite(t.cacheRead) &&
+    t.cacheRead >= 0 &&
+    typeof t.cacheWrite === 'number' &&
+    Number.isFinite(t.cacheWrite) &&
+    t.cacheWrite >= 0
+  ) {
+    return {
+      thresholdTokens: t.thresholdTokens,
+      input: t.input,
+      output: t.output,
+      cacheRead: t.cacheRead,
+      cacheWrite: t.cacheWrite,
+    };
+  }
+  return undefined;
+}
+
+function pickCleanModelRate(raw: unknown): ModelRate | null {
+  if (!isValidModelRate(raw)) return null;
+  const r = raw as ModelRate & Record<string, unknown>;
+  const clean: ModelRate = {
+    label: r.label.slice(0, 120),
+    provider: typeof r.provider === 'string' && r.provider.trim() ? r.provider.trim().slice(0, 40) : 'unknown',
+    input: r.input,
+    output: r.output,
+    cacheRead: r.cacheRead,
+    cacheWrite: r.cacheWrite,
+  };
+  const longContext = sanitizeLongContextTier(r.longContext);
+  if (longContext) clean.longContext = longContext;
+  if (typeof r.isPromo === 'boolean') clean.isPromo = r.isPromo;
+  if (typeof r.promoStart === 'string') clean.promoStart = r.promoStart;
+  if (typeof r.promoEnd === 'string') clean.promoEnd = r.promoEnd;
+  if (typeof r.promoNote === 'string') clean.promoNote = r.promoNote.slice(0, 200);
+  if (typeof r.standardInput === 'number' && Number.isFinite(r.standardInput) && r.standardInput >= 0) {
+    clean.standardInput = r.standardInput;
+  }
+  if (typeof r.standardOutput === 'number' && Number.isFinite(r.standardOutput) && r.standardOutput >= 0) {
+    clean.standardOutput = r.standardOutput;
+  }
+  if (typeof r.standardCacheRead === 'number' && Number.isFinite(r.standardCacheRead) && r.standardCacheRead >= 0) {
+    clean.standardCacheRead = r.standardCacheRead;
+  }
+  if (typeof r.standardCacheWrite === 'number' && Number.isFinite(r.standardCacheWrite) && r.standardCacheWrite >= 0) {
+    clean.standardCacheWrite = r.standardCacheWrite;
+  }
+  return clean;
+}
+
+async function readResponseJsonBounded<T>(res: Response, maxBytes: number): Promise<T> {
+  const contentLengthHeader = res.headers.get('content-length');
+  if (contentLengthHeader) {
+    const declared = Number(contentLengthHeader);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`Remote JSON response exceeds ${maxBytes} bytes limit`);
+    }
+  }
+  if (!res.body) {
+    const text = await res.text();
+    if (Buffer.byteLength(text, 'utf-8') > maxBytes) {
+      throw new Error(`Remote JSON response exceeds ${maxBytes} bytes limit`);
+    }
+    return JSON.parse(text) as T;
+  }
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`Remote JSON response exceeds ${maxBytes} bytes limit`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf-8')) as T;
+}
+
+export function sanitizeModelsRecord(raw: unknown): Record<string, ModelRate> {
   const result: Record<string, ModelRate> = {};
-  if (!raw || typeof raw !== 'object') return result;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (k.trim().length > 0 && isValidModelRate(v)) {
-      result[k] = structuredClone(v);
+    const trimmedKey = k.trim();
+    if (trimmedKey.length > 0 && !RESERVED_OBJECT_KEYS.has(trimmedKey)) {
+      const cleanRate = pickCleanModelRate(v);
+      if (cleanRate) {
+        result[trimmedKey] = cleanRate;
+      }
     }
   }
   return result;
@@ -605,9 +715,11 @@ async function fetchLiteLlmLastCommitIso(): Promise<string | null> {
       signal: AbortSignal.timeout(2000),
     });
     if (!res.ok) return null;
-    const commits = (await res.json()) as Array<{
-      commit?: { committer?: { date?: string }; author?: { date?: string } };
-    }>;
+    const commits = await readResponseJsonBounded<
+      Array<{
+        commit?: { committer?: { date?: string }; author?: { date?: string } };
+      }>
+    >(res, MAX_COMMIT_META_BYTES);
     const rawDate = commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date;
     if (!rawDate) return null;
     const parsed = new Date(rawDate);
@@ -662,19 +774,27 @@ export async function syncOfficialPricing(options: { force?: boolean } = {}): Pr
         anyNetworkSuccess = true;
         const etag = res.headers.get('etag');
         if (etag) nextRepoEtag = etag;
-        const remoteConfig = (await res.json()) as Partial<PricingConfig>;
+        const remoteConfig = await readResponseJsonBounded<Partial<PricingConfig>>(res, MAX_REPO_PRICING_BYTES);
         if (remoteConfig.updatedAt && typeof remoteConfig.updatedAt === 'string') {
           remoteUpdatedAt = remoteConfig.updatedAt;
         }
         if (
           remoteConfig.models &&
           typeof remoteConfig.models === 'object' &&
+          !Array.isArray(remoteConfig.models) &&
           (!current.updatedAt || (remoteConfig.updatedAt && remoteConfig.updatedAt > current.updatedAt))
         ) {
           for (const [k, rate] of Object.entries(remoteConfig.models)) {
-            if (rate && typeof rate.input === 'number' && typeof rate.output === 'number') {
-              candidateModels[k] = { ...candidateModels[k], ...rate };
-              repoApplied = true;
+            if (!k || RESERVED_OBJECT_KEYS.has(k)) continue;
+            if (rate && typeof rate === 'object' && !Array.isArray(rate)) {
+              const merged = pickCleanModelRate({
+                ...(candidateModels[k] ?? {}),
+                ...rate,
+              });
+              if (merged) {
+                candidateModels[k] = merged;
+                repoApplied = true;
+              }
             }
           }
         }
@@ -697,7 +817,7 @@ export async function syncOfficialPricing(options: { force?: boolean } = {}): Pr
         anyNetworkSuccess = true;
         const etag = res.headers.get('etag');
         if (etag) nextLitellmEtag = etag;
-        const litellm = (await res.json()) as Record<string, any>;
+        const litellm = await readResponseJsonBounded<Record<string, any>>(res, MAX_LITELLM_PRICING_BYTES);
       const mapping: Array<{ ourKey: string; litellmKeys: string[] }> = [
         {
           ourKey: 'claude-3-7-sonnet',
@@ -955,6 +1075,14 @@ export async function syncOfficialPricing(options: { force?: boolean } = {}): Pr
           ourKey: 'o4-mini',
           litellmKeys: ['o4-mini', 'openai/o4-mini'],
         },
+        {
+          ourKey: 'claude-sonnet-5-5',
+          litellmKeys: ['claude-sonnet-5-5', 'anthropic/claude-sonnet-5-5'],
+        },
+        {
+          ourKey: 'gpt-oss-120b',
+          litellmKeys: ['gpt-oss-120b', 'openai/gpt-oss-120b', 'groq/openai/gpt-oss-120b'],
+        },
       ];
 
       for (const { ourKey, litellmKeys } of mapping) {
@@ -1015,9 +1143,17 @@ export async function syncOfficialPricing(options: { force?: boolean } = {}): Pr
     // Offline fallback: keep local ledger intact
   }
 
-      // 3. Derive composite Orchestrator rates dynamically from live Planner (Carbon/Argon) + Executor (Hydrogen) rates
+      // 3. Derive composite Orchestrator rates dynamically from live Planner (Neon/Carbon/Argon) + Executor (Hydrogen) rates
       const hydrogenRate = candidateModels['gemini-4-hydrogen'];
       if (hydrogenRate) {
+        if (candidateModels['gemini-4-neon'] && candidateModels['orchestrator-neon']) {
+          candidateModels['orchestrator-neon'] = deriveOrchestratorRate(
+            'Neon',
+            candidateModels['gemini-4-neon'],
+            hydrogenRate,
+            candidateModels['orchestrator-neon']
+          );
+        }
         if (candidateModels['gemini-4-carbon'] && candidateModels['orchestrator-carbon']) {
           candidateModels['orchestrator-carbon'] = deriveOrchestratorRate(
             'Carbon',
@@ -1083,7 +1219,56 @@ export async function syncOfficialPricing(options: { force?: boolean } = {}): Pr
     }
   }
 
-function getDefaultModelForSource(source: ToolSource, pricing: PricingConfig): string {
+export interface OrchestratorDescriptor {
+  key: 'orchestrator-neon' | 'orchestrator-carbon' | 'orchestrator-argon';
+  label: 'Orchestrator (Neon)' | 'Orchestrator (Carbon)' | 'Orchestrator (Argon)';
+  plannerFamily: 'neon' | 'carbon' | 'argon';
+  plannerModelKey: 'gemini-4-neon' | 'gemini-4-carbon' | 'gemini-4-argon';
+}
+
+export function inferOrchestratorFromPlannerModel(
+  rawOrNormalizedModel: string | undefined | null
+): OrchestratorDescriptor | null {
+  if (!rawOrNormalizedModel) return null;
+  const s = rawOrNormalizedModel.trim().toLowerCase();
+  if (!s) return null;
+  if (s.includes('neon')) {
+    return {
+      key: 'orchestrator-neon',
+      label: 'Orchestrator (Neon)',
+      plannerFamily: 'neon',
+      plannerModelKey: 'gemini-4-neon',
+    };
+  }
+  if (s.includes('argon')) {
+    return {
+      key: 'orchestrator-argon',
+      label: 'Orchestrator (Argon)',
+      plannerFamily: 'argon',
+      plannerModelKey: 'gemini-4-argon',
+    };
+  }
+  if (s.includes('carbon') || s.includes('orchestrator')) {
+    return {
+      key: 'orchestrator-carbon',
+      label: 'Orchestrator (Carbon)',
+      plannerFamily: 'carbon',
+      plannerModelKey: 'gemini-4-carbon',
+    };
+  }
+  return null;
+}
+
+export function parseOrchestratorSettingModel(
+  rawSettingModel: string | undefined | null
+): OrchestratorDescriptor | null {
+  if (!rawSettingModel || !rawSettingModel.toLowerCase().includes('orchestrator')) {
+    return null;
+  }
+  return inferOrchestratorFromPlannerModel(rawSettingModel);
+}
+
+export function getDefaultModelForSource(source: ToolSource, pricing: PricingConfig): string {
   const fromConfig = pricing.defaults?.[source];
   if (fromConfig && pricing.models[fromConfig]) return fromConfig;
   if (source === 'claude') return 'claude-sonnet-4';
@@ -1122,6 +1307,10 @@ export function resolveModelKey(
   }
 
   const pick = (key: string) => (pricing.models[key] ? key : defaultKey);
+
+  if (cleaned.includes('gpt-oss') || cleaned.includes('oss-120b')) {
+    return pick('gpt-oss-120b');
+  }
 
   // OpenAI GPT-6.2 family (Astra, Sol, + future variants)
   if (/gpt[-_\s]?6[.\-_]2/.test(cleaned)) {
@@ -1235,12 +1424,18 @@ export function resolveModelKey(
     return cleaned.includes('4') ? 'claude-haiku-4' : 'claude-3-5-haiku';
   }
   if (cleaned.includes('sonnet')) {
+    if (/(?:^|[^0-9])5[-_.\s]?[5-9](?:$|[^0-9])/.test(cleaned) && pricing.models['claude-sonnet-5-5']) {
+      return 'claude-sonnet-5-5';
+    }
     if (cleaned.includes('3-5') || cleaned.includes('3.5')) return 'claude-3-5-sonnet';
     if (cleaned.includes('3-7') || cleaned.includes('3.7')) return 'claude-3-7-sonnet';
     return 'claude-sonnet-4';
   }
 
   if (cleaned.includes('orchestrator')) {
+    if (cleaned.includes('neon') && pricing.models['orchestrator-neon']) {
+      return 'orchestrator-neon';
+    }
     if (cleaned.includes('argon') && pricing.models['orchestrator-argon']) {
       return 'orchestrator-argon';
     }

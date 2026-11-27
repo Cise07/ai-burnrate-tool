@@ -10,7 +10,8 @@
     "dist",
     "config",
     "scripts",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
   "repository": {
     "type": "git",
@@ -18,9 +19,11 @@
   },
   "scripts": {
     "dev:web": "vite",
+    "clean:cli": "node -e \"const fs=require('node:fs');for(const d of ['dist/cli','dist/core','dist/server'])fs.rmSync(d,{recursive:true,force:true})\"",
     "build:web": "vite build",
-    "build:cli": "tsc -p tsconfig.cli.json",
+    "build:cli": "npm run clean:cli && tsc -p tsconfig.cli.json",
     "build": "npm run build:web && npm run build:cli",
+    "test": "npm run build:cli && node --test tests/quota/*.test.mjs tests/security/*.test.mjs",
     "postinstall": "node scripts/postinstall.mjs",
     "setup": "npm install && npm run build && npm install -g .",
     "remove": "npm uninstall -g ai-burnrate-tool",
@@ -53,7 +56,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "lucide-react": "^0.454.0",
     "postcss": "^8.4.47",
@@ -62,6 +65,6 @@
     "recharts": "^2.13.3",
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10"
+    "vite": "^6.4.6"
   }
 }

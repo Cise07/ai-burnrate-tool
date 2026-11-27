@@ -43,25 +43,31 @@ import {
 } from 'recharts';
 import {
   EUR_RATE,
+  accumulateOrchestratorRole,
   buildWorkspaceGroups,
   computeDailyHeatmap,
   computeMonthlyProjection,
   computeTopWorkspaces,
   convertMoney,
-  convertSubscriptionMoney,
+  createEmptyOrchestratorBreakdown,
   filterSessions,
   filterSessionsInWindow,
+  formatDisplayCurrencyAmount,
   formatMoney,
-  formatSubscriptionMoney,
   getPreviousWindowBounds,
   getSessionModelBreakdown,
   getSessionSubagentBreakdown,
   getTaxLabel,
+  getTotalSubscriptionDisplayAmount,
+  getTurnDisplayModel,
+  getTurnDisplayModelKey,
   normalizeWorkspaceKey,
   sortWorkspaceGroups,
   workspacesToCsv,
   workspacesToJson,
   type Currency,
+  type OrchestratorBreakdown,
+  type SessionModelItem,
   type SortDirection,
   type TimeRange,
   type ToolFilter,
@@ -78,6 +84,7 @@ import type {
 import { AmbientBackdrop } from './components/AmbientBackdrop';
 import { DeletedChatsModal } from './components/DeletedChatsModal';
 import { HeatmapAndWorkspaces } from './components/HeatmapAndWorkspaces';
+import { QuotaEstimateSection } from './components/QuotaEstimateSection';
 import { SettingsModal } from './components/SettingsModal';
 
 const DEFAULT_SECTION_ORDER: DashboardSectionId[] = [
@@ -167,6 +174,134 @@ function findModelRate(
   return (
     (normalizedModel ? pricing.models[normalizedModel] : undefined) ||
     Object.values(pricing.models).find((r) => r.label === modelLabel)
+  );
+}
+
+function getOrchestratorPhysicalFallbackKeys(normalizedModel: string | undefined): {
+  plannerKey: string;
+  plannerFallbackName: string;
+  executorKey: string;
+} {
+  const lower = (normalizedModel || '').toLowerCase();
+  if (lower.includes('neon')) {
+    return { plannerKey: 'gemini-4-neon', plannerFallbackName: 'Gemini 4 Neon', executorKey: 'gemini-4-hydrogen' };
+  }
+  if (lower.includes('argon')) {
+    return { plannerKey: 'gemini-4-argon', plannerFallbackName: 'Gemini 4 Argon', executorKey: 'gemini-4-hydrogen' };
+  }
+  return { plannerKey: 'gemini-4-carbon', plannerFallbackName: 'Gemini 4 Carbon', executorKey: 'gemini-4-hydrogen' };
+}
+
+function parseModelDisplayParts(
+  label: string,
+  normalizedModel?: string
+): { baseName: string; effort: string | null; dotColor: string } {
+  const isOrchestrator = label.startsWith('Orchestrator (');
+  const effortMatch = !isOrchestrator
+    ? label.match(/^(.*?)\s+\((Max|XHigh|High|Medium|Low|Minimal)\)$/i)
+    : null;
+  const baseName = effortMatch ? effortMatch[1].trim() : label;
+  const effort = effortMatch ? effortMatch[2] : null;
+  const probe = (normalizedModel || label).toLowerCase();
+  const dotColor = probe.includes('orchestrator')
+    ? 'var(--accent-teal)'
+    : /(claude|opus|sonnet|haiku)/.test(probe)
+      ? 'var(--tool-claude)'
+      : /(gpt|codex|o3|o4)/.test(probe)
+        ? 'var(--tool-codex)'
+        : 'var(--tool-antigravity)';
+  return { baseName, effort, dotColor };
+}
+
+interface GroupedChatModel {
+  groupKey: string;
+  baseName: string;
+  normalizedModel: string;
+  modelLabel: string;
+  dotColor: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  cacheSavingsUSD: number;
+  variants: Array<{ item: SessionModelItem; effort: string | null }>;
+  orchestratorRoles?: OrchestratorBreakdown;
+}
+
+function groupChatModelsForDisplay(chatModels: SessionModelItem[]): GroupedChatModel[] {
+  const groups = new Map<string, GroupedChatModel>();
+  for (const m of chatModels) {
+    const parts = parseModelDisplayParts(m.modelLabel, m.normalizedModel);
+    const groupKey = m.orchestratorRoles ? m.modelLabel : parts.baseName;
+    let entry = groups.get(groupKey);
+    if (!entry) {
+      entry = {
+        groupKey,
+        baseName: m.orchestratorRoles ? m.modelLabel : parts.baseName,
+        normalizedModel: m.normalizedModel,
+        modelLabel: m.modelLabel,
+        dotColor: parts.dotColor,
+        turns: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        totalTokens: 0,
+        costUSD: 0,
+        cacheSavingsUSD: 0,
+        variants: [],
+        orchestratorRoles: m.orchestratorRoles,
+      };
+      groups.set(groupKey, entry);
+    }
+    entry.turns += m.turns;
+    entry.inputTokens += m.inputTokens;
+    entry.outputTokens += m.outputTokens;
+    entry.cacheReadTokens += m.cacheReadTokens;
+    entry.totalTokens += m.totalTokens;
+    entry.costUSD += m.costUSD;
+    entry.cacheSavingsUSD += m.cacheSavingsUSD;
+    entry.variants.push({ item: m, effort: parts.effort });
+  }
+
+  return Array.from(groups.values())
+    .map((g) => {
+      g.variants.sort((a, b) => b.item.costUSD - a.item.costUSD || b.item.totalTokens - a.item.totalTokens);
+      if (g.variants.length > 0) {
+        g.normalizedModel = g.variants[0].item.normalizedModel;
+        g.modelLabel = g.variants[0].item.modelLabel;
+      }
+      return g;
+    })
+    .sort((a, b) => b.costUSD - a.costUSD || b.totalTokens - a.totalTokens);
+}
+
+function CostShareBarCell({
+  sharePct,
+  barColor,
+  muted = false,
+}: {
+  sharePct: number;
+  barColor: string;
+  muted?: boolean;
+}) {
+  const clamped = Math.min(100, Math.max(0, sharePct));
+  return (
+    <div className="inline-flex items-center justify-end gap-1.5">
+      <div className="w-12 h-1.5 rounded-full bg-[var(--track-bg)] overflow-hidden shrink-0">
+        <div
+          className={`h-full rounded-full ${muted ? 'opacity-75' : ''}`}
+          style={{
+            width: `${clamped > 0 ? Math.max(4, clamped) : 0}%`,
+            backgroundColor: barColor,
+          }}
+        />
+      </div>
+      <span className="w-10 text-right tabular-nums text-[var(--ink-tertiary)]">
+        {sharePct.toFixed(1)}%
+      </span>
+    </div>
   );
 }
 
@@ -506,6 +641,7 @@ export default function App() {
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
   const [expandedChats, setExpandedChats] = useState<Set<string>>(new Set());
   const [expandedBtwRows, setExpandedBtwRows] = useState<Set<string>>(new Set());
+  const [toggledChatModelGroups, setToggledChatModelGroups] = useState<Set<string>>(new Set());
   const [isModelUsageExpanded, setIsModelUsageExpanded] = useState<boolean>(() => {
     return localStorage.getItem('burnrate_models_expanded') === 'true';
   });
@@ -795,7 +931,10 @@ export default function App() {
   const triggerManualRescan = async () => {
     setIsRescanning(true);
     try {
-      const res = await fetch('/api/rescan', { method: 'POST' });
+      const res = await fetch('/api/rescan', {
+        method: 'POST',
+        headers: { 'X-Burnrate-Client': '1' },
+      });
       const data = await res.json();
       setSnapshot(data);
       setLastSyncTime(new Date().toLocaleTimeString());
@@ -807,7 +946,7 @@ export default function App() {
   const saveSettings = async (next: UserSettings) => {
     const res = await fetch('/api/settings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Burnrate-Client': '1' },
       body: JSON.stringify(next),
     });
     if (res.ok) {
@@ -829,7 +968,10 @@ export default function App() {
   const restoreDismissedLegacy = async () => {
     setIsRestoringLegacy(true);
     try {
-      const res = await fetch('/api/deleted-legacy/restore', { method: 'POST' });
+      const res = await fetch('/api/deleted-legacy/restore', {
+        method: 'POST',
+        headers: { 'X-Burnrate-Client': '1' },
+      });
       if (res.ok) {
         const data = (await res.json()) as { snapshot?: BurnrateSnapshot };
         if (data.snapshot) {
@@ -917,6 +1059,9 @@ export default function App() {
         longContextTurns: number;
         source: ToolSource;
         rate?: ModelRate;
+        orchestratorRoles?: OrchestratorBreakdown;
+        plannerRate?: ModelRate;
+        executorRate?: ModelRate;
       }
     >();
     const activeModelCostMap = new Map<string, number>();
@@ -925,7 +1070,8 @@ export default function App() {
     for (const session of activeFilteredSessions) {
       workspaceSet.add(normalizeWorkspaceKey(session.workspace));
       for (const t of session.turnHistory) {
-        activeModelCostMap.set(t.modelLabel, (activeModelCostMap.get(t.modelLabel) || 0) + t.costUSD);
+        const displayModel = getTurnDisplayModel(t);
+        activeModelCostMap.set(displayModel, (activeModelCostMap.get(displayModel) || 0) + t.costUSD);
       }
     }
 
@@ -960,16 +1106,23 @@ export default function App() {
         dayEntry.tokens += t.totalTokens;
         dailyMap.set(dayKey, dayEntry);
 
-        let modEntry = modelMap.get(t.modelLabel);
+        const displayModel = getTurnDisplayModel(t);
+        const displayModelKey = getTurnDisplayModelKey(t);
+        const physicalRate =
+          (t.normalizedModel ? snapshot.pricing?.models?.[t.normalizedModel] : undefined) ||
+          Object.values(snapshot.pricing?.models || {}).find(
+            (r) => r.label === t.modelLabel || r.label.toLowerCase() === t.model.toLowerCase()
+          );
+
+        let modEntry = modelMap.get(displayModel);
         if (!modEntry) {
           const matchedRate =
-            (t.normalizedModel ? snapshot.pricing?.models?.[t.normalizedModel] : undefined) ||
-            Object.values(snapshot.pricing?.models || {}).find(
-              (r) => r.label === t.modelLabel || r.label.toLowerCase() === t.model.toLowerCase()
-            );
+            (displayModelKey ? snapshot.pricing?.models?.[displayModelKey] : undefined) ||
+            Object.values(snapshot.pricing?.models || {}).find((r) => r.label === displayModel) ||
+            physicalRate;
           modEntry = {
-            model: t.modelLabel,
-            normalizedModel: t.normalizedModel,
+            model: displayModel,
+            normalizedModel: displayModelKey,
             costUSD: 0,
             tokens: 0,
             inputTokens: 0,
@@ -980,7 +1133,7 @@ export default function App() {
             source: session.source,
             rate: matchedRate,
           };
-          modelMap.set(t.modelLabel, modEntry);
+          modelMap.set(displayModel, modEntry);
         }
         modEntry.costUSD += t.costUSD;
         modEntry.tokens += t.totalTokens;
@@ -988,10 +1141,21 @@ export default function App() {
         modEntry.outputTokens += t.outputTokens;
         modEntry.cacheReadTokens += t.cacheReadTokens;
         modEntry.turns += 1;
-        if (!modEntry.rate && t.normalizedModel && snapshot.pricing?.models?.[t.normalizedModel]) {
-          modEntry.rate = snapshot.pricing.models[t.normalizedModel];
+        if (!modEntry.rate && displayModelKey && snapshot.pricing?.models?.[displayModelKey]) {
+          modEntry.rate = snapshot.pricing.models[displayModelKey];
         }
-        const lcThreshold = modEntry.rate?.longContext?.thresholdTokens;
+        if (t.orchestratorRole === 'planner' || t.orchestratorRole === 'executor') {
+          if (!modEntry.orchestratorRoles) {
+            modEntry.orchestratorRoles = createEmptyOrchestratorBreakdown();
+          }
+          accumulateOrchestratorRole(modEntry.orchestratorRoles, t);
+          if (t.orchestratorRole === 'planner' && physicalRate && !modEntry.plannerRate) {
+            modEntry.plannerRate = physicalRate;
+          } else if (t.orchestratorRole === 'executor' && physicalRate && !modEntry.executorRate) {
+            modEntry.executorRate = physicalRate;
+          }
+        }
+        const lcThreshold = (physicalRate || modEntry.rate)?.longContext?.thresholdTokens;
         if (
           lcThreshold &&
           lcThreshold > 0 &&
@@ -1149,7 +1313,7 @@ export default function App() {
     try {
       const res = await fetch('/api/deleted-legacy/dismiss', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Burnrate-Client': '1' },
         body: JSON.stringify({
           items: legacyOnly.map((chat) => ({
             source: chat.source,
@@ -1191,7 +1355,7 @@ export default function App() {
   }
 
   const displayedSpend = convertMoney(analytics.totalCostUSD, currency);
-  const displayedSub = convertSubscriptionMoney(analytics.referenceSubUSD, currency);
+  const displayedSub = getTotalSubscriptionDisplayAmount(userSettings.subscriptions, toolFilter, currency);
   const subPercentage =
     displayedSub > 0 ? Math.min(100, (displayedSpend / displayedSub) * 100) : 0;
   const subMultiplier =
@@ -1393,10 +1557,58 @@ export default function App() {
           </div>
         </div>
 
+        {m.orchestratorRoles && (() => {
+          const p = m.orchestratorRoles.planner;
+          const e = m.orchestratorRoles.executor;
+          const fb = getOrchestratorPhysicalFallbackKeys(m.normalizedModel);
+          const pModels = p.models.length > 0 ? p.models.join(', ') : fb.plannerFallbackName;
+          const eModels = e.models.length > 0 ? e.models.join(', ') : 'Gemini 4 Hydrogen';
+          return (
+            <div className="pt-2.5 border-t border-[var(--border-hairline)] flex flex-col gap-1.5">
+              <div className="flex items-center justify-between text-[11px] font-mono text-[var(--ink-tertiary)]">
+                <span>Planner / Executor</span>
+                <span>{m.turns} turns</span>
+              </div>
+              <div
+                className="glass-control px-2.5 py-1.5 rounded-lg text-[10.5px] font-mono tabular flex items-center justify-between gap-2"
+                title={`Planner (${pModels}) · Input: ${formatTokens(p.inputTokens)} · Cached: ${formatTokens(p.cacheReadTokens)} · Output: ${formatTokens(p.outputTokens)} · Saved: ${formatMoney(p.cacheSavingsUSD, currency)}`}
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[var(--tool-antigravity)] font-semibold shrink-0">Planner</span>
+                  <span className="text-[var(--ink-tertiary)] truncate">{pModels}</span>
+                </div>
+                <span className="shrink-0 text-[var(--ink-primary)] whitespace-nowrap">
+                  {p.turns}t · {formatTokens(p.totalTokens)} ·{' '}
+                  <span className="text-[var(--accent-teal)] font-semibold">
+                    {formatMoney(p.costUSD, currency)}
+                  </span>
+                </span>
+              </div>
+              <div
+                className="glass-control px-2.5 py-1.5 rounded-lg text-[10.5px] font-mono tabular flex items-center justify-between gap-2"
+                title={`Executor (${eModels}) · Input: ${formatTokens(e.inputTokens)} · Cached: ${formatTokens(e.cacheReadTokens)} · Output: ${formatTokens(e.outputTokens)} · Saved: ${formatMoney(e.cacheSavingsUSD, currency)}`}
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[var(--accent-amber)] font-semibold shrink-0">Executor</span>
+                  <span className="text-[var(--ink-tertiary)] truncate">{eModels}</span>
+                </div>
+                <span className="shrink-0 text-[var(--ink-primary)] whitespace-nowrap">
+                  {e.turns}t · {formatTokens(e.totalTokens)} ·{' '}
+                  <span className="text-[var(--accent-teal)] font-semibold">
+                    {formatMoney(e.costUSD, currency)}
+                  </span>
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
         {m.rate && (
           <div className="pt-2.5 border-t border-[var(--border-hairline)] flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-[var(--ink-tertiary)]">Rate per 1M tok:</span>
+              <span className="text-[var(--ink-tertiary)]">
+                {m.orchestratorRoles ? 'Per-Turn Rates (1M tok):' : 'Rate per 1M tok:'}
+              </span>
               {promoActive && (
                 <span className="text-[10px] font-semibold text-[var(--accent-amber)] flex items-center gap-1">
                   <Sparkles className="w-2.5 h-2.5" />
@@ -1405,42 +1617,93 @@ export default function App() {
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-1.5 glass-control p-2 rounded-lg text-[10px] font-mono tabular">
-              <div>
-                <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Input</span>
-                <div className="flex items-baseline gap-1">
-                  {promoActive && m.rate.standardInput && (
-                    <span className="line-through text-[var(--ink-tertiary)] opacity-70 text-[9px]">
-                      {formatRateMoney(m.rate.standardInput, currency)}
+            {m.orchestratorRoles ? (() => {
+              const fb = getOrchestratorPhysicalFallbackKeys(m.normalizedModel);
+              const pRate = m.plannerRate || snapshot?.pricing?.models?.[fb.plannerKey];
+              const eRate = m.executorRate || snapshot?.pricing?.models?.[fb.executorKey];
+              const renderRoleRateRow = (
+                roleName: string,
+                roleColorClass: string,
+                rateObj: ModelRate | undefined
+              ) => {
+                if (!rateObj) return null;
+                const rolePromo = isPromoActive(rateObj);
+                const rIn = rolePromo ? rateObj.input : (rateObj.standardInput ?? rateObj.input);
+                const rCache = rolePromo ? rateObj.cacheRead : (rateObj.standardCacheRead ?? rateObj.cacheRead);
+                const rOut = rolePromo ? rateObj.output : (rateObj.standardOutput ?? rateObj.output);
+                return (
+                  <div className="glass-control px-2.5 py-1.5 rounded-lg text-[10px] font-mono tabular flex items-center justify-between gap-2">
+                    <span className={`font-semibold shrink-0 ${roleColorClass}`}>{roleName}</span>
+                    <span className="truncate">
+                      {rolePromo && rateObj.standardInput && (
+                        <span className="line-through text-[var(--ink-tertiary)] opacity-70 mr-1 text-[9px]">
+                          {formatRateMoney(rateObj.standardInput, currency)}
+                        </span>
+                      )}
+                      <span className="text-[var(--ink-primary)] font-semibold">
+                        {formatRateMoney(rIn, currency)}
+                      </span>
+                      <span className="text-[var(--ink-tertiary)] mx-1">/</span>
+                      <span className="text-[var(--tool-antigravity)] font-semibold">
+                        {formatRateMoney(rCache, currency)}
+                      </span>
+                      <span className="text-[var(--ink-tertiary)] mx-1">/</span>
+                      {rolePromo && rateObj.standardOutput && (
+                        <span className="line-through text-[var(--ink-tertiary)] opacity-70 mr-1 text-[9px]">
+                          {formatRateMoney(rateObj.standardOutput, currency)}
+                        </span>
+                      )}
+                      <span className="text-[var(--accent-amber)] font-semibold">
+                        {formatRateMoney(rOut, currency)}
+                      </span>
                     </span>
-                  )}
-                  <span className="text-[var(--ink-primary)] font-semibold">
-                    {formatRateMoney(curInput, currency)}
+                  </div>
+                );
+              };
+              return (
+                <div className="flex flex-col gap-1">
+                  {renderRoleRateRow('Planner', 'text-[var(--tool-antigravity)]', pRate)}
+                  {renderRoleRateRow('Executor', 'text-[var(--accent-amber)]', eRate)}
+                </div>
+              );
+            })() : (
+              <div className="grid grid-cols-3 gap-1.5 glass-control p-2 rounded-lg text-[10px] font-mono tabular">
+                <div>
+                  <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Input</span>
+                  <div className="flex items-baseline gap-1">
+                    {promoActive && m.rate.standardInput && (
+                      <span className="line-through text-[var(--ink-tertiary)] opacity-70 text-[9px]">
+                        {formatRateMoney(m.rate.standardInput, currency)}
+                      </span>
+                    )}
+                    <span className="text-[var(--ink-primary)] font-semibold">
+                      {formatRateMoney(curInput, currency)}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Cached</span>
+                  <span className="text-[var(--tool-antigravity)] font-semibold">
+                    {formatRateMoney(curCache, currency)}
                   </span>
                 </div>
-              </div>
 
-              <div>
-                <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Cached</span>
-                <span className="text-[var(--tool-antigravity)] font-semibold">
-                  {formatRateMoney(curCache, currency)}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Output</span>
-                <div className="flex items-baseline gap-1">
-                  {promoActive && m.rate.standardOutput && (
-                    <span className="line-through text-[var(--ink-tertiary)] opacity-70 text-[9px]">
-                      {formatRateMoney(m.rate.standardOutput, currency)}
+                <div>
+                  <span className="text-[var(--ink-tertiary)] block text-[9px] uppercase tracking-wider">Output</span>
+                  <div className="flex items-baseline gap-1">
+                    {promoActive && m.rate.standardOutput && (
+                      <span className="line-through text-[var(--ink-tertiary)] opacity-70 text-[9px]">
+                        {formatRateMoney(m.rate.standardOutput, currency)}
+                      </span>
+                    )}
+                    <span className="text-[var(--accent-amber)] font-semibold">
+                      {formatRateMoney(curOutput, currency)}
                     </span>
-                  )}
-                  <span className="text-[var(--accent-amber)] font-semibold">
-                    {formatRateMoney(curOutput, currency)}
-                  </span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {m.rate.longContext && (
               <div
@@ -2007,10 +2270,10 @@ export default function App() {
                   title={`Includes ${taxLabel} · Customize your monthly subscription plans & dashboard layout`}
                   className="text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] underline decoration-dotted underline-offset-2 transition-colors cursor-pointer text-left truncate"
                 >
-                  vs {formatSubscriptionMoney(analytics.referenceSubUSD, currency)}/mo Plan
+                  vs {formatDisplayCurrencyAmount(displayedSub, currency)}/mo Plan
                 </button>
                 <span className="font-mono tabular font-semibold text-[var(--accent-teal)] shrink-0">
-                  {analytics.referenceSubUSD > 0 ? `${subMultiplier}x value` : 'Pay-as-you-go'}
+                  {displayedSub > 0 ? `${subMultiplier}x value` : 'Pay-as-you-go'}
                 </span>
               </div>
               <div className="h-1.5 w-full rounded-full bg-[var(--track-bg)] overflow-hidden">
@@ -2115,54 +2378,64 @@ export default function App() {
             </div>
           </div>
 
-          {/* Card 4: Active Sessions & Workspaces */}
-          <div className="glass-panel glass-interactive rounded-2xl p-5 flex flex-col">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-tertiary)]">
-                Sessions &amp; Projects
-              </span>
-              <div className="p-2 rounded-xl bg-[var(--accent-amber-soft)] border border-[var(--accent-amber-border)] text-[var(--accent-amber)] shrink-0">
-                <Layers className="w-4 h-4" />
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <div className="flex flex-wrap items-baseline gap-2">
-                <span className="text-3xl font-bold font-mono tabular tracking-tight text-[var(--ink-primary)]">
-                  {analytics.totalSessionsCount}
+          {/* Card 4: Experimental Remaining Quota (fallback: classic Sessions & Projects) */}
+          {userSettings.experimentalQuota !== false ? (
+            <QuotaEstimateSection
+              quotas={snapshot?.quotas}
+              serverNowMs={snapshot?.serverNowMs}
+              toolFilter={toolFilter}
+              onSnapshotUpdated={(nextSnap) => setSnapshot(nextSnap)}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+            />
+          ) : (
+            <div className="glass-panel glass-interactive rounded-2xl p-5 flex flex-col">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ink-tertiary)]">
+                  Sessions &amp; Projects
                 </span>
-                {analytics.deletedSessionsCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setIsDeletedModalOpen(true)}
-                    title="View deleted chats archive"
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--accent-rose-soft)] text-[var(--accent-rose)] border border-[var(--accent-rose-border)] hover:brightness-110 font-mono text-[10px] transition-all cursor-pointer"
-                  >
-                    <Trash2 className="w-2.5 h-2.5" />
-                    +{analytics.deletedSessionsCount} deleted
-                  </button>
-                )}
-                {analytics.deltas && (
-                  <DeltaPill deltaPct={analytics.deltas.turnsPct} label={`${analytics.deltas.label} turns`} />
-                )}
+                <div className="p-2 rounded-xl bg-[var(--accent-amber-soft)] border border-[var(--accent-amber-border)] text-[var(--accent-amber)] shrink-0">
+                  <Layers className="w-4 h-4" />
+                </div>
               </div>
-              <div className="mt-1.5 text-xs text-[var(--ink-tertiary)]">
-                Active in {analytics.workspacesCount} distinct workspaces
-              </div>
-            </div>
 
-            <div className="mt-auto flex items-center justify-between pt-3 border-t border-[var(--border-hairline)] min-h-[68px] text-xs font-mono tabular">
-              <span className="text-[var(--ink-secondary)]">Avg Cost / Session</span>
-              <span className="text-[var(--accent-flame)] font-semibold">
-                {formatMoney(
-                  analytics.totalAllSessionsCount > 0
-                    ? analytics.totalCostUSD / analytics.totalAllSessionsCount
-                    : 0,
-                  currency
-                )}
-              </span>
+              <div className="mb-4">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-3xl font-bold font-mono tabular tracking-tight text-[var(--ink-primary)]">
+                    {analytics.totalSessionsCount}
+                  </span>
+                  {analytics.deletedSessionsCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDeletedModalOpen(true)}
+                      title="View deleted chats archive"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--accent-rose-soft)] text-[var(--accent-rose)] border border-[var(--accent-rose-border)] hover:brightness-110 font-mono text-[10px] transition-all cursor-pointer"
+                    >
+                      <Trash2 className="w-2.5 h-2.5" />
+                      +{analytics.deletedSessionsCount} deleted
+                    </button>
+                  )}
+                  {analytics.deltas && (
+                    <DeltaPill deltaPct={analytics.deltas.turnsPct} label={`${analytics.deltas.label} turns`} />
+                  )}
+                </div>
+                <div className="mt-1.5 text-xs text-[var(--ink-tertiary)]">
+                  Active in {analytics.workspacesCount} distinct workspaces
+                </div>
+              </div>
+
+              <div className="mt-auto flex items-center justify-between pt-3 border-t border-[var(--border-hairline)] min-h-[68px] text-xs font-mono tabular">
+                <span className="text-[var(--ink-secondary)]">Avg Cost / Session</span>
+                <span className="text-[var(--accent-flame)] font-semibold">
+                  {formatMoney(
+                    analytics.totalAllSessionsCount > 0
+                      ? analytics.totalCostUSD / analytics.totalAllSessionsCount
+                      : 0,
+                    currency
+                  )}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
         </section>
         )}
 
@@ -2473,7 +2746,7 @@ export default function App() {
         {/* Live Sessions / Workspaces Table */}
         {!hiddenSections.has('sessions') && (
         <section
-          className="glass-panel-overflow rounded-2xl animate-burn-fade-up"
+          className="glass-panel-overflow rounded-2xl min-w-0 max-w-full animate-burn-fade-up"
           style={{ order: getSectionOrderIndex('sessions'), animationDelay: '130ms' }}
         >
           <div className="relative z-20 p-4 sm:p-5 border-b border-[var(--border-hairline)] rounded-t-2xl flex flex-wrap items-center justify-between gap-3">
@@ -2621,7 +2894,12 @@ export default function App() {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-b-2xl">
+          <div
+            tabIndex={0}
+            role="region"
+            aria-label="Live Sessions and Workspaces"
+            className="table-scroll table-scroll-fade-x w-full max-w-full overflow-x-auto rounded-b-2xl [container-type:inline-size]"
+          >
             <table className="w-full text-left border-collapse min-w-[1020px] xl:min-w-0">
               <thead>
                 <tr className="border-b border-[var(--border-hairline)] text-[10px] xl:text-[11px] font-mono uppercase text-[var(--ink-tertiary)] bg-[var(--table-head)]">
@@ -2645,7 +2923,7 @@ export default function App() {
                 return (
                   <tbody
                     key={ws.workspaceKey}
-                    className="text-xs border-b border-[var(--border-hairline)] last:border-b-0"
+                    className="ws-row-scroll-fade text-xs border-b border-[var(--border-hairline)] last:border-b-0"
                   >
                     <tr
                       onClick={() => toggleSetKey(setExpandedWorkspaces, ws.workspaceKey)}
@@ -2660,11 +2938,11 @@ export default function App() {
                             e.stopPropagation();
                             toggleSetKey(setExpandedWorkspaces, ws.workspaceKey);
                           }}
-                          className="p-1 rounded hover:bg-[var(--table-hover)] text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] transition select-none"
+                          className="p-1 rounded hover:bg-[var(--table-hover)] text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] active:scale-95 transition select-none"
                           title={isExpanded ? 'Collapse workspace chats' : 'Expand workspace chats'}
                         >
                           <ChevronRight
-                            className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
+                            className={`w-3.5 h-3.5 transition-transform duration-200 ease-burn-out motion-reduce:transition-none ${
                               isExpanded ? 'rotate-90 text-[var(--accent-teal)]' : ''
                             }`}
                           />
@@ -2766,19 +3044,21 @@ export default function App() {
                           : 'pointer-events-none'
                       }
                     >
-                      <td
-                        colSpan={12}
-                        className={`transition-[padding] duration-200 ease-out motion-reduce:transition-none ${
-                          isExpanded ? 'px-3 py-3 sm:px-4 sm:py-3.5' : 'p-0 text-[0px] leading-[0]'
-                        }`}
-                      >
+                      <td colSpan={12} className="p-0">
                         <div
-                          className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+                          className={`sticky left-0 w-[100cqi] max-w-full box-border grid transition-[grid-template-rows,opacity] duration-[240ms] ease-burn-out motion-reduce:transition-none ${
                             isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                           }`}
                         >
-                          <div className="overflow-hidden min-h-0 text-xs leading-normal">
-                            <div className="glass-subcard rounded-xl p-3 sm:p-4 space-y-3">
+                          <div className="overflow-hidden min-h-0 min-w-0 text-xs leading-normal">
+                            <div className="px-3 py-3 sm:px-4 sm:py-3.5 min-w-0">
+                              <div
+                                className={`glass-subcard rounded-xl p-3 sm:p-4 space-y-3 min-w-0 transition-[transform,opacity] duration-[220ms] ease-burn-out motion-reduce:transition-none ${
+                                  isExpanded
+                                    ? 'opacity-100 translate-y-0 scale-100'
+                                    : 'opacity-0 -translate-y-1.5 scale-[0.992]'
+                                }`}
+                              >
                               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="font-semibold text-[var(--ink-primary)] flex items-center gap-2">
@@ -2807,18 +3087,29 @@ export default function App() {
                               </div>
 
                               <div className="space-y-2.5">
-                                {ws.chats.map((chat) => {
+                                {ws.chats.map((chat, chatIdx) => {
                                   const chatKey = `${chat.source}-${chat.filePath}`;
                                   const isChatExpanded = expandedChats.has(chatKey);
                                   const chatModels = getSessionModelBreakdown(chat.turnHistory);
+                                  const groupedChatModels = groupChatModelsForDisplay(chatModels);
                                   const subagentSummary = getSessionSubagentBreakdown(chat.turnHistory);
                                   const created = formatPreciseDateTime(chat.startedAt);
                                   const modified = formatPreciseDateTime(chat.lastActiveAt);
+                                  const safeChatDomId = `${chat.source}-${chat.sessionId}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+                                  const modelsHeadingId = `chat-models-${safeChatDomId}`;
+                                  const subagentsHeadingId = `chat-subagents-${safeChatDomId}`;
 
                                   return (
                                     <div
                                       key={chatKey}
-                                      className="glass-control rounded-xl overflow-hidden transition-colors duration-150 hover:border-[var(--border-strong)]"
+                                      className={`glass-control rounded-xl overflow-hidden min-w-0 transition-colors duration-150 hover:border-[var(--border-strong)] ${
+                                        isExpanded ? 'animate-burn-chat-card' : ''
+                                      }`}
+                                      style={
+                                        isExpanded
+                                          ? { animationDelay: `${Math.min(chatIdx * 28, 140)}ms` }
+                                          : undefined
+                                      }
                                     >
                                       <div
                                         onClick={() => toggleSetKey(setExpandedChats, chatKey)}
@@ -2832,7 +3123,7 @@ export default function App() {
                                                 e.stopPropagation();
                                                 toggleSetKey(setExpandedChats, chatKey);
                                               }}
-                                              className="p-0.5 rounded hover:bg-[var(--table-hover)] text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] transition shrink-0 select-none"
+                                              className="p-0.5 rounded hover:bg-[var(--table-hover)] text-[var(--ink-tertiary)] hover:text-[var(--ink-primary)] active:scale-95 transition shrink-0 select-none"
                                               title={
                                                 isChatExpanded
                                                   ? 'Hide detailed model & subagent metrics'
@@ -2840,7 +3131,7 @@ export default function App() {
                                               }
                                             >
                                               <ChevronRight
-                                                className={`w-3.5 h-3.5 transition-transform duration-200 motion-reduce:transition-none ${
+                                                className={`w-3.5 h-3.5 transition-transform duration-200 ease-burn-out motion-reduce:transition-none ${
                                                   isChatExpanded ? 'rotate-90 text-[var(--accent-teal)]' : ''
                                                 }`}
                                               />
@@ -2881,13 +3172,13 @@ export default function App() {
                                                         e.stopPropagation();
                                                         toggleSetKey(setExpandedBtwRows, `${chatKey}::/btw`);
                                                       }}
-                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--accent-sky-soft)] hover:brightness-110 border border-[var(--accent-sky-border)] text-[10px] font-mono text-[var(--accent-sky)] shrink-0 transition-all cursor-pointer"
+                                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--accent-sky-soft)] hover:brightness-110 active:scale-95 border border-[var(--accent-sky-border)] text-[10px] font-mono text-[var(--accent-sky)] shrink-0 transition-all cursor-pointer"
                                                       title={`Click to show /btw titles (${btwEntry.runs?.length || 1} side-chat${(btwEntry.runs?.length || 1) === 1 ? '' : 's'} · ${btwEntry.turns}t · ${formatTokens(btwEntry.totalTokens)} tok · ${formatMoney(btwEntry.costUSD, currency)})`}
                                                     >
                                                       <MessageSquare className="w-2.5 h-2.5 shrink-0" />
                                                       +{(btwEntry.runs?.length || 0) > 1 ? `${btwEntry.runs!.length} ` : ''}/btw
                                                       <ChevronRight
-                                                        className={`w-2.5 h-2.5 transition-transform duration-150 ${
+                                                        className={`w-2.5 h-2.5 transition-transform duration-150 ease-burn-out motion-reduce:transition-none ${
                                                           expandedBtwRows.has(`${chatKey}::/btw`) ? 'rotate-90' : ''
                                                         }`}
                                                       />
@@ -2932,45 +3223,95 @@ export default function App() {
                                         </div>
 
                                         {/* Models used in this chat */}
-                                        <div className="flex flex-wrap items-center gap-1.5 pl-6">
-                                          <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-[var(--ink-tertiary)] mr-1">
-                                            <Cpu className="w-3 h-3 text-[var(--accent-teal)]" />
-                                            Models ({chatModels.length}):
-                                          </span>
-                                          {chatModels.map((m) => {
-                                            const costShare =
-                                              chat.costUSD > 0 ? (m.costUSD / chat.costUSD) * 100 : 0;
-                                            const modelRate = findModelRate(
-                                              m.normalizedModel,
-                                              m.modelLabel,
-                                              snapshot?.pricing
-                                            );
-                                            return (
-                                              <span
-                                                key={m.modelLabel}
-                                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md glass-subcard text-[10.5px] font-mono tabular text-[var(--ink-secondary)]"
-                                                title={`Input: ${formatTokens(m.inputTokens)} · Cache Read: ${formatTokens(m.cacheReadTokens)} · Output: ${formatTokens(m.outputTokens)} · Saved: ${formatMoney(m.cacheSavingsUSD, currency)}`}
-                                              >
-                                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-teal)] shrink-0" />
-                                                <span className="text-[var(--ink-primary)] font-medium">{m.modelLabel}</span>
-                                                {isPromoActive(modelRate) && (
-                                                  <span
-                                                    className="px-1 py-0 rounded text-[9px] font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]"
-                                                    title={modelRate?.promoNote || 'Active promotional rate'}
-                                                  >
-                                                    PROMO
-                                                  </span>
-                                                )}
-                                                <span className="text-[var(--ink-tertiary)]">· {m.turns}t</span>
-                                                <span className="text-[var(--ink-secondary)]">· {formatTokens(m.totalTokens)}</span>
-                                                <span className="text-[var(--accent-teal)] font-semibold">
-                                                  · {formatMoney(m.costUSD, currency)}
-                                                </span>
-                                                <span className="text-[var(--ink-tertiary)]">({costShare.toFixed(0)}%)</span>
+                                        {(() => {
+                                          const previewGroups = groupedChatModels.slice(0, 3);
+                                          const extraGroups = groupedChatModels.slice(3);
+                                          return (
+                                            <div className="flex flex-wrap items-center gap-1.5 pl-6">
+                                              <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-[var(--ink-tertiary)] mr-1">
+                                                <Cpu className="w-3 h-3 text-[var(--accent-teal)]" />
+                                                Models ({groupedChatModels.length}):
                                               </span>
-                                            );
-                                          })}
-                                        </div>
+                                              {previewGroups.map((g) => {
+                                                const costShare =
+                                                  chat.costUSD > 0 ? (g.costUSD / chat.costUSD) * 100 : 0;
+                                                const modelRate = findModelRate(
+                                                  g.normalizedModel,
+                                                  g.modelLabel,
+                                                  snapshot?.pricing
+                                                );
+                                                const variantTooltip =
+                                                  g.variants.length > 1
+                                                    ? ` · Tiers: ${g.variants.map((v) => `${v.effort || v.item.modelLabel} (${v.item.turns}t, ${formatMoney(v.item.costUSD, currency)})`).join(', ')}`
+                                                    : '';
+                                                const orchTooltip = g.orchestratorRoles
+                                                  ? ` · Planner: ${g.orchestratorRoles.planner.turns}t ${formatTokens(g.orchestratorRoles.planner.totalTokens)} ${formatMoney(g.orchestratorRoles.planner.costUSD, currency)} · Executor: ${g.orchestratorRoles.executor.turns}t ${formatTokens(g.orchestratorRoles.executor.totalTokens)} ${formatMoney(g.orchestratorRoles.executor.costUSD, currency)}`
+                                                  : '';
+                                                return (
+                                                  <span
+                                                    key={g.groupKey}
+                                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md glass-subcard text-[10.5px] font-mono tabular text-[var(--ink-secondary)]"
+                                                    title={`Input: ${formatTokens(g.inputTokens)} · Cache Read: ${formatTokens(g.cacheReadTokens)} · Output: ${formatTokens(g.outputTokens)} · Total: ${formatTokens(g.totalTokens)} · Saved: ${formatMoney(g.cacheSavingsUSD, currency)}${variantTooltip}${orchTooltip}`}
+                                                  >
+                                                    <span
+                                                      className="size-1.5 rounded-full shrink-0"
+                                                      style={{ backgroundColor: g.dotColor }}
+                                                    />
+                                                    <span className="text-[var(--ink-primary)] font-medium">
+                                                      {g.baseName}
+                                                    </span>
+                                                    {g.orchestratorRoles ? (
+                                                      <span
+                                                        className="text-[var(--accent-teal)] text-[9.5px] font-semibold"
+                                                        title={`${g.orchestratorRoles.planner.turns} Planner turns · ${g.orchestratorRoles.executor.turns} Executor turns`}
+                                                      >
+                                                        {g.orchestratorRoles.planner.turns}P/{g.orchestratorRoles.executor.turns}E
+                                                      </span>
+                                                    ) : g.variants.length === 1 && g.variants[0].effort ? (
+                                                      <span className="px-1 py-0 rounded bg-[var(--bg-elevated)] border border-[var(--border-hairline)] text-[9.5px] uppercase text-[var(--ink-secondary)]">
+                                                        {g.variants[0].effort}
+                                                      </span>
+                                                    ) : g.variants.length > 1 ? (
+                                                      <span className="px-1 py-0 rounded bg-[var(--bg-elevated)] border border-[var(--border-hairline)] text-[9.5px] text-[var(--ink-secondary)]">
+                                                        {g.variants.length} tiers
+                                                      </span>
+                                                    ) : null}
+                                                    {isPromoActive(modelRate) && (
+                                                      <span
+                                                        className="px-1 py-0 rounded text-[9px] font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]"
+                                                        title={modelRate?.promoNote || 'Active promotional rate'}
+                                                      >
+                                                        PROMO
+                                                      </span>
+                                                    )}
+                                                    <span className="text-[var(--ink-tertiary)]">
+                                                      · {g.turns}t
+                                                    </span>
+                                                    <span className="text-[var(--accent-teal)] font-semibold">
+                                                      · {formatMoney(g.costUSD, currency)}
+                                                    </span>
+                                                    <span className="text-[var(--ink-tertiary)]">
+                                                      ({costShare.toFixed(0)}%)
+                                                    </span>
+                                                  </span>
+                                                );
+                                              })}
+                                              {extraGroups.length > 0 && (
+                                                <span
+                                                  className="px-2 py-0.5 rounded-md glass-control text-[10px] font-mono tabular text-[var(--ink-secondary)]"
+                                                  title={extraGroups
+                                                    .map(
+                                                      (g) =>
+                                                        `${g.baseName}: ${g.turns}t · ${formatMoney(g.costUSD, currency)}`
+                                                    )
+                                                    .join(' · ')}
+                                                >
+                                                  +{extraGroups.length} more
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
 
                                         {/* Rolled-up subagent tools & /btw side-chats */}
                                         {subagentSummary.subagents.length > 0 && (() => {
@@ -3080,53 +3421,66 @@ export default function App() {
                                                 })}
                                               </div>
 
-                                              {btwSub && btwSub.runs && btwSub.runs.length > 0 && isBtwExpanded && (
+                                              {btwSub && btwSub.runs && btwSub.runs.length > 0 && (
                                                 <div
+                                                  aria-hidden={!isBtwExpanded}
                                                   onClick={(e) => e.stopPropagation()}
-                                                  className="rounded-lg bg-[var(--accent-sky-soft)] border border-[var(--accent-sky-border)] px-2.5 py-2 space-y-1.5 cursor-default"
+                                                  className={`grid transition-[grid-template-rows,opacity] duration-200 ease-burn-out motion-reduce:transition-none ${
+                                                    isBtwExpanded
+                                                      ? 'grid-rows-[1fr] opacity-100'
+                                                      : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                                                  }`}
                                                 >
-                                                  <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--accent-sky)] font-semibold flex items-center gap-1.5">
-                                                    <MessageSquare className="w-3 h-3" />
-                                                    <span>/btw Side Chats ({btwSub.runs.length})</span>
-                                                  </div>
-                                                  <div className="divide-y divide-[var(--border-hairline)]">
-                                                    {btwSub.runs.map((run) => {
-                                                      const runDt = formatPreciseDateTime(run.lastActiveAt || run.startedAt);
-                                                      const runModel = run.models[0]?.modelLabel || '';
-                                                      return (
-                                                        <div
-                                                          key={run.runId}
-                                                          className="py-1 first:pt-0.5 last:pb-0 flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-mono tabular"
-                                                        >
-                                                          <div className="flex items-center gap-1.5 min-w-0">
-                                                            <span className="text-[var(--accent-sky)] shrink-0">↳</span>
-                                                            <span
-                                                              className="text-[var(--ink-primary)] font-medium truncate max-w-[260px] sm:max-w-[440px]"
-                                                              title={run.title}
+                                                  <div className="overflow-hidden min-h-0">
+                                                    <div
+                                                      className={`rounded-lg bg-[var(--accent-sky-soft)] border border-[var(--accent-sky-border)] px-2.5 py-2 space-y-1.5 cursor-default transition-transform duration-200 ease-burn-out motion-reduce:transition-none ${
+                                                        isBtwExpanded ? 'translate-y-0' : '-translate-y-1'
+                                                      }`}
+                                                    >
+                                                      <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--accent-sky)] font-semibold flex items-center gap-1.5">
+                                                        <MessageSquare className="w-3 h-3" />
+                                                        <span>/btw Side Chats ({btwSub.runs.length})</span>
+                                                      </div>
+                                                      <div className="divide-y divide-[var(--border-hairline)]">
+                                                        {btwSub.runs.map((run) => {
+                                                          const runDt = formatPreciseDateTime(run.lastActiveAt || run.startedAt);
+                                                          const runModel = run.models[0]?.modelLabel || '';
+                                                          return (
+                                                            <div
+                                                              key={run.runId}
+                                                              className="py-1 first:pt-0.5 last:pb-0 flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-mono tabular"
                                                             >
-                                                              {run.title}
-                                                            </span>
-                                                            {runDt.date !== '—' && (
-                                                              <span className="text-[10px] text-[var(--ink-tertiary)] shrink-0">
-                                                                ({runDt.date} {runDt.time})
-                                                              </span>
-                                                            )}
-                                                          </div>
-                                                          <div className="flex items-center gap-2 shrink-0 text-[10px]">
-                                                            {runModel && (
-                                                              <span className="text-[var(--ink-secondary)]">[{runModel}]</span>
-                                                            )}
-                                                            <span className="text-[var(--ink-tertiary)]">{run.turns}t</span>
-                                                            <span className="text-[var(--ink-secondary)]">
-                                                              {formatTokens(run.totalTokens)}
-                                                            </span>
-                                                            <span className="text-[var(--accent-teal)] font-semibold">
-                                                              {formatMoney(run.costUSD, currency)}
-                                                            </span>
-                                                          </div>
-                                                        </div>
-                                                      );
-                                                    })}
+                                                              <div className="flex items-center gap-1.5 min-w-0">
+                                                                <span className="text-[var(--accent-sky)] shrink-0">↳</span>
+                                                                <span
+                                                                  className="text-[var(--ink-primary)] font-medium truncate max-w-[260px] sm:max-w-[440px]"
+                                                                  title={run.title}
+                                                                >
+                                                                  {run.title}
+                                                                </span>
+                                                                {runDt.date !== '—' && (
+                                                                  <span className="text-[10px] text-[var(--ink-tertiary)] shrink-0">
+                                                                    ({runDt.date} {runDt.time})
+                                                                  </span>
+                                                                )}
+                                                              </div>
+                                                              <div className="flex items-center gap-2 shrink-0 text-[10px]">
+                                                                {runModel && (
+                                                                  <span className="text-[var(--ink-secondary)]">[{runModel}]</span>
+                                                                )}
+                                                                <span className="text-[var(--ink-tertiary)]">{run.turns}t</span>
+                                                                <span className="text-[var(--ink-secondary)]">
+                                                                  {formatTokens(run.totalTokens)}
+                                                                </span>
+                                                                <span className="text-[var(--accent-teal)] font-semibold">
+                                                                  {formatMoney(run.costUSD, currency)}
+                                                                </span>
+                                                              </div>
+                                                            </div>
+                                                          );
+                                                        })}
+                                                      </div>
+                                                    </div>
                                                   </div>
                                                 </div>
                                               )}
@@ -3137,267 +3491,370 @@ export default function App() {
 
                                       <div
                                         aria-hidden={!isChatExpanded}
-                                        className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+                                        className={`grid transition-[grid-template-rows,opacity] duration-[230ms] ease-burn-out motion-reduce:transition-none ${
                                           isChatExpanded
                                             ? 'grid-rows-[1fr] opacity-100'
                                             : 'grid-rows-[0fr] opacity-0 pointer-events-none'
                                         }`}
                                       >
-                                        <div className="overflow-hidden min-h-0">
-                                          <div className="border-t border-[var(--border-hairline)] bg-[var(--bg-subcard)] px-3 py-2.5 overflow-x-auto space-y-3">
-                                            <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
-                                              <thead>
-                                                <tr className="border-b border-[var(--border-hairline)] text-[10px] font-mono uppercase text-[var(--ink-tertiary)]">
-                                                  <th className="py-1.5 px-2">Model</th>
-                                                  <th className="py-1.5 px-2 text-right">Turns</th>
-                                                  <th className="py-1.5 px-2 text-right">Input</th>
-                                                  <th className="py-1.5 px-2 text-right">Cache Read</th>
-                                                  <th className="py-1.5 px-2 text-right">Output</th>
-                                                  <th className="py-1.5 px-2 text-right">Total Tokens</th>
-                                                  <th className="py-1.5 px-2 text-right">Cache Saved</th>
-                                                  <th className="py-1.5 px-2 text-right">API Cost</th>
-                                                  <th className="py-1.5 px-2 text-right">Cost Share</th>
-                                                </tr>
-                                              </thead>
-                                              <tbody className="divide-y divide-[var(--border-hairline)] tabular">
-                                                {chatModels.map((m) => {
-                                                  const costShare =
-                                                    chat.costUSD > 0 ? (m.costUSD / chat.costUSD) * 100 : 0;
-                                                  const modelRate = findModelRate(
-                                                    m.normalizedModel,
-                                                    m.modelLabel,
-                                                    snapshot?.pricing
-                                                  );
-                                                  return (
-                                                    <tr key={m.modelLabel} className="hover:bg-[var(--table-hover)]">
-                                                      <td className="py-1.5 px-2 font-mono font-medium text-[var(--ink-primary)] flex items-center gap-1.5 whitespace-nowrap">
-                                                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-teal)] shrink-0" />
-                                                        <span>{m.modelLabel}</span>
-                                                        {isPromoActive(modelRate) && (
-                                                          <span
-                                                            className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]"
-                                                            title={
-                                                              modelRate?.promoNote || 'Active promotional rate'
-                                                            }
-                                                          >
-                                                            PROMO
-                                                          </span>
-                                                        )}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                        {m.turns}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                        {formatTokens(m.inputTokens)}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
-                                                        {formatTokens(m.cacheReadTokens)}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                        {formatTokens(m.outputTokens)}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] font-medium text-[11px]">
-                                                        {formatTokens(m.totalTokens)}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
-                                                        {formatMoney(m.cacheSavingsUSD, currency)}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
-                                                        {formatMoney(m.costUSD, currency)}
-                                                      </td>
-                                                      <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                        {costShare.toFixed(1)}%
-                                                      </td>
-                                                    </tr>
-                                                  );
-                                                })}
-                                              </tbody>
-                                            </table>
+                                        <div className="overflow-hidden min-h-0 min-w-0">
+                                          <div className="border-t border-[var(--border-hairline)] bg-[var(--bg-subcard)] p-3 sm:p-3.5 space-y-3 min-w-0">
+                                            {/* Card 1: Models Breakdown */}
+                                            <div
+                                              className={`rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] overflow-hidden min-w-0 max-w-full transition-[transform,opacity] duration-200 ease-burn-out motion-reduce:transition-none ${
+                                                isChatExpanded
+                                                  ? 'opacity-100 translate-y-0'
+                                                  : 'opacity-0 translate-y-1'
+                                              }`}
+                                            >
+                                              <div className="px-3 py-2 border-b border-[var(--border-hairline)] bg-[var(--table-head)] flex flex-wrap items-center justify-between gap-2">
+                                                <span
+                                                  id={modelsHeadingId}
+                                                  className="inline-flex items-center gap-1.5 text-[10.5px] font-mono uppercase tracking-wider text-[var(--accent-teal)] font-semibold"
+                                                >
+                                                  <Cpu className="w-3.5 h-3.5 shrink-0" />
+                                                  <span>
+                                                    Models Breakdown ({groupedChatModels.length}
+                                                    {chatModels.length > groupedChatModels.length
+                                                      ? ` · ${chatModels.length} tiers`
+                                                      : ''}
+                                                    )
+                                                  </span>
+                                                </span>
+                                                <span className="text-[10.5px] font-mono tabular text-[var(--ink-tertiary)]">
+                                                  Sorted by API spend · {chat.turns} turns
+                                                </span>
+                                              </div>
 
-                                            {subagentSummary.subagents.length > 0 && (
-                                              <div className="pt-2.5 border-t border-[var(--border-hairline)]">
-                                                <div className="flex items-center gap-1.5 mb-1.5 px-2 text-[10px] font-mono uppercase tracking-wider text-[var(--accent-violet)] font-semibold">
-                                                  <Bot className="w-3 h-3" />
-                                                  <span>Main Chat vs Subagent Tools Consumption</span>
-                                                </div>
-                                                <table className="w-full text-left border-collapse text-xs min-w-[620px] lg:min-w-0">
-                                                  <thead>
-                                                    <tr className="border-b border-[var(--border-hairline)] text-[10px] font-mono uppercase text-[var(--ink-tertiary)]">
-                                                      <th className="py-1.5 px-2">Agent / Tool</th>
-                                                      <th className="py-1.5 px-2 text-right">Turns</th>
-                                                      <th className="py-1.5 px-2 text-right">Input</th>
-                                                      <th className="py-1.5 px-2 text-right">Cache Read</th>
-                                                      <th className="py-1.5 px-2 text-right">Output</th>
-                                                      <th className="py-1.5 px-2 text-right">Total Tokens</th>
-                                                      <th className="py-1.5 px-2 text-right">Cache Saved</th>
-                                                      <th className="py-1.5 px-2 text-right">API Cost</th>
-                                                      <th className="py-1.5 px-2 text-right">Cost Share</th>
+                                              <div
+                                                tabIndex={0}
+                                                role="region"
+                                                aria-labelledby={modelsHeadingId}
+                                                className="table-scroll table-scroll-fade-inner w-0 min-w-full max-w-full overflow-x-auto max-h-80 overflow-y-auto"
+                                              >
+                                                <table className="w-full min-w-[720px] text-left border-separate border-spacing-0 text-xs">
+                                                  <thead className="sticky top-0 z-[2]">
+                                                    <tr>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 left-0 z-[3] sticky-head-cell sticky-col-fade bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-[10px] font-mono uppercase text-[var(--ink-tertiary)] text-left whitespace-nowrap"
+                                                      >
+                                                        Model
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        Turns
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        Input
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        Cache Read
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        Output
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        Total Tok
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        Saved
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        API Cost
+                                                      </th>
+                                                      <th
+                                                        scope="col"
+                                                        className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                      >
+                                                        Share
+                                                      </th>
                                                     </tr>
                                                   </thead>
-                                                  <tbody className="divide-y divide-[var(--border-hairline)] tabular">
-                                                    {subagentSummary.main.turns > 0 && (
-                                                      <tr className="hover:bg-[var(--table-hover)]">
-                                                        <td className="py-1.5 px-2 font-mono font-medium text-[var(--ink-primary)] whitespace-nowrap">
-                                                          <span className="inline-flex items-center gap-1.5">
-                                                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--tool-antigravity)] shrink-0" />
-                                                            <span>Main Chat</span>
-                                                          </span>
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                          {subagentSummary.main.turns}
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                          {formatTokens(subagentSummary.main.inputTokens)}
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
-                                                          {formatTokens(subagentSummary.main.cacheReadTokens)}
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                          {formatTokens(subagentSummary.main.outputTokens)}
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] font-medium text-[11px]">
-                                                          {formatTokens(subagentSummary.main.totalTokens)}
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
-                                                          {formatMoney(subagentSummary.main.cacheSavingsUSD, currency)}
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
-                                                          {formatMoney(subagentSummary.main.costUSD, currency)}
-                                                        </td>
-                                                        <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                          {(chat.costUSD > 0
-                                                            ? (subagentSummary.main.costUSD / chat.costUSD) * 100
-                                                            : 0
-                                                          ).toFixed(1)}
-                                                          %
-                                                        </td>
-                                                      </tr>
-                                                    )}
-                                                    {subagentSummary.subagents.map((sub) => {
-                                                      const isBtw = sub.subagentName === '/btw';
-                                                      const subShare =
-                                                        chat.costUSD > 0 ? (sub.costUSD / chat.costUSD) * 100 : 0;
-                                                      const subRowKey = `${chatKey}::${sub.subagentId}`;
-                                                      const canExpandRuns = isBtw && Boolean(sub.runs && sub.runs.length > 0);
-                                                      const isSubExpanded = canExpandRuns && expandedBtwRows.has(subRowKey);
+                                                  <tbody className="tabular-nums">
+                                                    {groupedChatModels.map((g, idx) => {
+                                                      const costShare =
+                                                        chat.costUSD > 0 ? (g.costUSD / chat.costUSD) * 100 : 0;
+                                                      const modelRate = findModelRate(
+                                                        g.normalizedModel,
+                                                        g.modelLabel,
+                                                        snapshot?.pricing
+                                                      );
+                                                      const rowKey = `${chatKey}::${g.groupKey}`;
+                                                      const canExpandGroup =
+                                                        Boolean(g.orchestratorRoles) || g.variants.length > 1;
+                                                      const defaultOpen =
+                                                        Boolean(g.orchestratorRoles) &&
+                                                        groupedChatModels.length <= 2;
+                                                      const isGroupExpanded =
+                                                        canExpandGroup &&
+                                                        (toggledChatModelGroups.has(rowKey)
+                                                          ? !defaultOpen
+                                                          : defaultOpen);
+
                                                       return (
-                                                        <React.Fragment key={sub.subagentId}>
+                                                        <React.Fragment key={rowKey}>
                                                           <tr
                                                             onClick={
-                                                              canExpandRuns
-                                                                ? () => toggleSetKey(setExpandedBtwRows, subRowKey)
+                                                              canExpandGroup
+                                                                ? () =>
+                                                                    toggleSetKey(setToggledChatModelGroups, rowKey)
                                                                 : undefined
                                                             }
-                                                            className={`hover:bg-[var(--table-hover)] ${canExpandRuns ? 'cursor-pointer' : ''}`}
+                                                            className={`group/mrow hover:bg-[var(--table-hover)] transition-colors ${
+                                                              canExpandGroup ? 'cursor-pointer select-none' : ''
+                                                            }`}
                                                           >
-                                                            <td
-                                                              className="py-1.5 px-2 font-mono font-medium whitespace-nowrap"
-                                                              style={{ color: isBtw ? 'var(--accent-sky)' : 'var(--accent-violet)' }}
+                                                            <th
+                                                              scope="row"
+                                                              className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
                                                             >
                                                               <div className="inline-flex items-center gap-1.5">
-                                                                {canExpandRuns ? (
+                                                                <span className="w-4 text-[10px] text-[var(--ink-tertiary)] tabular-nums">
+                                                                  {idx + 1}.
+                                                                </span>
+                                                                {canExpandGroup ? (
                                                                   <ChevronRight
-                                                                    className={`w-3 h-3 shrink-0 transition-transform duration-150 ${
-                                                                      isSubExpanded ? 'rotate-90' : ''
+                                                                    className={`w-3 h-3 text-[var(--ink-tertiary)] shrink-0 transition-transform duration-150 ease-burn-out motion-reduce:transition-none ${
+                                                                      isGroupExpanded
+                                                                        ? 'rotate-90 text-[var(--accent-teal)]'
+                                                                        : ''
                                                                     }`}
                                                                   />
                                                                 ) : (
-                                                                  <span>↳</span>
+                                                                  <span className="w-3 shrink-0" />
                                                                 )}
-                                                                {isBtw ? (
-                                                                  <MessageSquare className="w-3 h-3 shrink-0" />
-                                                                ) : (
-                                                                  <Bot className="w-3 h-3 shrink-0" />
-                                                                )}
-                                                                <span title={sub.subagentId}>
-                                                                  {sub.subagentName}
-                                                                  {canExpandRuns && sub.runs!.length > 1
-                                                                    ? ` (${sub.runs!.length})`
-                                                                    : ''}
+                                                                <span
+                                                                  className="size-1.5 rounded-full shrink-0"
+                                                                  style={{ backgroundColor: g.dotColor }}
+                                                                />
+                                                                <span className="font-medium text-[var(--ink-primary)]">
+                                                                  {g.baseName}
                                                                 </span>
-                                                                {sub.models.length > 0 && (
-                                                                  <span className="text-[10px] font-normal text-[var(--ink-tertiary)]">
-                                                                    ({sub.models.map((m) => m.modelLabel).join(', ')})
+                                                                {g.orchestratorRoles ? (
+                                                                  <span
+                                                                    className="px-1.5 py-0 rounded text-[9.5px] bg-[var(--accent-teal-soft)] border border-[var(--accent-teal-border)] text-[var(--accent-teal)] font-medium"
+                                                                    title={`${g.orchestratorRoles.planner.turns} Planner turns · ${g.orchestratorRoles.executor.turns} Executor turns`}
+                                                                  >
+                                                                    {g.orchestratorRoles.planner.turns}P /{' '}
+                                                                    {g.orchestratorRoles.executor.turns}E
+                                                                  </span>
+                                                                ) : g.variants.length === 1 && g.variants[0].effort ? (
+                                                                  <span className="px-1.5 py-0 rounded text-[9.5px] uppercase bg-[var(--bg-subcard)] border border-[var(--border-hairline)] text-[var(--ink-secondary)]">
+                                                                    {g.variants[0].effort}
+                                                                  </span>
+                                                                ) : g.variants.length > 1 ? (
+                                                                  <span className="inline-flex items-center gap-1">
+                                                                    {g.variants.map((v) => (
+                                                                      <span
+                                                                        key={v.item.modelLabel}
+                                                                        className="px-1.5 py-0 rounded text-[9.5px] uppercase bg-[var(--bg-subcard)] border border-[var(--border-hairline)] text-[var(--ink-secondary)]"
+                                                                      >
+                                                                        {v.effort || v.item.modelLabel}
+                                                                      </span>
+                                                                    ))}
+                                                                  </span>
+                                                                ) : null}
+                                                                {isPromoActive(modelRate) && (
+                                                                  <span
+                                                                    className="px-1.5 py-0 rounded text-[9px] font-mono font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]"
+                                                                    title={
+                                                                      modelRate?.promoNote || 'Active promotional rate'
+                                                                    }
+                                                                  >
+                                                                    PROMO
                                                                   </span>
                                                                 )}
                                                               </div>
+                                                            </th>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] text-[var(--ink-secondary)] border-b border-[var(--border-hairline)]">
+                                                              {g.turns}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                              {sub.turns}
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] text-[var(--ink-tertiary)] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(g.inputTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                              {formatTokens(sub.inputTokens)}
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] text-[var(--tool-antigravity)] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(g.cacheReadTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
-                                                              {formatTokens(sub.cacheReadTokens)}
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] text-[var(--ink-secondary)] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(g.outputTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                              {formatTokens(sub.outputTokens)}
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] font-medium text-[var(--ink-primary)] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(g.totalTokens)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] font-medium text-[11px]">
-                                                              {formatTokens(sub.totalTokens)}
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] text-[var(--tool-claude)] border-b border-[var(--border-hairline)]">
+                                                              {formatMoney(g.cacheSavingsUSD, currency)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
-                                                              {formatMoney(sub.cacheSavingsUSD, currency)}
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] font-semibold text-[var(--accent-teal)] border-b border-[var(--border-hairline)]">
+                                                              {formatMoney(g.costUSD, currency)}
                                                             </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
-                                                              {formatMoney(sub.costUSD, currency)}
-                                                            </td>
-                                                            <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                              {subShare.toFixed(1)}%
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] border-b border-[var(--border-hairline)] whitespace-nowrap">
+                                                              <CostShareBarCell sharePct={costShare} barColor={g.dotColor} />
                                                             </td>
                                                           </tr>
-                                                          {isSubExpanded &&
-                                                            sub.runs!.map((run) => {
-                                                              const runShare =
-                                                                chat.costUSD > 0 ? (run.costUSD / chat.costUSD) * 100 : 0;
-                                                              const runDt = formatPreciseDateTime(
-                                                                run.lastActiveAt || run.startedAt
-                                                              );
+
+                                                          {isGroupExpanded &&
+                                                            g.orchestratorRoles &&
+                                                            ([
+                                                              {
+                                                                key: 'planner',
+                                                                label: 'Planner',
+                                                                data: g.orchestratorRoles.planner,
+                                                                fallbackModel: getOrchestratorPhysicalFallbackKeys(
+                                                                  g.normalizedModel
+                                                                ).plannerFallbackName,
+                                                                tone: 'text-[var(--tool-antigravity)]',
+                                                                barColor: 'var(--tool-antigravity)',
+                                                              },
+                                                              {
+                                                                key: 'executor',
+                                                                label: 'Executor',
+                                                                data: g.orchestratorRoles.executor,
+                                                                fallbackModel: 'Gemini 4 Hydrogen',
+                                                                tone: 'text-[var(--accent-amber)]',
+                                                                barColor: 'var(--accent-amber)',
+                                                              },
+                                                            ] as const).map((roleItem, roleIdx) => {
+                                                              const roleShare =
+                                                                chat.costUSD > 0
+                                                                  ? (roleItem.data.costUSD / chat.costUSD) * 100
+                                                                  : 0;
+                                                              const physName =
+                                                                roleItem.data.models.length > 0
+                                                                  ? roleItem.data.models.join(', ')
+                                                                  : roleItem.fallbackModel;
+                                                              const roleDelay = `${Math.min(roleIdx * 35, 105)}ms`;
                                                               return (
                                                                 <tr
-                                                                  key={`${sub.subagentId}-${run.runId}`}
-                                                                  className="bg-[var(--accent-sky-soft)] hover:brightness-105"
+                                                                  key={`${rowKey}:${roleItem.key}`}
+                                                                  style={{ animationDelay: roleDelay }}
+                                                                  className="animate-burn-subrow bg-[var(--bg-subcard)]/50 text-[10.5px] hover:bg-[var(--table-hover)]"
                                                                 >
-                                                                  <td className="py-1.5 pl-8 pr-2 font-mono text-[11px] text-[var(--ink-primary)]">
-                                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                                      <span className="text-[var(--accent-sky)] shrink-0">↳</span>
-                                                                      <span
-                                                                        className="truncate max-w-[260px] lg:max-w-[360px]"
-                                                                        title={run.title}
-                                                                      >
-                                                                        {run.title}
+                                                                  <th
+                                                                    scope="row"
+                                                                    className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-1.5 pl-10 pr-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)] text-[10.5px]"
+                                                                  >
+                                                                    <div
+                                                                      style={{ animationDelay: roleDelay }}
+                                                                      className="inline-flex items-center gap-1.5 animate-burn-subrow-inner"
+                                                                    >
+                                                                      <span className="text-[var(--ink-tertiary)]">↳</span>
+                                                                      <span className={`font-semibold ${roleItem.tone}`}>
+                                                                        {roleItem.label}
                                                                       </span>
-                                                                      {runDt.date !== '—' && (
-                                                                        <span className="text-[10px] text-[var(--ink-tertiary)] shrink-0">
-                                                                          ({runDt.date} {runDt.time})
-                                                                        </span>
-                                                                      )}
+                                                                      <span className="text-[var(--ink-tertiary)]">
+                                                                        ({physName})
+                                                                      </span>
                                                                     </div>
+                                                                  </th>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] border-b border-[var(--border-hairline)]">
+                                                                    {roleItem.data.turns}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                                    {run.turns}
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(roleItem.data.inputTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                                    {formatTokens(run.inputTokens)}
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--tool-antigravity)] opacity-85 border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(roleItem.data.cacheReadTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-antigravity)] text-[11px]">
-                                                                    {formatTokens(run.cacheReadTokens)}
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(roleItem.data.outputTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-secondary)] text-[11px]">
-                                                                    {formatTokens(run.outputTokens)}
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(roleItem.data.totalTokens)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-primary)] text-[11px]">
-                                                                    {formatTokens(run.totalTokens)}
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--tool-claude)] opacity-85 border-b border-[var(--border-hairline)]">
+                                                                    {formatMoney(roleItem.data.cacheSavingsUSD, currency)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--tool-claude)] text-[11px]">
-                                                                    {formatMoney(run.cacheSavingsUSD, currency)}
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--accent-teal)] border-b border-[var(--border-hairline)]">
+                                                                    {formatMoney(roleItem.data.costUSD, currency)}
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono font-semibold text-[var(--accent-teal)] text-[11px]">
-                                                                    {formatMoney(run.costUSD, currency)}
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular border-b border-[var(--border-hairline)] whitespace-nowrap">
+                                                                    <CostShareBarCell
+                                                                      sharePct={roleShare}
+                                                                      barColor={roleItem.barColor}
+                                                                      muted
+                                                                    />
                                                                   </td>
-                                                                  <td className="py-1.5 px-2 text-right font-mono text-[var(--ink-tertiary)] text-[11px]">
-                                                                    {runShare.toFixed(1)}%
+                                                                </tr>
+                                                              );
+                                                            })}
+
+                                                          {isGroupExpanded &&
+                                                            !g.orchestratorRoles &&
+                                                            g.variants.length > 1 &&
+                                                            g.variants.map((v, vIdx) => {
+                                                              const vShare =
+                                                                chat.costUSD > 0
+                                                                  ? (v.item.costUSD / chat.costUSD) * 100
+                                                                  : 0;
+                                                              const vDelay = `${Math.min(vIdx * 35, 140)}ms`;
+                                                              return (
+                                                                <tr
+                                                                  key={`${rowKey}::${v.item.modelLabel}`}
+                                                                  style={{ animationDelay: vDelay }}
+                                                                  className="animate-burn-subrow bg-[var(--bg-subcard)]/50 text-[10.5px] hover:bg-[var(--table-hover)]"
+                                                                >
+                                                                  <th
+                                                                    scope="row"
+                                                                    className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-1.5 pl-10 pr-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)] text-[10.5px]"
+                                                                  >
+                                                                    <div
+                                                                      style={{ animationDelay: vDelay }}
+                                                                      className="inline-flex items-center gap-1.5 animate-burn-subrow-inner"
+                                                                    >
+                                                                      <span className="text-[var(--ink-tertiary)]">↳</span>
+                                                                      <span className="px-1.5 py-0 rounded text-[9.5px] uppercase bg-[var(--bg-elevated)] border border-[var(--border-hairline)] text-[var(--ink-secondary)] font-medium">
+                                                                        {v.effort || v.item.modelLabel}
+                                                                      </span>
+                                                                    </div>
+                                                                  </th>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] border-b border-[var(--border-hairline)]">
+                                                                    {v.item.turns}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(v.item.inputTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--tool-antigravity)] opacity-85 border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(v.item.cacheReadTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(v.item.outputTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] border-b border-[var(--border-hairline)]">
+                                                                    {formatTokens(v.item.totalTokens)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--tool-claude)] opacity-85 border-b border-[var(--border-hairline)]">
+                                                                    {formatMoney(v.item.cacheSavingsUSD, currency)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--accent-teal)] border-b border-[var(--border-hairline)]">
+                                                                    {formatMoney(v.item.costUSD, currency)}
+                                                                  </td>
+                                                                  <td className="py-1.5 px-2.5 text-right font-mono tabular border-b border-[var(--border-hairline)] whitespace-nowrap">
+                                                                    <CostShareBarCell
+                                                                      sharePct={vShare}
+                                                                      barColor={g.dotColor}
+                                                                      muted
+                                                                    />
                                                                   </td>
                                                                 </tr>
                                                               );
@@ -3406,7 +3863,329 @@ export default function App() {
                                                       );
                                                     })}
                                                   </tbody>
+                                                  {groupedChatModels.length > 1 && (
+                                                    <tfoot>
+                                                      <tr className="bg-[var(--table-head)] font-mono tabular text-[11px]">
+                                                        <th
+                                                          scope="row"
+                                                          className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-semibold text-left text-[var(--ink-secondary)] whitespace-nowrap"
+                                                        >
+                                                          Total ({groupedChatModels.length} models)
+                                                        </th>
+                                                        <td className="py-2 px-2.5 text-right font-semibold text-[var(--ink-primary)]">
+                                                          {chat.turns}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right text-[var(--ink-secondary)]">
+                                                          {formatTokens(chat.inputTokens)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right text-[var(--tool-antigravity)]">
+                                                          {formatTokens(chat.cacheReadTokens)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right text-[var(--ink-secondary)]">
+                                                          {formatTokens(chat.outputTokens)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right font-semibold text-[var(--ink-primary)]">
+                                                          {formatTokens(chat.totalTokens)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right font-medium text-[var(--tool-claude)]">
+                                                          {formatMoney(chat.cacheSavingsUSD, currency)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right font-semibold text-[var(--accent-teal)]">
+                                                          {formatMoney(chat.costUSD, currency)}
+                                                        </td>
+                                                        <td className="py-2 px-2.5 text-right text-[var(--ink-secondary)]">
+                                                          100.0%
+                                                        </td>
+                                                      </tr>
+                                                    </tfoot>
+                                                  )}
                                                 </table>
+                                              </div>
+                                            </div>
+
+                                            {/* Card 2: Main Chat vs Subagent Tools Consumption */}
+                                            {subagentSummary.subagents.length > 0 && (
+                                              <div
+                                                className={`rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] overflow-hidden min-w-0 max-w-full transition-[transform,opacity] duration-200 delay-[40ms] ease-burn-out motion-reduce:transition-none ${
+                                                  isChatExpanded
+                                                    ? 'opacity-100 translate-y-0'
+                                                    : 'opacity-0 translate-y-1.5'
+                                                }`}
+                                              >
+                                                <div className="px-3 py-2 border-b border-[var(--border-hairline)] bg-[var(--table-head)] flex flex-wrap items-center justify-between gap-2">
+                                                  <span
+                                                    id={subagentsHeadingId}
+                                                    className="inline-flex items-center gap-1.5 text-[10.5px] font-mono uppercase tracking-wider text-[var(--accent-violet)] font-semibold"
+                                                  >
+                                                    <Bot className="w-3.5 h-3.5 shrink-0" />
+                                                    <span>Main Chat vs Subagent Tools Consumption</span>
+                                                  </span>
+                                                  <span className="text-[10.5px] font-mono tabular text-[var(--ink-tertiary)]">
+                                                    {subagentSummary.subagents.length}{' '}
+                                                    {subagentSummary.subagents.length === 1 ? 'agent' : 'agents'}
+                                                  </span>
+                                                </div>
+                                                <div
+                                                  tabIndex={0}
+                                                  role="region"
+                                                  aria-labelledby={subagentsHeadingId}
+                                                  className="table-scroll table-scroll-fade-inner w-0 min-w-full max-w-full overflow-x-auto max-h-80 overflow-y-auto"
+                                                >
+                                                  <table className="w-full min-w-[720px] text-left border-separate border-spacing-0 text-xs">
+                                                    <thead className="sticky top-0 z-[2]">
+                                                      <tr>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 left-0 z-[3] sticky-head-cell sticky-col-fade bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-[10px] font-mono uppercase text-[var(--ink-tertiary)] text-left whitespace-nowrap"
+                                                        >
+                                                          Agent / Tool
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          Turns
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          Input
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          Cache Read
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          Output
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          Total Tok
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          Saved
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          API Cost
+                                                        </th>
+                                                        <th
+                                                          scope="col"
+                                                          className="sticky top-0 z-[2] sticky-head-cell bg-[var(--bg-tooltip)] border-b border-[var(--border-hairline)] py-2 px-2.5 text-right text-[10px] font-mono uppercase text-[var(--ink-tertiary)] whitespace-nowrap"
+                                                        >
+                                                          Share
+                                                        </th>
+                                                      </tr>
+                                                    </thead>
+                                                    <tbody className="tabular-nums">
+                                                      {subagentSummary.main.turns > 0 && (() => {
+                                                        const mainShare =
+                                                          chat.costUSD > 0
+                                                            ? (subagentSummary.main.costUSD / chat.costUSD) * 100
+                                                            : 0;
+                                                        return (
+                                                          <tr className="hover:bg-[var(--table-hover)]">
+                                                            <th
+                                                              scope="row"
+                                                              className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-medium text-[var(--ink-primary)] text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
+                                                            >
+                                                              <div className="inline-flex items-center gap-1.5">
+                                                                <span className="size-1.5 rounded-full bg-[var(--tool-antigravity)] shrink-0" />
+                                                                <span>Main Chat</span>
+                                                              </div>
+                                                            </th>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                              {subagentSummary.main.turns}
+                                                            </td>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(subagentSummary.main.inputTokens)}
+                                                            </td>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--tool-antigravity)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(subagentSummary.main.cacheReadTokens)}
+                                                            </td>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(subagentSummary.main.outputTokens)}
+                                                            </td>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-primary)] font-medium text-[11px] border-b border-[var(--border-hairline)]">
+                                                              {formatTokens(subagentSummary.main.totalTokens)}
+                                                            </td>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--tool-claude)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                              {formatMoney(subagentSummary.main.cacheSavingsUSD, currency)}
+                                                            </td>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular font-semibold text-[var(--accent-teal)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                              {formatMoney(subagentSummary.main.costUSD, currency)}
+                                                            </td>
+                                                            <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] border-b border-[var(--border-hairline)] whitespace-nowrap">
+                                                              <CostShareBarCell
+                                                                sharePct={mainShare}
+                                                                barColor="var(--tool-antigravity)"
+                                                              />
+                                                            </td>
+                                                          </tr>
+                                                        );
+                                                      })()}
+                                                      {subagentSummary.subagents.map((sub) => {
+                                                        const isBtw = sub.subagentName === '/btw';
+                                                        const subShare =
+                                                          chat.costUSD > 0 ? (sub.costUSD / chat.costUSD) * 100 : 0;
+                                                        const subRowKey = `${chatKey}::${sub.subagentId}`;
+                                                        const canExpandRuns = isBtw && Boolean(sub.runs && sub.runs.length > 0);
+                                                        const isSubExpanded = canExpandRuns && expandedBtwRows.has(subRowKey);
+                                                        const subAccent = isBtw ? 'var(--accent-sky)' : 'var(--accent-violet)';
+                                                        return (
+                                                          <React.Fragment key={sub.subagentId}>
+                                                            <tr
+                                                              onClick={
+                                                                canExpandRuns
+                                                                  ? () => toggleSetKey(setExpandedBtwRows, subRowKey)
+                                                                  : undefined
+                                                              }
+                                                              className={`hover:bg-[var(--table-hover)] ${canExpandRuns ? 'cursor-pointer' : ''}`}
+                                                            >
+                                                              <th
+                                                                scope="row"
+                                                                className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-medium text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
+                                                                style={{ color: subAccent }}
+                                                              >
+                                                                <div className="inline-flex items-center gap-1.5">
+                                                                  {canExpandRuns ? (
+                                                                    <ChevronRight
+                                                                      className={`w-3 h-3 shrink-0 transition-transform duration-150 ease-burn-out motion-reduce:transition-none ${
+                                                                        isSubExpanded ? 'rotate-90' : ''
+                                                                      }`}
+                                                                    />
+                                                                  ) : (
+                                                                    <span>↳</span>
+                                                                  )}
+                                                                  {isBtw ? (
+                                                                    <MessageSquare className="w-3 h-3 shrink-0" />
+                                                                  ) : (
+                                                                    <Bot className="w-3 h-3 shrink-0" />
+                                                                  )}
+                                                                  <span title={sub.subagentId}>
+                                                                    {sub.subagentName}
+                                                                    {canExpandRuns && sub.runs!.length > 1
+                                                                      ? ` (${sub.runs!.length})`
+                                                                      : ''}
+                                                                  </span>
+                                                                  {sub.models.length > 0 && (
+                                                                    <span className="text-[10px] font-normal text-[var(--ink-tertiary)]">
+                                                                      ({sub.models.map((m) => m.modelLabel).join(', ')})
+                                                                    </span>
+                                                                  )}
+                                                                </div>
+                                                              </th>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                {sub.turns}
+                                                              </td>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                {formatTokens(sub.inputTokens)}
+                                                              </td>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--tool-antigravity)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                {formatTokens(sub.cacheReadTokens)}
+                                                              </td>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                {formatTokens(sub.outputTokens)}
+                                                              </td>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--ink-primary)] font-medium text-[11px] border-b border-[var(--border-hairline)]">
+                                                                {formatTokens(sub.totalTokens)}
+                                                              </td>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular text-[var(--tool-claude)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                {formatMoney(sub.cacheSavingsUSD, currency)}
+                                                              </td>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular font-semibold text-[var(--accent-teal)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                {formatMoney(sub.costUSD, currency)}
+                                                              </td>
+                                                              <td className="py-2 px-2.5 text-right font-mono tabular text-[11px] border-b border-[var(--border-hairline)] whitespace-nowrap">
+                                                                <CostShareBarCell sharePct={subShare} barColor={subAccent} />
+                                                              </td>
+                                                            </tr>
+                                                            {isSubExpanded &&
+                                                              sub.runs!.map((run, runIdx) => {
+                                                                const runShare =
+                                                                  chat.costUSD > 0 ? (run.costUSD / chat.costUSD) * 100 : 0;
+                                                                const runDt = formatPreciseDateTime(
+                                                                  run.lastActiveAt || run.startedAt
+                                                                );
+                                                                const runDelay = `${Math.min(runIdx * 28, 140)}ms`;
+                                                                return (
+                                                                  <tr
+                                                                    key={`${sub.subagentId}-${run.runId}`}
+                                                                    style={{ animationDelay: runDelay }}
+                                                                    className="animate-burn-subrow bg-[var(--accent-sky-soft)] hover:brightness-105"
+                                                                  >
+                                                                    <th
+                                                                      scope="row"
+                                                                      className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-1.5 pl-8 pr-2.5 font-mono font-normal text-[11px] text-[var(--ink-primary)] text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
+                                                                    >
+                                                                      <div
+                                                                        style={{ animationDelay: runDelay }}
+                                                                        className="inline-flex items-center gap-1.5 min-w-0 animate-burn-subrow-inner"
+                                                                      >
+                                                                        <span className="text-[var(--accent-sky)] shrink-0">↳</span>
+                                                                        <span
+                                                                          className="truncate max-w-[260px] lg:max-w-[360px]"
+                                                                          title={run.title}
+                                                                        >
+                                                                          {run.title}
+                                                                        </span>
+                                                                        {runDt.date !== '—' && (
+                                                                          <span className="text-[10px] text-[var(--ink-tertiary)] shrink-0">
+                                                                            ({runDt.date} {runDt.time})
+                                                                          </span>
+                                                                        )}
+                                                                      </div>
+                                                                    </th>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                      {run.turns}
+                                                                    </td>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-tertiary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                      {formatTokens(run.inputTokens)}
+                                                                    </td>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--tool-antigravity)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                      {formatTokens(run.cacheReadTokens)}
+                                                                    </td>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-secondary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                      {formatTokens(run.outputTokens)}
+                                                                    </td>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--ink-primary)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                      {formatTokens(run.totalTokens)}
+                                                                    </td>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular text-[var(--tool-claude)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                      {formatMoney(run.cacheSavingsUSD, currency)}
+                                                                    </td>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular font-semibold text-[var(--accent-teal)] text-[11px] border-b border-[var(--border-hairline)]">
+                                                                      {formatMoney(run.costUSD, currency)}
+                                                                    </td>
+                                                                    <td className="py-1.5 px-2.5 text-right font-mono tabular text-[11px] border-b border-[var(--border-hairline)] whitespace-nowrap">
+                                                                      <CostShareBarCell
+                                                                        sharePct={runShare}
+                                                                        barColor="var(--accent-sky)"
+                                                                        muted
+                                                                      />
+                                                                    </td>
+                                                                  </tr>
+                                                                );
+                                                              })}
+                                                          </React.Fragment>
+                                                        );
+                                                      })}
+                                                    </tbody>
+                                                  </table>
+                                                </div>
                                               </div>
                                             )}
                                           </div>
@@ -3418,6 +4197,7 @@ export default function App() {
                               </div>
                             </div>
                           </div>
+                        </div>
                         </div>
                       </td>
                     </tr>

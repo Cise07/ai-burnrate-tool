@@ -17,11 +17,17 @@ import {
   X,
 } from 'lucide-react';
 import {
-  convertSubscriptionMoney,
-  formatSubscriptionMoney,
+  SUBSCRIPTION_PLAN_PRESETS,
+  canonicalizeToolSubscriptionUsd,
+  formatDisplayCurrencyAmount,
+  getPresetDisplayAmount,
   getSubscriptionMultiplier,
   getTaxLabel,
+  getToolSubscriptionDisplayAmount,
+  getTotalSubscriptionDisplayAmount,
+  matchSubscriptionPreset,
   type Currency,
+  type SubscriptionPlanPreset,
 } from '../../core/analytics';
 import type {
   BurnrateSnapshot,
@@ -53,7 +59,7 @@ const DEFAULT_ORDER: DashboardSectionId[] = [
 const SECTION_META: Record<DashboardSectionId, { title: string; subtitle: string }> = {
   kpis: {
     title: 'KPI Summary Cards',
-    subtitle: 'API spend, tokens, cache savings & sessions',
+    subtitle: 'API spend, tokens, cache savings & quota / sessions',
   },
   charts: {
     title: 'Daily Burn Rate & Cost by Model',
@@ -77,42 +83,25 @@ const PLAN_PRESETS: Array<{
   key: keyof UserSettings['subscriptions'];
   label: string;
   accentColor: string;
-  presets: Array<{ label: string; usdNet: number; eurRetail?: number }>;
+  presets: ReadonlyArray<SubscriptionPlanPreset>;
 }> = [
   {
     key: 'antigravity',
     label: 'Antigravity (Google AI)',
     accentColor: 'var(--tool-antigravity)',
-    presets: [
-      { label: 'Free', usdNet: 0, eurRetail: 0 },
-      { label: 'Plus', usdNet: 4.99, eurRetail: 4.99 },
-      { label: 'Pro', usdNet: 19.99, eurRetail: 21.99 },
-      { label: 'Ultra 5x', usdNet: 99.99, eurRetail: 99.99 },
-      { label: 'Ultra 20x', usdNet: 199.99, eurRetail: 219.99 },
-    ],
+    presets: SUBSCRIPTION_PLAN_PRESETS.antigravity,
   },
   {
     key: 'claude',
     label: 'Claude Code',
     accentColor: 'var(--tool-claude)',
-    presets: [
-      { label: 'API/Free', usdNet: 0 },
-      { label: 'Pro', usdNet: 20 },
-      { label: 'Max 5x', usdNet: 100 },
-      { label: 'Max 20x', usdNet: 200 },
-    ],
+    presets: SUBSCRIPTION_PLAN_PRESETS.claude,
   },
   {
     key: 'codex',
     label: 'Codex CLI (ChatGPT)',
     accentColor: 'var(--tool-codex)',
-    presets: [
-      { label: 'API/Free', usdNet: 0, eurRetail: 0 },
-      { label: 'Go', usdNet: 8, eurRetail: 7.99 },
-      { label: 'Plus', usdNet: 20, eurRetail: 22.99 },
-      { label: 'Pro 100', usdNet: 100, eurRetail: 109.99 },
-      { label: 'Pro 200', usdNet: 200, eurRetail: 229 },
-    ],
+    presets: SUBSCRIPTION_PLAN_PRESETS.codex,
   },
 ];
 
@@ -125,6 +114,12 @@ const EMPTY_TRACKING_START: ToolTrackingStartSettings = {
 function normalizeDraftSettings(raw: UserSettings): UserSettings {
   return {
     ...raw,
+    experimentalQuota: raw.experimentalQuota ?? true,
+    subscriptions: {
+      antigravity: canonicalizeToolSubscriptionUsd('antigravity', raw.subscriptions.antigravity),
+      claude: canonicalizeToolSubscriptionUsd('claude', raw.subscriptions.claude),
+      codex: canonicalizeToolSubscriptionUsd('codex', raw.subscriptions.codex),
+    },
     trackingStartAt: {
       ...EMPTY_TRACKING_START,
       ...(raw.trackingStartAt || {}),
@@ -181,10 +176,6 @@ const QUICK_START_PRESETS: Array<{ id: QuickStartPreset; label: string }> = [
   { id: '30d', label: '-30d' },
   { id: 'month', label: 'Month start' },
 ];
-
-function toDisplayAmount(usd: number, currency: Currency): number {
-  return Number(convertSubscriptionMoney(usd, currency).toFixed(2));
-}
 
 function fromDisplayAmount(displayVal: number, currency: Currency): number {
   if (!Number.isFinite(displayVal) || displayVal <= 0) return 0;
@@ -271,11 +262,13 @@ export function SettingsModal({
   const currencySymbol = currency === 'EUR' ? '€' : '$';
 
   const setSubUSD = (key: keyof UserSettings['subscriptions'], usd: number) => {
+    const cleaned = Number.isFinite(usd) ? Math.max(0, Number(usd.toFixed(4))) : 0;
+    const canonical = canonicalizeToolSubscriptionUsd(key, cleaned);
     setDraft((prev) => ({
       ...prev,
       subscriptions: {
         ...prev.subscriptions,
-        [key]: Number.isFinite(usd) ? Math.max(0, Number(usd.toFixed(4))) : 0,
+        [key]: canonical,
       },
     }));
   };
@@ -425,7 +418,7 @@ export function SettingsModal({
       }
       const res = await fetch('/api/backup/import', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Burnrate-Client': '1' },
         body: JSON.stringify({ mode: backupImportMode, backup: parsed }),
       });
       const data = (await res.json()) as {
@@ -462,8 +455,7 @@ export function SettingsModal({
     }
   };
 
-  const totalSubUSD =
-    draft.subscriptions.antigravity + draft.subscriptions.claude + draft.subscriptions.codex;
+  const totalSubDisplay = getTotalSubscriptionDisplayAmount(draft.subscriptions, 'all', currency);
 
   return (
     <dialog
@@ -506,12 +498,17 @@ export function SettingsModal({
               Monthly Subscription Plans ({currency} · incl. {getTaxLabel(currency)})
             </h2>
             <span className="text-xs font-mono tabular text-[var(--accent-teal)] font-semibold">
-              Total: {formatSubscriptionMoney(totalSubUSD, currency)}/mo
+              Total: {formatDisplayCurrencyAmount(totalSubDisplay, currency)}/mo
             </span>
           </div>
           <div className="space-y-2.5">
             {PLAN_PRESETS.map((tool) => {
-              const displayVal = toDisplayAmount(draft.subscriptions[tool.key], currency);
+              const displayVal = getToolSubscriptionDisplayAmount(
+                tool.key,
+                draft.subscriptions[tool.key],
+                currency
+              );
+              const matchedPreset = matchSubscriptionPreset(tool.key, draft.subscriptions[tool.key]);
               return (
                 <div
                   key={tool.key}
@@ -526,24 +523,17 @@ export function SettingsModal({
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {tool.presets.map((p) => {
-                        const targetDisplay =
-                          currency === 'EUR' && p.eurRetail !== undefined
-                            ? p.eurRetail
-                            : toDisplayAmount(p.usdNet, currency);
-                        const targetUsdNet =
-                          currency === 'EUR' && p.eurRetail !== undefined
-                            ? fromDisplayAmount(p.eurRetail, 'EUR')
-                            : p.usdNet;
-                        const active = Math.abs(displayVal - targetDisplay) < 0.15;
+                        const targetDisplay = getPresetDisplayAmount(p, currency);
+                        const active = matchedPreset?.id === p.id;
                         const presetTag =
                           targetDisplay === 0
                             ? p.label
                             : `${p.label} ${currencySymbol}${targetDisplay.toFixed(2)}`;
                         return (
                           <button
-                            key={p.label}
+                            key={p.id}
                             type="button"
-                            onClick={() => setSubUSD(tool.key, targetUsdNet)}
+                            onClick={() => setSubUSD(tool.key, p.usdNet)}
                             className={`px-2 py-0.5 rounded-md text-[10px] font-mono tabular border transition-colors cursor-pointer ${
                               active
                                 ? 'bg-[var(--accent-teal-soft)] border-[var(--accent-teal-border)] text-[var(--accent-teal)] font-semibold'
@@ -798,7 +788,7 @@ export function SettingsModal({
           </div>
         </div>
 
-        {/* Totals & Deleted Inclusion */}
+        {/* Totals, Deleted Inclusion & Experimental Features */}
         <div className="space-y-2.5 pt-3 border-t border-[var(--border-hairline)]">
           <button
             type="button"
@@ -829,6 +819,43 @@ export function SettingsModal({
               }`}
             >
               {draft.includeDeletedInTotals ? 'ON' : 'OFF'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              setDraft((prev) => ({
+                ...prev,
+                experimentalQuota: !(prev.experimentalQuota !== false),
+              }))
+            }
+            aria-pressed={draft.experimentalQuota !== false}
+            className={`w-full rounded-xl border p-3 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer ${
+              draft.experimentalQuota !== false
+                ? 'bg-[var(--accent-amber-soft)] border-[var(--accent-amber-border)] text-[var(--ink-primary)]'
+                : 'glass-subcard text-[var(--ink-secondary)] hover:border-[var(--border-strong)]'
+            }`}
+          >
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-mono font-semibold text-[var(--ink-primary)]">
+                  Remaining Quota Tracker
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold uppercase tracking-wider bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]">
+                  Experimental
+                </span>
+              </div>
+              <div className="text-[11px] text-[var(--ink-secondary)] mt-0.5">
+                Replaces the Sessions &amp; Projects KPI card with live 7d / 5h quota tracking. Turn OFF to restore the classic Sessions &amp; Projects card.
+              </div>
+            </div>
+            <span
+              className={`text-xs font-semibold font-mono shrink-0 ${
+                draft.experimentalQuota !== false ? 'text-[var(--accent-amber)]' : 'text-[var(--ink-tertiary)]'
+              }`}
+            >
+              {draft.experimentalQuota !== false ? 'ON' : 'OFF'}
             </span>
           </button>
         </div>

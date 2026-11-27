@@ -1,20 +1,34 @@
 import pc from 'picocolors';
 import {
+  accumulateOrchestratorRole,
   buildWorkspaceGroups,
   convertMoney,
   convertSubscriptionMoney,
+  createEmptyOrchestratorBreakdown,
   filterSessions,
+  formatDisplayCurrencyAmount,
   formatMoney,
   formatSubscriptionMoney,
   getSessionModelBreakdown,
   getSessionSubagentBreakdown,
   getTaxLabel,
+  getTotalSubscriptionDisplayAmount,
+  getTurnDisplayModel,
+  getTurnDisplayModelKey,
   workspacesToJson,
   type Currency,
+  type OrchestratorBreakdown,
   type TimeRange,
   type ToolFilter,
 } from '../core/analytics.js';
 import { isPromoActive } from '../core/pricing.js';
+import {
+  evaluateCountdown,
+  formatDisplayPercent,
+  formatMinutesAgo,
+  formatResetLocalTime,
+} from '../core/quota/time.js';
+import type { ProviderQuotaSnapshot, QuotaWindow } from '../core/quota/types.js';
 import type { BurnrateSnapshot } from '../core/types.js';
 
 export interface CliReportOptions {
@@ -93,7 +107,18 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
 
   const byModel = new Map<
     string,
-    { label: string; normalizedModel: string; turns: number; input: number; cache: number; output: number; tokens: number; cost: number; savings: number }
+    {
+      label: string;
+      normalizedModel: string;
+      turns: number;
+      input: number;
+      cache: number;
+      output: number;
+      tokens: number;
+      cost: number;
+      savings: number;
+      roles?: OrchestratorBreakdown;
+    }
   >();
 
   for (const s of allSessions) {
@@ -116,9 +141,10 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
     bucket.savings += s.cacheSavingsUSD;
 
     for (const t of s.turnHistory) {
-      const m = byModel.get(t.modelLabel) || {
-        label: t.modelLabel,
-        normalizedModel: t.normalizedModel,
+      const displayLabel = getTurnDisplayModel(t);
+      const m = byModel.get(displayLabel) || {
+        label: displayLabel,
+        normalizedModel: getTurnDisplayModelKey(t),
         turns: 0,
         input: 0,
         cache: 0,
@@ -134,13 +160,25 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
       m.tokens += t.totalTokens;
       m.cost += t.costUSD;
       m.savings += t.cacheSavingsUSD;
-      byModel.set(t.modelLabel, m);
+      if (t.orchestratorRole === 'planner' || t.orchestratorRole === 'executor') {
+        if (!m.roles) {
+          m.roles = createEmptyOrchestratorBreakdown();
+        }
+        accumulateOrchestratorRole(m.roles, t);
+      }
+      byModel.set(displayLabel, m);
     }
   }
 
   const subMonthly = snapshot.pricing.subscriptions.combinedMonthlyUSD || 40;
   const displayedCost = convertMoney(totalCost, currency);
-  const displayedSub = convertSubscriptionMoney(subMonthly, currency);
+  const hasUserSubs = Boolean(snapshot.settings?.subscriptions);
+  const displayedSub = snapshot.settings?.subscriptions
+    ? getTotalSubscriptionDisplayAmount(snapshot.settings.subscriptions, toolFilter, currency)
+    : convertSubscriptionMoney(subMonthly, currency);
+  const displayedSubLabel = hasUserSubs
+    ? formatDisplayCurrencyAmount(displayedSub, currency)
+    : formatSubscriptionMoney(subMonthly, currency);
   const subRatio = displayedSub > 0 ? ((displayedCost / displayedSub) * 100).toFixed(0) : '0';
   const activeFilters: string[] = [];
   if (toolFilter !== 'all') activeFilters.push(`Tool: ${toolFilter}`);
@@ -182,7 +220,7 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
   console.log(pc.dim('─'.repeat(104)));
 
   console.log(
-    `  ${pc.bold('API Equiv. Spend:')} ${pc.green(pc.bold(formatMoney(totalCost, currency)))} ${pc.dim(`(${subRatio}% of ${formatSubscriptionMoney(subMonthly, currency)}/mo sub incl. ${getTaxLabel(currency)})`)}   ` +
+    `  ${pc.bold('API Equiv. Spend:')} ${pc.green(pc.bold(formatMoney(totalCost, currency)))} ${pc.dim(`(${subRatio}% of ${displayedSubLabel}/mo sub incl. ${getTaxLabel(currency)})`)}   ` +
       `${pc.bold('Cache Saved:')} ${pc.cyan(pc.bold(formatMoney(totalCacheSavings, currency)))}   ` +
       `${pc.bold('Total Tokens:')} ${pc.yellow(pc.bold(fmtTokens(totalTokens)))}   ` +
       `${pc.bold('Workspaces:')} ${pc.white(pc.bold(String(workspaceGroups.length)))}   ` +
@@ -220,6 +258,97 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
     );
   }
 
+  // Live Remaining Quota Table [Experimental]
+  if (snapshot.settings?.experimentalQuota !== false && snapshot.quotas) {
+    const evalNowMs = snapshot.serverNowMs ?? Date.now();
+    const providers = (
+      toolFilter === 'all' ? (['antigravity', 'claude', 'codex'] as const) : [toolFilter]
+    ).map((id) => snapshot.quotas![id]);
+
+    console.log(`\n${pc.bold(pc.white('  REMAINING QUOTA [EXPERIMENTAL] — LIVE OFFICIAL TELEMETRY'))}`);
+    console.log(
+      `  ${padRight(pc.dim('Provider / Window'), 31)} ${padRight(pc.dim('Status'), 13)} ${padLeft(pc.dim('Remaining'), 10)} ${padLeft(pc.dim('Accuracy'), 11)} ${padLeft(pc.dim('Source'), 24)}   ${pc.dim('Next Reset')}`
+    );
+    console.log(`  ${pc.dim('─'.repeat(112))}`);
+
+    const fmtPct = (pct: number | null) => {
+      const s = formatDisplayPercent(pct);
+      if (pct === null) return pc.dim(s);
+      return pct <= 0 || pct < 15 ? pc.red(s) : pct < 40 ? pc.yellow(s) : pc.green(s);
+    };
+
+    const fmtStatus = (snap: ProviderQuotaSnapshot) => {
+      switch (snap.status) {
+        case 'ok':
+          return pc.green('LIVE');
+        case 'exhausted':
+          return pc.red('EXHAUSTED');
+        case 'stale':
+          return pc.yellow(`STALE ${formatMinutesAgo(snap.fetchedAtMs, evalNowMs)}`);
+        case 'auth_error':
+          return pc.red('AUTH ERR');
+        default:
+          return pc.dim('UNAVAIL');
+      }
+    };
+
+    const fmtAccuracy = (w: QuotaWindow) =>
+      w.accuracy === 'exact'
+        ? pc.green('EXACT')
+        : w.accuracy === 'derived'
+          ? pc.yellow('DERIVED')
+          : pc.dim('UNAVAIL');
+
+    const providerLabel = (p: ProviderQuotaSnapshot) => {
+      const base =
+        p.provider === 'antigravity'
+          ? pc.cyan('Antigravity')
+          : p.provider === 'claude'
+            ? pc.magenta('Claude Code')
+            : pc.yellow('Codex CLI');
+      return p.planLabel ? `${base} ${pc.dim(`(${p.planLabel})`)}` : base;
+    };
+
+    for (const q of providers) {
+      const skew = q.clockSkewMs ?? 0;
+      const worstWin = q.windows.reduce<QuotaWindow | null>((best, w) => {
+        if (w.remainingPercent === null) return best;
+        if (!best || best.remainingPercent === null || w.remainingPercent < best.remainingPercent) {
+          return w;
+        }
+        return best;
+      }, null);
+      const summaryCd = worstWin ? evaluateCountdown(worstWin.resetAtMs, evalNowMs, skew) : null;
+      const summaryLocal = worstWin ? formatResetLocalTime(worstWin.resetAtMs, evalNowMs) : null;
+      const summaryResetStr = !worstWin
+        ? pc.dim(q.error?.message ? truncateLabel(q.error.message, 30) : 'Awaiting telemetry')
+        : summaryCd?.state === 'idle'
+          ? pc.dim('Ready · Inactive')
+          : `${summaryCd?.formattedDetailed ?? '—'}${summaryLocal ? pc.dim(` · ${summaryLocal}`) : ''}`;
+
+      console.log(
+        `  ${padRight(providerLabel(q), 31)} ${padRight(fmtStatus(q), 13)} ${padLeft(fmtPct(worstWin?.remainingPercent ?? null), 10)} ${padLeft(worstWin ? fmtAccuracy(worstWin) : pc.dim('—'), 11)} ${padLeft(pc.dim(truncateLabel(q.windows[0]?.source || '—', 24)), 24)}   ${summaryResetStr}`
+      );
+
+      q.windows.forEach((w, idx) => {
+        const branch = idx === q.windows.length - 1 ? '└─' : '├─';
+        const winTitle =
+          q.provider === 'antigravity' && w.groupLabel
+            ? `${w.groupLabel.replace(/\s*Models$/i, '')} · ${w.label}`
+            : w.label;
+        const cd = evaluateCountdown(w.resetAtMs, evalNowMs, skew);
+        const localClk = formatResetLocalTime(w.resetAtMs, evalNowMs);
+        const resetCol =
+          cd.state === 'idle'
+            ? pc.dim('Ready')
+            : `${cd.formattedDetailed}${localClk ? pc.dim(` · ${localClk}`) : ''}`;
+        console.log(
+          `  ${padRight(pc.dim(`${branch} ${truncateLabel(winTitle, 28)}`), 31)} ${padRight('', 13)} ${padLeft(fmtPct(w.remainingPercent), 10)} ${padLeft(fmtAccuracy(w), 11)} ${padLeft(pc.dim(truncateLabel(w.source, 24)), 24)}   ${resetCol}`
+        );
+      });
+    }
+  }
+
   // Model Breakdown Table
   if (byModel.size > 0) {
     console.log(`\n${pc.bold(pc.white('  MODEL BREAKDOWN'))}`);
@@ -242,6 +371,21 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
       console.log(
         `  ${padRight(displayLabel, 32)} ${padLeft(String(m.turns), 7)} ${padLeft(fmtTokens(m.input), 10)} ${padLeft(pc.cyan(fmtTokens(m.cache)), 12)} ${padLeft(pc.yellow(fmtTokens(m.output)), 10)} ${padLeft(fmtTokens(m.tokens), 11)} ${padLeft(pc.cyan(formatMoney(m.savings, currency)), 12)} ${padLeft(pc.green(formatMoney(m.cost, currency)), 10)}`
       );
+      if (m.roles) {
+        const printRoleSubRow = (
+          prefix: string,
+          roleName: string,
+          data: OrchestratorBreakdown['planner']
+        ) => {
+          const physModels = data.models.length > 0 ? data.models.join(', ') : '-';
+          const roleLabel = truncateLabel(`${prefix} ${roleName} (${physModels})`, 32);
+          console.log(
+            `  ${padRight(pc.dim(roleLabel), 32)} ${padLeft(pc.dim(String(data.turns)), 7)} ${padLeft(pc.dim(fmtTokens(data.inputTokens)), 10)} ${padLeft(pc.dim(fmtTokens(data.cacheReadTokens)), 12)} ${padLeft(pc.dim(fmtTokens(data.outputTokens)), 10)} ${padLeft(pc.dim(fmtTokens(data.totalTokens)), 11)} ${padLeft(pc.dim(formatMoney(data.cacheSavingsUSD, currency)), 12)} ${padLeft(pc.dim(formatMoney(data.costUSD, currency)), 10)}`
+          );
+        };
+        printRoleSubRow('├─', 'Planner', m.roles.planner);
+        printRoleSubRow('└─', 'Executor', m.roles.executor);
+      }
     }
     if (hasPromo) {
       console.log(`  ${pc.yellow('★')} ${pc.dim('Models with active Google AI Studio promotional rates.')}`);

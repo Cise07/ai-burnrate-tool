@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { canonicalizeToolSubscriptionUsd } from './analytics.js';
 import type { DashboardSectionId, UserSettings } from './types.js';
 
 export const DEFAULT_SECTION_ORDER: DashboardSectionId[] = [
@@ -20,6 +21,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     codex: 0,
   },
   includeDeletedInTotals: true,
+  experimentalQuota: true,
   layout: {
     order: [...DEFAULT_SECTION_ORDER],
     hidden: [],
@@ -139,14 +141,27 @@ export function sanitizeUserSettings(raw: unknown, base: UserSettings = DEFAULT_
 
   return {
     subscriptions: {
-      antigravity: clampNonNegative(subs.antigravity, base.subscriptions.antigravity),
-      claude: clampNonNegative(subs.claude, base.subscriptions.claude),
-      codex: clampNonNegative(subs.codex, base.subscriptions.codex),
+      antigravity: canonicalizeToolSubscriptionUsd(
+        'antigravity',
+        clampNonNegative(subs.antigravity, base.subscriptions.antigravity)
+      ),
+      claude: canonicalizeToolSubscriptionUsd(
+        'claude',
+        clampNonNegative(subs.claude, base.subscriptions.claude)
+      ),
+      codex: canonicalizeToolSubscriptionUsd(
+        'codex',
+        clampNonNegative(subs.codex, base.subscriptions.codex)
+      ),
     },
     includeDeletedInTotals:
       typeof obj.includeDeletedInTotals === 'boolean'
         ? obj.includeDeletedInTotals
         : base.includeDeletedInTotals,
+    experimentalQuota:
+      typeof obj.experimentalQuota === 'boolean'
+        ? obj.experimentalQuota
+        : (base.experimentalQuota ?? true),
     layout: sanitizeLayout(obj.layout, base.layout),
     trackingStartAt: {
       antigravity:

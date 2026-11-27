@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-import { execSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
 import open from 'open';
 import pc from 'picocolors';
 import QRCode from 'qrcode';
-import { scanAllLogs, syncSingleTranscriptToLedger } from '../core/parser.js';
 import { filterSessions, type TimeRange, type ToolFilter } from '../core/analytics.js';
 import { exportBackupToFile, importBackupFromFile } from '../core/backup.js';
+import { resolveNpmUpdateSpec, runGlobalNpmCommand } from '../core/cli-security.js';
 import { installAutoArchiveHooks, uninstallAutoArchiveHooks } from '../core/hooks.js';
+import { getWatchRoots, scanAllLogs, syncSingleTranscriptToLedger } from '../core/parser.js';
 import {
   getPackageRoot,
   PRICING_SYNC_TTL_MS,
@@ -17,13 +18,20 @@ import {
   syncOfficialPricing,
   tryClaimBackgroundPricingSync,
 } from '../core/pricing.js';
-import { parseUserDateInput, saveUserSettings } from '../core/settings.js';
+import {
+  defaultQuotaEngine,
+  evaluateCountdown,
+  formatDisplayPercent,
+  parseAntigravityStatuslinePayload,
+  parseClaudeStatuslinePayload,
+  sanitizeRawPayload,
+  saveProviderQuotaSnapshot,
+} from '../core/quota/index.js';
+import { loadUserSettings, parseUserDateInput, saveUserSettings } from '../core/settings.js';
 import type { ToolSource } from '../core/types.js';
 import { startLogWatcher } from '../core/watcher.js';
 import { startServer, type LaunchDefaults } from '../server/index.js';
 import { printCliReport } from './reporter.js';
-
-const NPM_PACKAGE = 'ai-burnrate-tool';
 
 function getPackageVersion(): string {
   try {
@@ -33,15 +41,6 @@ function getPackageVersion(): string {
   } catch {
     return '1.0.0';
   }
-}
-
-function resolveNpmUpdateSpec(): string {
-  const requested = process.env.BURNRATE_VERSION?.trim();
-  if (requested) {
-    const version = requested.replace(/^v/, '');
-    return `${NPM_PACKAGE}@${version}`;
-  }
-  return `${NPM_PACKAGE}@latest`;
 }
 
 function renderTerminalQr(url: string, indent = '  '): string[] {
@@ -79,8 +78,20 @@ program
   .option('--range <range>', 'Filter Web UI and --cli report by time range (24h, 7d, 30d, all)', 'all')
   .option('--json', 'Print --cli report as JSON instead of ANSI tables', false)
   .option('--no-open', 'Start the live server and file watcher without automatically opening the browser')
+  .option('--no-lan', 'Bind dashboard server strictly to 127.0.0.1 and disable mDNS/QR LAN exposure')
   .option('--no-hooks', 'Skip automatic installation of Antigravity/Claude/Codex offline archive hooks')
   .option('--sync-ledger', 'Fast hook mode: snapshot current session to ledger and exit silently', false)
+  .option(
+    '--claude-statusline',
+    'Optional Claude Code statusLine helper: cache exact rate_limits JSON from stdin and print compact quota summary',
+    false
+  )
+  .option(
+    '--antigravity-statusline',
+    'Optional Antigravity CLI statusLine helper: cache live quota JSON from stdin and print compact summary',
+    false
+  )
+  .option('--quota-debug', 'Print sanitized raw payloads, UTC resetAtMs, local times & countdown diagnostics', false)
   .option('--sync-pricing', 'Background mode: refresh official pricing ledger using ETag and exit silently', false)
   .option('--uninstall-hooks', 'Remove ai-burnrate-tool offline archive hooks from Antigravity/Claude/Codex configs', false)
   .option(
@@ -117,8 +128,12 @@ const opts = program.opts<{
   range?: string;
   json?: boolean;
   open?: boolean;
+  lan?: boolean;
   hooks?: boolean;
   syncLedger?: boolean;
+  claudeStatusline?: boolean;
+  antigravityStatusline?: boolean;
+  quotaDebug?: boolean;
   syncPricing?: boolean;
   uninstallHooks?: boolean;
   resetTool?: string;
@@ -206,6 +221,93 @@ async function main() {
       if (!process.stdin.isTTY) {
         process.stdout.write('{}\n');
       }
+    }
+    process.exit(0);
+  }
+
+  if (opts.claudeStatusline) {
+    try {
+      const payload = await readStdinJsonWithTimeout(150);
+      if (payload) {
+        const nowMs = Date.now();
+        const parsed = parseClaudeStatuslinePayload(payload, {
+          capturedAtMs: nowMs,
+          serverNowMs: nowMs,
+        });
+        const parts: string[] = [];
+
+        const modelObj = (payload as any).model;
+        const modelName =
+          (typeof modelObj?.display_name === 'string' && modelObj.display_name.trim()) ||
+          (typeof modelObj?.id === 'string' && modelObj.id.trim()) ||
+          undefined;
+        if (modelName) parts.push(modelName);
+
+        const ctxPct = Number((payload as any).context_window?.used_percentage);
+        if (Number.isFinite(ctxPct) && ctxPct >= 0) {
+          parts.push(`ctx ${Math.round(ctxPct)}%`);
+        }
+
+        if (parsed) {
+          saveProviderQuotaSnapshot(parsed, sanitizeRawPayload(payload));
+          const skew = parsed.clockSkewMs ?? 0;
+          const fiveW = parsed.windows.find((w) => w.id === 'claude:5h');
+          const sevenW = parsed.windows.find((w) => w.id === 'claude:7d');
+          for (const [shortLabel, w] of [
+            ['5h', fiveW],
+            ['7d', sevenW],
+          ] as const) {
+            if (!w || w.remainingPercent === null) continue;
+            const cd = evaluateCountdown(w.resetAtMs, nowMs, skew);
+            const cdSuffix = cd.state === 'idle' ? '' : ` (${cd.formatted})`;
+            parts.push(`${shortLabel} ${formatDisplayPercent(w.remainingPercent)}${cdSuffix}`);
+          }
+        }
+
+        if (parts.length > 0) {
+          process.stdout.write(parts.join(' · '));
+        }
+      }
+    } catch {
+      // Never block or break Claude Code statusLine rendering
+    }
+    process.exit(0);
+  }
+
+  if (opts.antigravityStatusline) {
+    try {
+      const payload = await readStdinJsonWithTimeout(150);
+      if (payload) {
+        const nowMs = Date.now();
+        const parsed = parseAntigravityStatuslinePayload(payload, {
+          fetchedAtMs: nowMs,
+          serverNowMs: nowMs,
+        });
+        const parts: string[] = [];
+
+        const modelObj = (payload as any).model;
+        const modelName =
+          (typeof modelObj?.display_name === 'string' && modelObj.display_name.trim()) ||
+          (typeof modelObj?.id === 'string' && modelObj.id.trim()) ||
+          undefined;
+        if (modelName) parts.push(modelName);
+
+        if (parsed) {
+          saveProviderQuotaSnapshot(parsed, sanitizeRawPayload(payload));
+          for (const w of parsed.windows) {
+            if (w.remainingPercent === null) continue;
+            const cd = evaluateCountdown(w.resetAtMs, nowMs);
+            const cdSuffix = cd.state === 'idle' ? '' : ` (${cd.formatted})`;
+            parts.push(`${w.id.replace('antigravity:', '')} ${formatDisplayPercent(w.remainingPercent)}${cdSuffix}`);
+          }
+        }
+
+        if (parts.length > 0) {
+          process.stdout.write(parts.join(' · '));
+        }
+      }
+    } catch {
+      // Never block Antigravity statusLine rendering
     }
     process.exit(0);
   }
@@ -344,11 +446,18 @@ async function main() {
   }
 
   if (opts.update) {
-    const targetSpec = resolveNpmUpdateSpec();
+    let targetSpec: string;
+    try {
+      targetSpec = resolveNpmUpdateSpec(process.env.BURNRATE_VERSION);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Invalid BURNRATE_VERSION';
+      console.error(`  ${pc.red('✗')} ${msg}\n`);
+      process.exit(1);
+    }
     console.log(`\n  ${pc.cyan('●')} Updating ${pc.bold(targetSpec)} from npm...`);
     try {
-      execSync(`npm install -g --foreground-scripts ${targetSpec}`, {
-        stdio: 'inherit',
+      runGlobalNpmCommand(['install', '-g', targetSpec], {
+        BURNRATE_POSTINSTALL_FORCE: '1',
       });
       console.log(`  ${pc.green('✓')} ${pc.bold(targetSpec)} updated successfully!\n`);
       process.exit(0);
@@ -364,7 +473,7 @@ async function main() {
     console.log(`\n  ${pc.yellow('●')} Uninstalling ${pc.bold('ai-burnrate-tool')} globally...`);
     uninstallAutoArchiveHooks();
     try {
-      execSync('npm uninstall -g ai-burnrate-tool', { stdio: 'inherit' });
+      runGlobalNpmCommand(['uninstall', '-g', 'ai-burnrate-tool']);
       console.log(`  ${pc.green('✓')} ${pc.bold('ai-burnrate-tool')} has been completely removed from your system.\n`);
       process.exit(0);
     } catch {
@@ -385,8 +494,38 @@ async function main() {
     process.exit(1);
   }
 
+  if (opts.quotaDebug || process.env.BURNRATE_QUOTA_DEBUG === '1') {
+    const entries = await defaultQuotaEngine.collectDiagnostics({ force: true });
+    if (opts.json) {
+      console.log(JSON.stringify({ serverNowMs: Date.now(), entries }, null, 2));
+      process.exit(0);
+    }
+    console.log(`\n  ${pc.bold(pc.white('QUOTA DIAGNOSTICS [EXPERIMENTAL]'))}`);
+    console.log(`  ${pc.dim('─'.repeat(96))}`);
+    for (const entry of entries) {
+      console.log(
+        `\n  ${pc.bold(pc.cyan(entry.provider.toUpperCase()))}  status=${pc.bold(entry.snapshot.status)}  source=${pc.dim(entry.source)}  fetchedAtMs=${entry.snapshot.fetchedAtMs}`
+      );
+      if (entry.snapshot.error) {
+        console.log(`    ${pc.yellow('error')}: [${entry.snapshot.error.code}] ${entry.snapshot.error.message}`);
+      }
+      for (const w of entry.computedWindows) {
+        console.log(
+          `    • ${w.id} (${w.label}) | rem=${formatDisplayPercent(w.remainingPercent)} (exact=${w.remainingPercent}) | acc=${w.accuracy} | resetAtMs=${w.resetAtMs} | local=${w.resetAtIsoLocal || 'Ready'} | countdown=${pc.green(w.countdown)}`
+        );
+      }
+      console.log(`    ${pc.dim('rawPayload (sanitized)')}: ${JSON.stringify(entry.rawPayloadSanitized)}`);
+    }
+    console.log('');
+    process.exit(0);
+  }
+
   if (opts.hooks !== false) {
     installAutoArchiveHooks();
+  }
+
+  if (loadUserSettings().experimentalQuota !== false) {
+    await defaultQuotaEngine.refreshAll({ force: false, reason: 'startup' });
   }
 
   const syncResult = await syncOfficialPricing();
@@ -425,13 +564,14 @@ async function main() {
     urlParams.set('range', launchDefaults.timeRange);
   }
 
-  const server = await startServer(preferredPort, snapshot, launchDefaults);
+  const localOnly = opts.lan === false || process.env.BURNRATE_NO_LAN === '1';
+  const server = await startServer(preferredPort, snapshot, launchDefaults, { localOnly });
   const dashboardUrl = urlParams.toString() ? `${server.url}/?${urlParams.toString()}` : server.url;
-  const preferredMobileBaseUrl = server.mdnsUrl || server.lanUrl;
+  const preferredMobileBaseUrl = server.localOnly ? null : server.mdnsUrl || server.lanUrl;
   let mobileUrl: string | null = null;
   if (preferredMobileBaseUrl) {
     const mobileParams = new URLSearchParams(urlParams);
-    mobileParams.set('code', server.mobileCode);
+    mobileParams.set('qr', server.qrToken);
     mobileUrl = `${preferredMobileBaseUrl}/?${mobileParams.toString()}`;
   }
 
@@ -462,7 +602,9 @@ async function main() {
   );
   console.log(`  ${pc.dim('─'.repeat(58))}`);
   console.log(`  ${pc.bold('Dashboard URL:')}  ${pc.cyan(pc.underline(dashboardUrl))}`);
-  if (server.mdnsUrl) {
+  if (server.localOnly) {
+    console.log(`  ${pc.bold('Network Bind:')}   ${pc.dim(`127.0.0.1:${server.port} (local-only mode · --no-lan)`)}`);
+  } else if (server.mdnsUrl) {
     console.log(`  ${pc.bold('Mobile URL:')}     ${pc.cyan(pc.underline(server.mdnsUrl))} ${pc.dim('(mDNS · Bonjour)')}`);
     if (server.lanUrl) {
       console.log(`  ${pc.bold('Fallback IP:')}    ${pc.dim(server.lanUrl)} ${pc.dim('(0.0.0.0)')}`);

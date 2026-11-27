@@ -12,9 +12,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org/'
@@ -28,6 +28,10 @@ jobs:
       - name: Sync package version with release tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Invalid release tag version: $VERSION" >&2
+            exit 1
+          fi
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Type-check project
@@ -35,6 +39,9 @@ jobs:
 
       - name: Build project
         run: npm run build
+
+      - name: Run test suite
+        run: npm test
 
       - name: Publish to npm
         run: npm publish --provenance --access public
@@ -52,7 +59,7 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "chore(release): bump version to $VERSION"
             git push origin main
-            if [ "$PRE_BUMP_SHA" = "${{ github.sha }}" ]; then
+            if [ "$PRE_BUMP_SHA" = "$GITHUB_SHA" ]; then
               git tag -f "$GITHUB_REF_NAME" HEAD
               git push --force origin "refs/tags/$GITHUB_REF_NAME"
             fi

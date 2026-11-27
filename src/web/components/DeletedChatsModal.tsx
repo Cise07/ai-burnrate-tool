@@ -210,6 +210,7 @@ export function DeletedChatsModal({
             t.modelLabel.toLowerCase().includes(q) ||
             t.normalizedModel.toLowerCase().includes(q) ||
             t.model.toLowerCase().includes(q) ||
+            (t.orchestratorLabel || '').toLowerCase().includes(q) ||
             (t.subagentName || '').toLowerCase().includes(q) ||
             (t.subagentTitle || '').toLowerCase().includes(q)
         )
@@ -594,6 +595,11 @@ export function DeletedChatsModal({
                           className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md glass-control text-[10px] font-mono text-[var(--ink-secondary)]"
                         >
                           <span>{m.modelLabel}</span>
+                          {m.orchestratorRoles && (
+                            <span className="text-[var(--ink-tertiary)]">
+                              ({m.orchestratorRoles.planner.turns}P/{m.orchestratorRoles.executor.turns}E)
+                            </span>
+                          )}
                           <span className="text-[var(--accent-teal)] font-semibold">
                             {formatMoney(m.costUSD, currency)}
                           </span>

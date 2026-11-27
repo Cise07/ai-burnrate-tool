@@ -19,6 +19,7 @@ const memoryLedger = new Map<string, SessionStats>();
 const memoryDismissedLegacyKeys = new Set<string>();
 
 const VALID_TOOL_SOURCES = new Set<string>(['antigravity', 'claude', 'codex']);
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function isPersistentLedgerEnabled(): boolean {
   if (process.env.BURNRATE_SESSION_LEDGER_PATH) return true;
@@ -69,6 +70,7 @@ function loadLedgerState(): LedgerState {
     const dismissedLegacyKeys = new Set<string>();
     if (parsed && parsed.sessions && typeof parsed.sessions === 'object') {
       for (const [k, v] of Object.entries(parsed.sessions)) {
+        if (RESERVED_KEYS.has(k)) continue;
         if (
           v &&
           typeof v === 'object' &&
@@ -162,6 +164,15 @@ function countTitledSubagentTurns(session: SessionStats | undefined): number {
   return count;
 }
 
+function countOrchestratorTurns(session: SessionStats | undefined): number {
+  if (!session || !Array.isArray(session.turnHistory)) return 0;
+  let count = 0;
+  for (const t of session.turnHistory) {
+    if (t.orchestratorModel && t.orchestratorRole) count++;
+  }
+  return count;
+}
+
 function isEphemeralSubagentTurn(t: SessionStats['turnHistory'][number]): boolean {
   return Boolean(
     t.subagentName === '/btw' || (typeof t.subagentId === 'string' && t.subagentId.startsWith('btw:'))
@@ -201,9 +212,11 @@ function recomputeSessionFromTurns(base: SessionStats, turns: SessionStats['turn
       if (!startedAt || t.timestamp < startedAt) startedAt = t.timestamp;
       if (!lastActiveAt || t.timestamp > lastActiveAt) lastActiveAt = t.timestamp;
     }
-    const existing = modelCounts.get(t.normalizedModel);
+    const groupKey = t.orchestratorModel || t.normalizedModel;
+    const groupLabel = t.orchestratorLabel || t.modelLabel;
+    const existing = modelCounts.get(groupKey);
     if (existing) existing.count += 1;
-    else modelCounts.set(t.normalizedModel, { label: t.modelLabel, count: 1 });
+    else modelCounts.set(groupKey, { label: groupLabel, count: 1 });
   }
 
   let primaryModel = base.primaryModel;
@@ -234,6 +247,49 @@ function recomputeSessionFromTurns(base: SessionStats, turns: SessionStats['turn
     estimatedTurns,
     turnHistory: sorted,
   };
+}
+
+interface OrchestratorAnnotation {
+  orchestratorModel: string;
+  orchestratorLabel: string;
+  orchestratorRole: 'planner' | 'executor';
+}
+
+function collectOrchestratorAnnotations(
+  turns: SessionStats['turnHistory']
+): Map<string, OrchestratorAnnotation> {
+  const map = new Map<string, OrchestratorAnnotation>();
+  for (const t of turns) {
+    if (t.orchestratorModel && t.orchestratorLabel && t.orchestratorRole) {
+      map.set(turnSignature(t), {
+        orchestratorModel: t.orchestratorModel,
+        orchestratorLabel: t.orchestratorLabel,
+        orchestratorRole: t.orchestratorRole,
+      });
+    }
+  }
+  return map;
+}
+
+function preserveLedgerTurnAnnotations(
+  live: SessionStats,
+  prev: SessionStats | undefined
+): SessionStats {
+  if (!prev || !Array.isArray(prev.turnHistory) || prev.turnHistory.length === 0) return live;
+  const annotations = collectOrchestratorAnnotations(prev.turnHistory);
+  if (annotations.size === 0) return live;
+
+  let changed = false;
+  const updatedTurns = live.turnHistory.map((t) => {
+    if (t.orchestratorModel) return t;
+    const ann = annotations.get(turnSignature(t));
+    if (!ann) return t;
+    changed = true;
+    return { ...t, ...ann };
+  });
+
+  if (!changed) return live;
+  return recomputeSessionFromTurns(live, updatedTurns);
 }
 
 function mergePreservedEphemeralTurns(live: SessionStats, prev: SessionStats | undefined): SessionStats {
@@ -306,6 +362,7 @@ function hasSessionChanged(prev: SessionStats | undefined, next: SessionStats): 
   if (prev.turnHistory.length !== next.turnHistory.length) return true;
   if (countTaggedTurns(prev) !== countTaggedTurns(next)) return true;
   if (countTitledSubagentTurns(prev) !== countTitledSubagentTurns(next)) return true;
+  if (countOrchestratorTurns(prev) !== countOrchestratorTurns(next)) return true;
   return false;
 }
 
@@ -382,10 +439,13 @@ export function reconcileSessionLedger(params: {
     }
   }
 
-  // 0. Preserve previously persisted ephemeral turns (/btw) on active sessions BEFORE checking absorbed entries
+  // 0. Preserve previously persisted ephemeral turns (/btw) & orchestrator annotations on active sessions BEFORE checking absorbed entries
   for (const [key, live] of liveMap.entries()) {
     const prev = ledger.get(key);
-    const withPreserved = mergePreservedEphemeralTurns(live, prev);
+    const withPreserved = preserveLedgerTurnAnnotations(
+      mergePreservedEphemeralTurns(live, prev),
+      prev
+    );
     if (withPreserved !== live) {
       liveMap.set(key, withPreserved);
     }
@@ -498,7 +558,11 @@ export function reconcileSessionLedger(params: {
   // 2. Archive orphaned deleted sessions (e.g. Antigravity brain/ left behind after conversation DB removal)
   for (const [key, orphan] of orphanMap.entries()) {
     const prev = ledger.get(key);
-    const merged = mergeOrphanedSession(prev, mergePreservedEphemeralTurns(orphan, prev), nowIso);
+    const merged = mergeOrphanedSession(
+      prev,
+      preserveLedgerTurnAnnotations(mergePreservedEphemeralTurns(orphan, prev), prev),
+      nowIso
+    );
     if (hasSessionChanged(prev, merged)) {
       ledger.set(key, merged);
       dirty = true;
@@ -553,7 +617,10 @@ export function upsertSingleSessionToLedger(session: SessionStats): boolean {
   const ledgerState = loadLedgerState();
   const key = getSessionKey(session.source, session.sessionId);
   const prev = ledgerState.sessions.get(key);
-  const preservedSession = mergePreservedEphemeralTurns(session, prev);
+  const preservedSession = preserveLedgerTurnAnnotations(
+    mergePreservedEphemeralTurns(session, prev),
+    prev
+  );
 
   // Never downgrade an already richer snapshot in the ledger
   if (prev && prev.turns > preservedSession.turns && prev.totalTokens >= preservedSession.totalTokens) {
@@ -644,8 +711,30 @@ function isValidLedgerSession(v: unknown): v is SessionStats {
   );
 }
 
+export function recordTurnOrchestratorAnnotations(
+  source: SessionStats['source'],
+  sessionId: string,
+  annotatedTurns: SessionStats['turnHistory']
+): boolean {
+  const ledgerState = loadLedgerState();
+  const key = getSessionKey(source, sessionId);
+  const existing = ledgerState.sessions.get(key);
+  if (!existing || annotatedTurns.length === 0) return false;
+
+  const updated = preserveLedgerTurnAnnotations(existing, {
+    ...existing,
+    turnHistory: annotatedTurns,
+  });
+  if (!hasSessionChanged(existing, updated)) return false;
+
+  ledgerState.sessions.set(key, updated);
+  saveLedgerState(ledgerState);
+  return true;
+}
+
 function mergeTwoSessions(existing: SessionStats, incoming: SessionStats): SessionStats {
-  const existingSigs = new Set(existing.turnHistory.map(turnSignature));
+  const enrichedExisting = preserveLedgerTurnAnnotations(existing, incoming);
+  const existingSigs = new Set(enrichedExisting.turnHistory.map(turnSignature));
   const extraTurns: SessionStats['turnHistory'] = [];
   for (const t of incoming.turnHistory) {
     const sig = turnSignature(t);
@@ -655,15 +744,15 @@ function mergeTwoSessions(existing: SessionStats, incoming: SessionStats): Sessi
     }
   }
   const hasBetterTitle =
-    (!existing.sessionTitle || existing.sessionTitle === existing.sessionId) &&
+    (!enrichedExisting.sessionTitle || enrichedExisting.sessionTitle === enrichedExisting.sessionId) &&
     Boolean(incoming.sessionTitle && incoming.sessionTitle !== incoming.sessionId);
 
   if (extraTurns.length === 0) {
-    return hasBetterTitle ? { ...existing, sessionTitle: incoming.sessionTitle } : existing;
+    return hasBetterTitle ? { ...enrichedExisting, sessionTitle: incoming.sessionTitle } : enrichedExisting;
   }
 
-  const base = hasBetterTitle ? { ...existing, sessionTitle: incoming.sessionTitle } : existing;
-  return recomputeSessionFromTurns(base, [...existing.turnHistory, ...extraTurns]);
+  const base = hasBetterTitle ? { ...enrichedExisting, sessionTitle: incoming.sessionTitle } : enrichedExisting;
+  return recomputeSessionFromTurns(base, [...enrichedExisting.turnHistory, ...extraTurns]);
 }
 
 export function exportSessionLedgerSnapshot(): SessionLedgerFile {

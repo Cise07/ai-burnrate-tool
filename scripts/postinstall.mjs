@@ -70,6 +70,14 @@ function isDirInPath(targetDir) {
     .some((entry) => entry === target);
 }
 
+function sanitizeDisplayPath(rawPath) {
+  return String(rawPath || '').replace(/[\x00-\x1f\x7f]/g, '');
+}
+
+function isSafePathForShellSnippet(cleanPath) {
+  return Boolean(cleanPath) && !/[`$;|&<>!\n\r]/.test(cleanPath);
+}
+
 function buildBanner() {
   const useColor = !process.env.NO_COLOR && process.env.TERM !== 'dumb';
   const c = (code, text) => (useColor ? `\x1b[${code}m${text}\x1b[0m` : text);
@@ -81,9 +89,9 @@ function buildBanner() {
   const red = (t) => c('31', t);
 
   const version = readPackageVersion();
-  const binDir = resolveBinDirectory();
+  const binDir = sanitizeDisplayPath(resolveBinDirectory());
   const isWin = process.platform === 'win32';
-  const exePath = path.join(binDir, isWin ? 'burn.cmd' : 'burn');
+  const exePath = sanitizeDisplayPath(path.join(binDir, isWin ? 'burn.cmd' : 'burn'));
   const inPath = isDirInPath(binDir);
 
   const lines = [
@@ -109,16 +117,18 @@ function buildBanner() {
       `  ${yellow('!')} ${bold(yellow('PATH Reminder:'))} Add the executable folder to your ${bold('PATH')} to run ${cyan('burn')} from anywhere:`,
       `    ${bold(cyan(binDir))}`
     );
-    if (isWin) {
-      lines.push(
-        `    ${dim('PowerShell:')} ${cyan(`$p=[Environment]::GetEnvironmentVariable("Path","User"); [Environment]::SetEnvironmentVariable("Path","$p;${binDir}","User")`)}`,
-        `    ${dim('(Then open a new terminal window.)')}`
-      );
-    } else {
-      lines.push(
-        `    ${dim('macOS/Linux:')} ${cyan(`echo 'export PATH="${binDir}:$PATH"' >> ~/.zshrc && source ~/.zshrc`)}`,
-        `    ${dim('(Use ~/.bashrc if you are on bash.)')}`
-      );
+    if (isSafePathForShellSnippet(binDir)) {
+      if (isWin) {
+        lines.push(
+          `    ${dim('PowerShell:')} ${cyan(`$p=[Environment]::GetEnvironmentVariable("Path","User"); [Environment]::SetEnvironmentVariable("Path","$p;${binDir}","User")`)}`,
+          `    ${dim('(Then open a new terminal window.)')}`
+        );
+      } else {
+        lines.push(
+          `    ${dim('macOS/Linux:')} ${cyan(`echo 'export PATH="${binDir}:$PATH"' >> ~/.zshrc && source ~/.zshrc`)}`,
+          `    ${dim('(Use ~/.bashrc if you are on bash.)')}`
+        );
+      }
     }
   }
 

@@ -4,16 +4,30 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getHooksStatus } from './hooks.js';
-import { calculateTurnCost, loadPricing } from './pricing.js';
+import {
+  calculateTurnCost,
+  inferOrchestratorFromPlannerModel,
+  loadPricing,
+  parseOrchestratorSettingModel,
+  type OrchestratorDescriptor,
+} from './pricing.js';
 import {
   getDismissedLegacyCount,
   getDismissedLegacyKeys,
   getSessionKey,
   reconcileSessionLedger,
+  recordTurnOrchestratorAnnotations,
   upsertSingleSessionToLedger,
 } from './session-ledger.js';
+import { defaultQuotaEngine, recordHookQuotaPayload } from './quota/engine.js';
 import { loadUserSettings } from './settings.js';
-import type { BurnrateSnapshot, PricingConfig, SessionStats, ToolSource, UsageTurn } from './types.js';
+import type {
+  BurnrateSnapshot,
+  PricingConfig,
+  SessionStats,
+  ToolSource,
+  UsageTurn,
+} from './types.js';
 
 const require = createRequire(import.meta.url);
 
@@ -666,6 +680,25 @@ function extractAntigravitySessionId(filePath: string): string {
   return path.basename(filePath, '.jsonl');
 }
 
+function isAntigravityPlannerResponseObj(obj: Record<string, any>): boolean {
+  return (
+    obj.type === 'PLANNER_RESPONSE' ||
+    (obj.source === 'MODEL' &&
+      (typeof obj.input_tokens === 'number' ||
+        typeof obj.output_tokens === 'number' ||
+        typeof obj.thinking === 'string' ||
+        Array.isArray(obj.tool_calls)))
+  );
+}
+
+function getAntigravityToolCallName(tc: any): string {
+  return (
+    (typeof tc?.name === 'string' && tc.name) ||
+    (typeof tc?.function?.name === 'string' && tc.function.name) ||
+    ''
+  );
+}
+
 function parseAntigravityFile(
   filePath: string,
   stat: fs.Stats,
@@ -686,6 +719,9 @@ function parseAntigravityFile(
   let workspace: string | null = null;
   let lastUserPromptChars = 0;
   let firstUserTitle = '';
+  let activeOrchestrator: OrchestratorDescriptor | null = null;
+  let orchestratorPhase: 'planner' | 'executor' | null = null;
+  let pendingPromptTurnIndices: number[] = [];
 
   const turnHistory: UsageTurn[] = [];
   let startedAt = '';
@@ -714,6 +750,7 @@ function parseAntigravityFile(
 
     if (obj.type === 'USER_INPUT' && typeof obj.content === 'string') {
       lastUserPromptChars = obj.content.length;
+      pendingPromptTurnIndices = [];
       if (!firstUserTitle) {
         const candidateTitle = cleanChatTitle(obj.content);
         if (candidateTitle) firstUserTitle = candidateTitle;
@@ -721,10 +758,31 @@ function parseAntigravityFile(
       const modelMatch = obj.content.match(/Model Selection`?\s+from\s+[^\r\n]+?\s+to\s+([^\r\n]+?)\.(?:\s|$)/i);
       if (modelMatch && modelMatch[1]) {
         currentModel = modelMatch[1].trim();
+        const explicitOrch = parseOrchestratorSettingModel(currentModel);
+        if (explicitOrch) {
+          activeOrchestrator = explicitOrch;
+          orchestratorPhase = 'planner';
+        } else {
+          activeOrchestrator = null;
+          orchestratorPhase = null;
+        }
+      } else if (activeOrchestrator) {
+        orchestratorPhase = 'planner';
       }
       const wsMatch = obj.content.match(/Command Working Directory:\s*([^\r\n<]+)/i);
       if (wsMatch && wsMatch[1]) {
         workspace = wsMatch[1].trim();
+      }
+    }
+
+    if (
+      obj.type === 'SYSTEM_MESSAGE' &&
+      typeof obj.content === 'string' &&
+      obj.content.includes('[plan review]')
+    ) {
+      pendingPromptTurnIndices = [];
+      if (activeOrchestrator) {
+        orchestratorPhase = 'planner';
       }
     }
 
@@ -743,13 +801,7 @@ function parseAntigravityFile(
       }
     }
 
-    const isPlannerResponse =
-      obj.type === 'PLANNER_RESPONSE' ||
-      (obj.source === 'MODEL' &&
-        (typeof obj.input_tokens === 'number' ||
-          typeof obj.output_tokens === 'number' ||
-          typeof obj.thinking === 'string' ||
-          Array.isArray(obj.tool_calls)));
+    const isPlannerResponse = isAntigravityPlannerResponseObj(obj);
 
     if (!isPlannerResponse && obj.type === 'GENERIC') {
       continue;
@@ -797,7 +849,19 @@ function parseAntigravityFile(
         pricing
       );
 
-      turnHistory.push({
+      const callsExitPlanMode =
+        Array.isArray(obj.tool_calls) &&
+        obj.tool_calls.some((tc: any) => getAntigravityToolCallName(tc) === 'exit_plan_mode');
+
+      if (activeOrchestrator && orchestratorPhase === 'planner' && !callsExitPlanMode) {
+        const plannerCheck = inferOrchestratorFromPlannerModel(turnModel);
+        if (!plannerCheck || plannerCheck.plannerFamily !== activeOrchestrator.plannerFamily) {
+          activeOrchestrator = null;
+          orchestratorPhase = null;
+        }
+      }
+
+      const turn: UsageTurn = {
         timestamp,
         model: turnModel,
         normalizedModel: costCalc.normalizedModel,
@@ -810,7 +874,43 @@ function parseAntigravityFile(
         costUSD: costCalc.costUSD,
         cacheSavingsUSD: costCalc.cacheSavingsUSD,
         estimated,
-      });
+      };
+
+      if (callsExitPlanMode) {
+        const resolvedOrch: OrchestratorDescriptor = inferOrchestratorFromPlannerModel(turnModel) ||
+          activeOrchestrator || {
+            key: 'orchestrator-carbon',
+            label: 'Orchestrator (Carbon)',
+            plannerFamily: 'carbon',
+            plannerModelKey: 'gemini-4-carbon',
+          };
+        activeOrchestrator = resolvedOrch;
+        for (const idx of pendingPromptTurnIndices) {
+          const prevTurn = turnHistory[idx];
+          if (prevTurn) {
+            prevTurn.orchestratorModel = resolvedOrch.key;
+            prevTurn.orchestratorLabel = resolvedOrch.label;
+            prevTurn.orchestratorRole = 'planner';
+          }
+        }
+        turn.orchestratorModel = resolvedOrch.key;
+        turn.orchestratorLabel = resolvedOrch.label;
+        turn.orchestratorRole = 'planner';
+        turnHistory.push(turn);
+        pendingPromptTurnIndices = [];
+        orchestratorPhase = 'executor';
+      } else if (activeOrchestrator && orchestratorPhase) {
+        turn.orchestratorModel = activeOrchestrator.key;
+        turn.orchestratorLabel = activeOrchestrator.label;
+        turn.orchestratorRole = orchestratorPhase;
+        turnHistory.push(turn);
+        if (orchestratorPhase === 'planner') {
+          pendingPromptTurnIndices.push(turnHistory.length - 1);
+        }
+      } else {
+        turnHistory.push(turn);
+        pendingPromptTurnIndices.push(turnHistory.length - 1);
+      }
     }
   }
 
@@ -1434,15 +1534,18 @@ function summarizeSession(params: {
     cacheSavingsUSD += turn.cacheSavingsUSD;
     if (turn.estimated) estimatedTurns++;
 
-    const prev = modelCounts.get(turn.normalizedModel);
-    modelCounts.set(turn.normalizedModel, {
+    const groupKey = turn.orchestratorModel || turn.normalizedModel;
+    const groupLabel = turn.orchestratorLabel || turn.modelLabel;
+    const prev = modelCounts.get(groupKey);
+    modelCounts.set(groupKey, {
       count: (prev?.count ?? 0) + 1,
-      label: turn.modelLabel,
+      label: groupLabel,
     });
   }
 
-  let primaryModel = params.turnHistory[params.turnHistory.length - 1]?.normalizedModel || 'unknown';
-  let primaryModelLabel = params.turnHistory[params.turnHistory.length - 1]?.modelLabel || 'Unknown';
+  const lastTurn = params.turnHistory[params.turnHistory.length - 1];
+  let primaryModel = lastTurn?.orchestratorModel || lastTurn?.normalizedModel || 'unknown';
+  let primaryModelLabel = lastTurn?.orchestratorLabel || lastTurn?.modelLabel || 'Unknown';
   let maxCount = -1;
   for (const [modelKey, info] of modelCounts.entries()) {
     if (info.count >= maxCount) {
@@ -1545,7 +1648,132 @@ export function parseSingleFile(
   return session;
 }
 
+function readActiveAntigravityOrchestratorSetting(
+  transcriptPath: string,
+  geminiDir: string
+): OrchestratorDescriptor | null {
+  const candidateRoots: string[] = [];
+  const normalized = path.resolve(transcriptPath).replace(/\\/g, '/');
+  const brainIdx = normalized.toLowerCase().indexOf('/brain/');
+  if (brainIdx > 0) {
+    candidateRoots.push(normalized.slice(0, brainIdx));
+  }
+  for (const sub of ['antigravity-cli', 'antigravity', 'antigravity-ide']) {
+    const p = path.join(geminiDir, sub);
+    if (!candidateRoots.includes(p)) candidateRoots.push(p);
+  }
+
+  for (const rootDir of candidateRoots) {
+    const settingsPath = path.join(rootDir, 'settings.json');
+    if (!fs.existsSync(settingsPath)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { model?: unknown };
+      if (typeof parsed?.model === 'string') {
+        const desc = parseOrchestratorSettingModel(parsed.model);
+        if (desc) return desc;
+        return null;
+      }
+    } catch {
+      // Ignore unreadable settings.json
+    }
+  }
+  return null;
+}
+
+function stampLatestPromptOrchestratorTurns(
+  transcriptPath: string,
+  session: SessionStats,
+  activeOrch: OrchestratorDescriptor
+): SessionStats {
+  if (session.turnHistory.length === 0) return session;
+
+  let trailingCount = 0;
+  try {
+    const lines = fs.readFileSync(transcriptPath, 'utf-8').split(/\r?\n/);
+    let afterUserTurns = 0;
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed.startsWith('{')) continue;
+      let obj: Record<string, any>;
+      try {
+        obj = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (obj.type === 'USER_INPUT') {
+        afterUserTurns = 0;
+      } else if (isAntigravityPlannerResponseObj(obj)) {
+        afterUserTurns += 1;
+      }
+    }
+    trailingCount = Math.max(1, afterUserTurns);
+  } catch {
+    trailingCount = 1;
+  }
+
+  const startIdx = Math.max(0, session.turnHistory.length - trailingCount);
+  let changed = false;
+  const updatedTurns = session.turnHistory.map((t, idx) => {
+    if (idx < startIdx || t.subagentId || t.orchestratorModel) return t;
+    const inferred = inferOrchestratorFromPlannerModel(t.model);
+    if (!inferred || inferred.plannerFamily !== activeOrch.plannerFamily) return t;
+    changed = true;
+    return {
+      ...t,
+      orchestratorModel: activeOrch.key,
+      orchestratorLabel: activeOrch.label,
+      orchestratorRole: 'planner' as const,
+    };
+  });
+
+  if (!changed) return session;
+
+  const updatedSession = summarizeSession({
+    sessionId: session.sessionId,
+    sessionTitle: session.sessionTitle,
+    source: session.source,
+    workspace: session.workspace,
+    filePath: session.filePath,
+    startedAt: session.startedAt,
+    lastActiveAt: session.lastActiveAt,
+    turnHistory: updatedTurns,
+  });
+
+  const cached = fileCache.get(transcriptPath);
+  if (cached) {
+    fileCache.set(transcriptPath, { ...cached, session: updatedSession });
+  }
+  return updatedSession;
+}
+
+function resolvePathForContainment(targetPath: string): string {
+  const resolved = path.resolve(targetPath);
+  try {
+    if (fs.existsSync(resolved)) {
+      return fs.realpathSync(resolved);
+    }
+  } catch {
+    // Fall back to path.resolve if realpathSync fails
+  }
+  return resolved;
+}
+
+function isPathInsideDir(filePath: string, rootDir: string): boolean {
+  const resolvedRoot = resolvePathForContainment(rootDir);
+  const resolvedFile = resolvePathForContainment(filePath);
+  const cmpRoot = process.platform === 'win32' ? resolvedRoot.toLowerCase() : resolvedRoot;
+  const cmpFile = process.platform === 'win32' ? resolvedFile.toLowerCase() : resolvedFile;
+  const rel = path.relative(cmpRoot, cmpFile);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+const SAFE_CONVERSATION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> | null): boolean {
+  if (hookPayload) {
+    recordHookQuotaPayload(hookPayload);
+  }
+
   const { geminiDir, claudeDir, codexDir } = getWatchRoots();
   const pricing = loadPricing(false);
 
@@ -1563,41 +1791,41 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
   const candidates: Array<{ filePath: string; source: ToolSource }> = [];
 
   if (rawTranscriptPath) {
-    let resolvedTranscriptPath = rawTranscriptPath;
+    let resolvedTranscriptPath = path.resolve(rawTranscriptPath);
     if (path.basename(resolvedTranscriptPath).toLowerCase() === 'transcript_full.jsonl') {
       const siblingCompact = path.join(path.dirname(resolvedTranscriptPath), 'transcript.jsonl');
       if (fs.existsSync(siblingCompact)) {
         resolvedTranscriptPath = siblingCompact;
       }
     }
-    const norm = path.resolve(resolvedTranscriptPath).replace(/\\/g, '/').toLowerCase();
-    const normClaude = normalizePathKey(claudeDir);
-    const normCodex = normalizePathKey(codexDir);
-    const normGemini = normalizePathKey(geminiDir);
-    const isSnakeCaseClaudeHook =
-      (typeof hookPayload?.transcript_path === 'string' || typeof hookPayload?.agent_transcript_path === 'string') &&
-      typeof hookPayload?.transcriptPath !== 'string';
 
-    const detectedSource: ToolSource =
-      norm.startsWith(`${normClaude}/`) || norm.includes('/.claude/')
+    if (path.extname(resolvedTranscriptPath).toLowerCase() === '.jsonl') {
+      const inClaude = isPathInsideDir(resolvedTranscriptPath, claudeDir);
+      const inCodex = isPathInsideDir(resolvedTranscriptPath, codexDir);
+      const inGemini = isPathInsideDir(resolvedTranscriptPath, geminiDir);
+      const detectedSource: ToolSource | null = inClaude
         ? 'claude'
-        : norm.startsWith(`${normCodex}/`) || norm.includes('/.codex/')
+        : inCodex
           ? 'codex'
-          : norm.startsWith(`${normGemini}/`) || norm.includes('/.gemini/')
+          : inGemini
             ? 'antigravity'
-            : isSnakeCaseClaudeHook
-              ? 'claude'
-              : 'antigravity';
-    if (fs.existsSync(resolvedTranscriptPath)) {
-      candidates.push({ filePath: resolvedTranscriptPath, source: detectedSource });
+            : null;
+      if (detectedSource && fs.existsSync(resolvedTranscriptPath)) {
+        candidates.push({ filePath: resolvedTranscriptPath, source: detectedSource });
+      }
     }
   }
 
-  if (candidates.length === 0 && conversationId) {
+  if (
+    candidates.length === 0 &&
+    conversationId &&
+    SAFE_CONVERSATION_ID_RE.test(conversationId) &&
+    !conversationId.includes('..')
+  ) {
     for (const sub of ['antigravity-cli', 'antigravity', 'antigravity-ide']) {
       for (const name of ['transcript.jsonl', 'transcript_full.jsonl']) {
         const p = path.join(geminiDir, sub, 'brain', conversationId, '.system_generated', 'logs', name);
-        if (fs.existsSync(p)) {
+        if (isPathInsideDir(p, geminiDir) && fs.existsSync(p)) {
           candidates.push({ filePath: p, source: 'antigravity' });
           break;
         }
@@ -1610,7 +1838,7 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
     const { filePath, source } = candidates[0];
     const antigravityMeta = source === 'antigravity' ? loadAntigravityMetadata(geminiDir) : null;
     const codexTitles = source === 'codex' ? loadCodexSessionTitles(codexDir) : undefined;
-    const session = parseSingleFile(
+    const parsedSession = parseSingleFile(
       filePath,
       source,
       pricing,
@@ -1618,7 +1846,15 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
       antigravityMeta?.workspaces,
       codexTitles
     );
-    if (session) {
+    if (parsedSession) {
+      const activeOrch =
+        source === 'antigravity' && !antigravityMeta?.parentIds.has(parsedSession.sessionId)
+          ? readActiveAntigravityOrchestratorSetting(filePath, geminiDir)
+          : null;
+      const session = activeOrch
+        ? stampLatestPromptOrchestratorTurns(filePath, parsedSession, activeOrch)
+        : parsedSession;
+
       let requiresParentSubagentMerge = false;
       const btwEntries = loadBtwHistoryEntries(geminiDir, claudeDir, codexDir);
       const codexRel = source === 'codex' ? fileCache.get(filePath)?.codexRelation : null;
@@ -1667,6 +1903,12 @@ export function syncSingleTranscriptToLedger(hookPayload?: Record<string, any> |
           session.workspaceName = formatWorkspaceName(rel);
         }
         return upsertSingleSessionToLedger(session);
+      }
+
+      if (source === 'antigravity' && session.turnHistory.some((t) => Boolean(t.orchestratorModel))) {
+        if (!recordTurnOrchestratorAnnotations('antigravity', session.sessionId, session.turnHistory)) {
+          upsertSingleSessionToLedger(session);
+        }
       }
     }
   }
@@ -2272,8 +2514,10 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
   const watchedPaths = [toRelativeHomePath(geminiDir), toRelativeHomePath(claudeDir)];
   if (codexDirExists) watchedPaths.push(toRelativeHomePath(codexDir));
 
+  const serverNowMs = Date.now();
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: new Date(serverNowMs).toISOString(),
+    serverNowMs,
     watchedPaths,
     pricing,
     sessions: activeSessions,
@@ -2281,5 +2525,6 @@ export function scanAllLogs(forceClearCache = false): BurnrateSnapshot {
     dismissedLegacyCount: getDismissedLegacyCount(),
     settings: loadUserSettings(),
     hooksStatus: getHooksStatus(),
+    quotas: defaultQuotaEngine.getCachedQuotas(serverNowMs),
   };
 }

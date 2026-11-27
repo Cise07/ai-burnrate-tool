@@ -107,6 +107,7 @@ Once installed, the **`burn`** command is available globally from any directory:
 | `burn --import-backup <file>` | 📥 **Import Backup:** Restores a Burnrate backup `.json` file into `~/.burnrate`, safely **merging** with existing local data by default. |
 | `burn --replace` | 🔁 **Replace Mode (Backup Import):** Used with `--import-backup <file>` to overwrite local `~/.burnrate` data instead of merging. |
 | `burn --no-open` | 🔇 **Headless Mode:** Starts the live server and file watcher without opening the browser. |
+| `burn --no-lan` | 🔒 **Local-Only Mode:** Binds the HTTP server strictly to `127.0.0.1` and disables mDNS/QR LAN exposure (ideal on untrusted/public Wi-Fi). |
 | `burn --no-hooks` | 🔕 **Skip Hooks:** Launches without installing Antigravity/Claude/Codex offline archive hooks. |
 | `burn --uninstall-hooks` | 🧹 **Remove Hooks:** Removes `ai-burnrate-tool` offline archive hooks from Antigravity, Claude Code & Codex CLI configs. |
 | `burn --sync-ledger` | 🪝 **Hook Snapshot Mode (Internal):** Invoked by tool hooks to snapshot the active transcript into `~/.burnrate/sessions-ledger.json` and trigger a detached `--sync-pricing` if ≥ 30 minutes have elapsed. |

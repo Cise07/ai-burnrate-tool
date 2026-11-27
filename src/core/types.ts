@@ -1,4 +1,8 @@
+import type { ProviderId, ProviderQuotaSnapshot } from './quota/types.js';
+
 export type ToolSource = 'antigravity' | 'claude' | 'codex';
+
+export type OrchestratorRole = 'planner' | 'executor';
 
 export type DashboardSectionId =
   | 'kpis'
@@ -25,6 +29,7 @@ export interface UserSettings {
     codex: number;
   };
   includeDeletedInTotals: boolean;
+  experimentalQuota?: boolean;
   layout: DashboardLayoutSettings;
   trackingStartAt: ToolTrackingStartSettings;
 }
@@ -102,6 +107,9 @@ export interface UsageTurn {
   costUSD: number;
   cacheSavingsUSD: number;
   estimated: boolean;
+  orchestratorModel?: string;
+  orchestratorLabel?: string;
+  orchestratorRole?: OrchestratorRole;
   subagentId?: string;
   subagentName?: string;
   subagentTitle?: string;
@@ -135,6 +143,7 @@ export interface SessionStats {
 
 export interface BurnrateSnapshot {
   generatedAt: string;
+  serverNowMs?: number;
   watchedPaths: string[];
   pricing: PricingConfig;
   sessions: SessionStats[];
@@ -142,4 +151,5 @@ export interface BurnrateSnapshot {
   dismissedLegacyCount?: number;
   settings?: UserSettings;
   hooksStatus?: HooksStatus;
+  quotas?: Record<ProviderId, ProviderQuotaSnapshot>;
 }

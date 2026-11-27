@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getPackageRoot } from './pricing.js';
+import { loadUserSettings } from './settings.js';
 import type { HooksStatus } from './types.js';
 
 const AGY_HOOK_NAME = 'ai-burnrate-ledger';
 const BURNRATE_HOOK_MARKER = '--sync-ledger';
+const BURNRATE_STATUSLINE_MARKER = '--claude-statusline';
 
 function resolveHooksHomeDir(): string | null {
   if (process.env.BURNRATE_DISABLE_HOOKS === '1' || process.env.BURNRATE_DISABLE_HOOKS === 'true') {
@@ -24,6 +26,15 @@ function resolveHooksHomeDir(): string | null {
 export function getSyncLedgerCommand(): string {
   const cliEntry = path.join(getPackageRoot(), 'dist', 'cli', 'index.js').replace(/\\/g, '/');
   return `node "${cliEntry}" --sync-ledger`;
+}
+
+export function getClaudeStatuslineCommand(): string {
+  const cliEntry = path.join(getPackageRoot(), 'dist', 'cli', 'index.js').replace(/\\/g, '/');
+  return `node "${cliEntry}" --claude-statusline`;
+}
+
+function isBurnrateStatuslineCommand(command: unknown): boolean {
+  return typeof command === 'string' && command.includes(BURNRATE_STATUSLINE_MARKER);
 }
 
 function writeJsonAtomic(filePath: string, data: unknown): boolean {
@@ -210,9 +221,39 @@ function installClaudeHook(homeDir: string, command: string): boolean {
       ? settingsObj.hooks
       : {};
 
-  const { hooksSection, changed } = installClaudeStyleHookEvents(existingHooks, command, CLAUDE_HOOK_EVENTS);
+  const { hooksSection, changed: hooksChanged } = installClaudeStyleHookEvents(existingHooks, command, CLAUDE_HOOK_EVENTS);
+  let changed = hooksChanged;
+  if (hooksChanged) {
+    settingsObj.hooks = hooksSection;
+  }
+
+  const quotaEnabled = loadUserSettings().experimentalQuota !== false;
+  const statuslineCommand = getClaudeStatuslineCommand();
+  const existingStatusLine = settingsObj.statusLine;
+  const isBurnrateOwnedStatusLine =
+    Boolean(existingStatusLine) &&
+    typeof existingStatusLine === 'object' &&
+    !Array.isArray(existingStatusLine) &&
+    isBurnrateStatuslineCommand(existingStatusLine.command);
+
+  if (quotaEnabled) {
+    const canManageStatusLine =
+      existingStatusLine === undefined || existingStatusLine === null || isBurnrateOwnedStatusLine;
+    if (
+      canManageStatusLine &&
+      (!existingStatusLine ||
+        existingStatusLine.type !== 'command' ||
+        existingStatusLine.command !== statuslineCommand)
+    ) {
+      settingsObj.statusLine = { type: 'command', command: statuslineCommand };
+      changed = true;
+    }
+  } else if (isBurnrateOwnedStatusLine) {
+    delete settingsObj.statusLine;
+    changed = true;
+  }
+
   if (!changed) return true;
-  settingsObj.hooks = hooksSection;
   return writeJsonAtomic(settingsPath, settingsObj);
 }
 
@@ -283,10 +324,24 @@ export function uninstallAutoArchiveHooks(): void {
   if (fs.existsSync(claudeSettingsPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf-8'));
-      if (parsed && typeof parsed === 'object' && parsed.hooks && typeof parsed.hooks === 'object') {
-        const changed = cleanClaudeStyleHookEvents(parsed.hooks, ['Stop', 'SubagentStop', 'SessionEnd']);
-        if (Object.keys(parsed.hooks).length === 0) {
-          delete parsed.hooks;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        let changed = false;
+        if (parsed.hooks && typeof parsed.hooks === 'object') {
+          if (cleanClaudeStyleHookEvents(parsed.hooks, ['Stop', 'SubagentStop', 'SessionEnd'])) {
+            changed = true;
+          }
+          if (Object.keys(parsed.hooks).length === 0) {
+            delete parsed.hooks;
+          }
+        }
+        if (
+          parsed.statusLine &&
+          typeof parsed.statusLine === 'object' &&
+          !Array.isArray(parsed.statusLine) &&
+          isBurnrateStatuslineCommand(parsed.statusLine.command)
+        ) {
+          delete parsed.statusLine;
+          changed = true;
         }
         if (changed) {
           writeJsonAtomic(claudeSettingsPath, parsed);
