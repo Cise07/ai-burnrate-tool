@@ -1,6 +1,6 @@
 {
   "name": "ai-burnrate-tool",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Real-time local token & API equivalent cost tracker for Antigravity CLI, Claude Code and Codex CLI",
   "type": "module",
   "bin": {
