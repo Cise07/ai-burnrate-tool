@@ -109,7 +109,7 @@ test('parseAntigravityCliUsageJson separates pools, preserves exact fractions an
 test('Antigravity handles 3 window states (100% idle, partial, 0% exhausted), statusLine, account mismatch & errors', () => {
   const now = Date.UTC(2026, 10, 27, 19, 0, 0);
 
-  // Exhausted bucket -> snapshot status = 'exhausted'
+  // Exhausted Gemini bucket -> snapshot status = 'exhausted'
   const exhaustedPayload = structuredClone(REAL_USAGE_FIXTURE);
   exhaustedPayload.command.data.groups[0].buckets[1].remaining_fraction = 0;
   const exSnap = parseAntigravityCliUsageJson(exhaustedPayload, { fetchedAtMs: now });
@@ -117,6 +117,25 @@ test('Antigravity handles 3 window states (100% idle, partial, 0% exhausted), st
   const ex5h = exSnap.windows.find((w) => w.id === 'antigravity:gemini-5h');
   assert.equal(ex5h.remainingPercent, 0);
   assert.equal(ex5h.usedPercent, 100);
+
+  // Exhausted Claude & GPT (3p) bucket while Gemini still has quota -> status stays 'ok'
+  const only3pPayload = structuredClone(REAL_USAGE_FIXTURE);
+  if (only3pPayload.command.data.groups.length > 1) {
+    only3pPayload.command.data.groups[1].buckets[0].remaining_fraction = 0;
+  }
+  const okWith3pZero = parseAntigravityCliUsageJson(only3pPayload, { fetchedAtMs: now });
+  assert.equal(okWith3pZero.status, 'ok');
+
+  // Legacy cached snapshot saved as 'exhausted' when only non-Gemini is 0% heals on projection
+  const legacyCached = {
+    ...okWith3pZero,
+    status: 'exhausted',
+    windows: okWith3pZero.windows.map((w) =>
+      w.groupId === 'gemini' ? w : { ...w, remainingPercent: 0, usedPercent: 100 }
+    ),
+  };
+  const healed = projectAntigravitySnapshotAtTime(legacyCached, now + 1000);
+  assert.equal(healed.snapshot.status, 'ok');
 
   // statusLine payload
   const slSnap = parseAntigravityStatuslinePayload(

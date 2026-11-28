@@ -1855,7 +1855,7 @@ export default function App() {
             {/* Tool Filter (with smooth sliding indicator) */}
             <div
               ref={toolGroupRef}
-              className="relative inline-flex items-center gap-0.5 rounded-lg glass-control p-1 text-[11px] sm:text-xs shrink-0 select-none max-w-full"
+              className="relative inline-flex items-center gap-0.5 rounded-lg glass-control p-1 text-[11px] sm:text-xs shrink-0 select-none max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
               {toolPill.ready && (
                 <span
@@ -2898,9 +2898,9 @@ export default function App() {
             tabIndex={0}
             role="region"
             aria-label="Live Sessions and Workspaces"
-            className="table-scroll table-scroll-fade-x w-full max-w-full overflow-x-auto rounded-b-2xl [container-type:inline-size]"
+            className="burn-ws-table-wrap table-scroll w-full max-w-full overflow-x-auto rounded-b-2xl [container-type:inline-size]"
           >
-            <table className="w-full text-left border-collapse min-w-[1020px] xl:min-w-0">
+            <table className="burn-ws-table w-full text-left border-collapse min-w-[1020px] xl:min-w-0">
               <thead>
                 <tr className="border-b border-[var(--border-hairline)] text-[10px] xl:text-[11px] font-mono uppercase text-[var(--ink-tertiary)] bg-[var(--table-head)]">
                   <th className="py-2.5 px-2 w-7 sm:w-8 text-center"></th>
@@ -2923,11 +2923,11 @@ export default function App() {
                 return (
                   <tbody
                     key={ws.workspaceKey}
-                    className="ws-row-scroll-fade text-xs border-b border-[var(--border-hairline)] last:border-b-0"
+                    className="text-xs border-b border-[var(--border-hairline)] last:border-b-0"
                   >
                     <tr
                       onClick={() => toggleSetKey(setExpandedWorkspaces, ws.workspaceKey)}
-                      className={`hover:bg-[var(--table-hover)] transition-colors group cursor-pointer ${
+                      className={`ws-summary-row hover:bg-[var(--table-hover)] transition-colors group cursor-pointer ${
                         isExpanded ? 'bg-[var(--table-hover)]' : ''
                       }`}
                     >
@@ -2957,11 +2957,11 @@ export default function App() {
                         </div>
                       </td>
 
-                      <td className="py-2.5 px-2 xl:px-3">
-                        <div className="flex items-center gap-1.5 font-medium text-[var(--ink-primary)]">
+                      <th scope="row" className="py-2.5 px-2 xl:px-3 font-normal text-left">
+                        <div className="flex items-center gap-1.5 min-w-0 font-medium text-[var(--ink-primary)]">
                           <FolderGit2 className="w-3.5 h-3.5 text-[var(--ink-tertiary)] shrink-0" />
                           <span
-                            className="truncate max-w-[120px] sm:max-w-[150px] lg:max-w-[180px] xl:max-w-[220px]"
+                            className="truncate max-w-full md:max-w-[160px] lg:max-w-[180px] xl:max-w-[220px]"
                             title={ws.workspace}
                           >
                             {ws.workspaceName}
@@ -2975,14 +2975,14 @@ export default function App() {
                             · {ws.workspace}
                           </span>
                         </div>
-                      </td>
+                      </th>
 
                       <td className="py-2.5 px-2 xl:px-3 whitespace-nowrap font-mono text-[11px] xl:text-xs text-[var(--ink-secondary)]">
-                        <div className="inline-flex items-center gap-1.5">
-                          <span>{ws.primaryModelLabel}</span>
+                        <div className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
+                          <span className="truncate">{ws.primaryModelLabel}</span>
                           {ws.distinctModels.length > 1 && (
                             <span
-                              className="px-1.5 py-0.5 rounded glass-control text-[var(--ink-tertiary)] text-[10px]"
+                              className="px-1.5 py-0.5 rounded glass-control text-[var(--ink-tertiary)] text-[10px] shrink-0"
                               title={ws.distinctModels.join(', ')}
                             >
                               +{ws.distinctModels.length - 1}
@@ -2996,9 +2996,11 @@ export default function App() {
                       </td>
 
                       <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[var(--ink-tertiary)] text-[11px] xl:text-xs">
-                        <span className="text-[var(--ink-primary)]">{formatTokens(ws.inputTokens)}</span>
-                        <span className="mx-0.5">/</span>
-                        <span className="text-[var(--ink-secondary)]">{formatTokens(ws.outputTokens)}</span>
+                        <span className="inline-flex items-baseline">
+                          <span className="text-[var(--ink-primary)]">{formatTokens(ws.inputTokens)}</span>
+                          <span className="mx-0.5">/</span>
+                          <span className="text-[var(--ink-secondary)]">{formatTokens(ws.outputTokens)}</span>
+                        </span>
                       </td>
 
                       <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[var(--tool-antigravity)] text-[11px] xl:text-xs">
@@ -3018,54 +3020,58 @@ export default function App() {
                       </td>
 
                       <td className="py-2.5 px-2 xl:px-2.5 whitespace-nowrap text-right font-mono tabular text-[11px] xl:text-xs">
-                        <div className="text-[var(--ink-primary)]">{formatPreciseDateTime(ws.startedAt).date}</div>
-                        <div className="text-[10px] text-[var(--ink-tertiary)]">{formatPreciseDateTime(ws.startedAt).time}</div>
+                        <div className="leading-tight">
+                          <div className="text-[var(--ink-primary)]">{formatPreciseDateTime(ws.startedAt).date}</div>
+                          <div className="text-[10px] text-[var(--ink-tertiary)]">{formatPreciseDateTime(ws.startedAt).time}</div>
+                        </div>
                       </td>
 
                       <td className="py-2.5 px-2 xl:px-3 whitespace-nowrap text-right font-mono tabular text-[11px] xl:text-xs">
-                        <div className="text-[var(--ink-primary)]">{formatPreciseDateTime(ws.lastActiveAt).date}</div>
-                        <div
-                          className="text-[10px] text-[var(--accent-teal)] flex items-center justify-end gap-1"
-                          title={formatRelativeTime(ws.lastActiveAt)}
-                        >
-                          <span>{formatPreciseDateTime(ws.lastActiveAt).time}</span>
-                          <span className="text-[var(--ink-tertiary)] hidden xl:inline">
-                            ({formatRelativeTime(ws.lastActiveAt)})
-                          </span>
+                        <div className="leading-tight">
+                          <div className="text-[var(--ink-primary)]">{formatPreciseDateTime(ws.lastActiveAt).date}</div>
+                          <div
+                            className="text-[10px] text-[var(--accent-teal)] flex items-center justify-end gap-1"
+                            title={formatRelativeTime(ws.lastActiveAt)}
+                          >
+                            <span>{formatPreciseDateTime(ws.lastActiveAt).time}</span>
+                            <span className="text-[var(--ink-tertiary)] hidden xl:inline">
+                              ({formatRelativeTime(ws.lastActiveAt)})
+                            </span>
+                          </div>
                         </div>
                       </td>
                     </tr>
 
                     <tr
                       aria-hidden={!isExpanded}
-                      className={
+                      className={`ws-detail-row ${
                         isExpanded
                           ? 'bg-[var(--bg-subcard)] border-t border-[var(--border-hairline)]'
                           : 'pointer-events-none'
-                      }
+                      }`}
                     >
                       <td colSpan={12} className="p-0">
                         <div
-                          className={`sticky left-0 w-[100cqi] max-w-full box-border grid transition-[grid-template-rows,opacity] duration-[240ms] ease-burn-out motion-reduce:transition-none ${
+                          className={`ws-detail-sticky sticky left-0 w-[100cqi] max-w-full box-border grid grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-[240ms] ease-burn-out motion-reduce:transition-none ${
                             isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                           }`}
                         >
                           <div className="overflow-hidden min-h-0 min-w-0 text-xs leading-normal">
-                            <div className="px-3 py-3 sm:px-4 sm:py-3.5 min-w-0">
+                            <div className="px-2 py-2.5 sm:px-4 sm:py-3.5 min-w-0">
                               <div
-                                className={`glass-subcard rounded-xl p-3 sm:p-4 space-y-3 min-w-0 transition-[transform,opacity] duration-[220ms] ease-burn-out motion-reduce:transition-none ${
+                                className={`glass-subcard rounded-xl p-2.5 sm:p-4 space-y-3 min-w-0 transition-[transform,opacity] duration-[220ms] ease-burn-out motion-reduce:transition-none ${
                                   isExpanded
                                     ? 'opacity-100 translate-y-0 scale-100'
                                     : 'opacity-0 -translate-y-1.5 scale-[0.992]'
                                 }`}
                               >
                               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2 min-w-0">
                                   <span className="font-semibold text-[var(--ink-primary)] flex items-center gap-2">
                                     <MessageSquare className="w-4 h-4 text-[var(--accent-teal)]" />
                                     Workspace Chats ({ws.chats.length})
                                   </span>
-                                  <span className="text-[11px] font-mono text-[var(--ink-tertiary)]">{ws.workspace}</span>
+                                  <span className="text-[11px] font-mono text-[var(--ink-tertiary)] break-all sm:break-normal min-w-0">{ws.workspace}</span>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono tabular text-[var(--ink-tertiary)]">
                                   <span>
@@ -3113,7 +3119,7 @@ export default function App() {
                                     >
                                       <div
                                         onClick={() => toggleSetKey(setExpandedChats, chatKey)}
-                                        className="p-3 hover:bg-[var(--table-hover)] transition-colors cursor-pointer space-y-2"
+                                        className="p-2.5 sm:p-3 hover:bg-[var(--table-hover)] transition-colors cursor-pointer space-y-2"
                                       >
                                         <div className="flex flex-wrap items-center justify-between gap-3">
                                           <div className="flex flex-wrap items-center gap-2 min-w-0">
@@ -3140,7 +3146,7 @@ export default function App() {
                                             <ToolBadge source={chat.source} compact />
 
                                             <span
-                                              className="text-xs font-medium text-[var(--ink-primary)] truncate max-w-[240px] sm:max-w-[380px] lg:max-w-[480px]"
+                                              className="text-xs font-medium text-[var(--ink-primary)] min-w-0 flex-1 sm:flex-initial truncate max-w-full sm:max-w-[380px] lg:max-w-[480px]"
                                               title={`${chat.sessionTitle || chat.sessionId} (${chat.sessionId})`}
                                             >
                                               {chat.sessionTitle || chat.sessionId}
@@ -3227,7 +3233,7 @@ export default function App() {
                                           const previewGroups = groupedChatModels.slice(0, 3);
                                           const extraGroups = groupedChatModels.slice(3);
                                           return (
-                                            <div className="flex flex-wrap items-center gap-1.5 pl-6">
+                                            <div className="flex flex-wrap items-center gap-1.5 pl-0 sm:pl-6">
                                               <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-[var(--ink-tertiary)] mr-1">
                                                 <Cpu className="w-3 h-3 text-[var(--accent-teal)]" />
                                                 Models ({groupedChatModels.length}):
@@ -3250,7 +3256,7 @@ export default function App() {
                                                 return (
                                                   <span
                                                     key={g.groupKey}
-                                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md glass-subcard text-[10.5px] font-mono tabular text-[var(--ink-secondary)]"
+                                                    className="inline-flex flex-wrap items-center gap-1.5 max-w-full px-2 py-0.5 rounded-md glass-subcard text-[10.5px] font-mono tabular text-[var(--ink-secondary)]"
                                                     title={`Input: ${formatTokens(g.inputTokens)} · Cache Read: ${formatTokens(g.cacheReadTokens)} · Output: ${formatTokens(g.outputTokens)} · Total: ${formatTokens(g.totalTokens)} · Saved: ${formatMoney(g.cacheSavingsUSD, currency)}${variantTooltip}${orchTooltip}`}
                                                   >
                                                     <span
@@ -3321,7 +3327,7 @@ export default function App() {
                                           const btwRowKey = `${chatKey}::/btw`;
                                           const isBtwExpanded = expandedBtwRows.has(btwRowKey);
                                           return (
-                                            <div className="space-y-1.5 pl-6">
+                                            <div className="space-y-1.5 pl-0 sm:pl-6">
                                               <div className="flex flex-wrap items-center gap-1.5">
                                                 <span className="inline-flex items-center gap-1 text-[10.5px] font-mono text-[var(--accent-violet)] mr-1">
                                                   <Bot className="w-3 h-3" />
@@ -3353,7 +3359,7 @@ export default function App() {
                                                           e.stopPropagation();
                                                           toggleSetKey(setExpandedBtwRows, btwRowKey);
                                                         }}
-                                                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono tabular bg-[var(--accent-sky-soft)] hover:brightness-110 border border-[var(--accent-sky-border)] text-[var(--ink-primary)] transition-all cursor-pointer"
+                                                        className="inline-flex flex-wrap items-center gap-1.5 max-w-full px-2 py-0.5 rounded-md text-[10.5px] font-mono tabular bg-[var(--accent-sky-soft)] hover:brightness-110 border border-[var(--accent-sky-border)] text-[var(--ink-primary)] transition-all cursor-pointer"
                                                         title={`Click to ${isBtwExpanded ? 'hide' : 'show'} /btw titles · Input: ${formatTokens(sub.inputTokens)} · Cache Read: ${formatTokens(sub.cacheReadTokens)} · Output: ${formatTokens(sub.outputTokens)} · Saved: ${formatMoney(sub.cacheSavingsUSD, currency)}${modelsTooltip ? ` · Models: ${modelsTooltip}` : ''}`}
                                                       >
                                                         <ChevronRight
@@ -3385,7 +3391,7 @@ export default function App() {
                                                   return (
                                                     <span
                                                       key={sub.subagentId}
-                                                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10.5px] font-mono tabular border ${
+                                                      className={`inline-flex flex-wrap items-center gap-1.5 max-w-full px-2 py-0.5 rounded-md text-[10.5px] font-mono tabular border ${
                                                         isBtw
                                                           ? 'bg-[var(--accent-sky-soft)] border-[var(--accent-sky-border)] text-[var(--ink-primary)]'
                                                           : 'bg-[var(--accent-violet-soft)] border-[var(--accent-violet-border)] text-[var(--ink-primary)]'
@@ -3425,7 +3431,7 @@ export default function App() {
                                                 <div
                                                   aria-hidden={!isBtwExpanded}
                                                   onClick={(e) => e.stopPropagation()}
-                                                  className={`grid transition-[grid-template-rows,opacity] duration-200 ease-burn-out motion-reduce:transition-none ${
+                                                  className={`grid grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-200 ease-burn-out motion-reduce:transition-none ${
                                                     isBtwExpanded
                                                       ? 'grid-rows-[1fr] opacity-100'
                                                       : 'grid-rows-[0fr] opacity-0 pointer-events-none'
@@ -3491,14 +3497,14 @@ export default function App() {
 
                                       <div
                                         aria-hidden={!isChatExpanded}
-                                        className={`grid transition-[grid-template-rows,opacity] duration-[230ms] ease-burn-out motion-reduce:transition-none ${
+                                        className={`grid grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-[230ms] ease-burn-out motion-reduce:transition-none ${
                                           isChatExpanded
                                             ? 'grid-rows-[1fr] opacity-100'
                                             : 'grid-rows-[0fr] opacity-0 pointer-events-none'
                                         }`}
                                       >
                                         <div className="overflow-hidden min-h-0 min-w-0">
-                                          <div className="border-t border-[var(--border-hairline)] bg-[var(--bg-subcard)] p-3 sm:p-3.5 space-y-3 min-w-0">
+                                          <div className="border-t border-[var(--border-hairline)] bg-[var(--bg-subcard)] p-2.5 sm:p-3.5 space-y-3 min-w-0">
                                             {/* Card 1: Models Breakdown */}
                                             <div
                                               className={`rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] overflow-hidden min-w-0 max-w-full transition-[transform,opacity] duration-200 ease-burn-out motion-reduce:transition-none ${
@@ -3530,9 +3536,9 @@ export default function App() {
                                                 tabIndex={0}
                                                 role="region"
                                                 aria-labelledby={modelsHeadingId}
-                                                className="table-scroll table-scroll-fade-inner w-0 min-w-full max-w-full overflow-x-auto max-h-80 overflow-y-auto"
+                                                className="burn-detail-table-wrap table-scroll w-full min-w-0 max-w-full overflow-x-auto md:max-h-80 md:overflow-y-auto [container-type:inline-size]"
                                               >
-                                                <table className="w-full min-w-[720px] text-left border-separate border-spacing-0 text-xs">
+                                                <table className="burn-detail-table w-full min-w-[680px] text-left border-separate border-spacing-0 text-xs">
                                                   <thead className="sticky top-0 z-[2]">
                                                     <tr>
                                                       <th
@@ -3627,10 +3633,10 @@ export default function App() {
                                                           >
                                                             <th
                                                               scope="row"
-                                                              className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
+                                                              className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] max-w-[220px] lg:max-w-[280px] xl:max-w-[340px] py-2 px-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
                                                             >
-                                                              <div className="inline-flex items-center gap-1.5">
-                                                                <span className="w-4 text-[10px] text-[var(--ink-tertiary)] tabular-nums">
+                                                              <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 min-w-0 max-w-full">
+                                                                <span className="w-4 text-[10px] text-[var(--ink-tertiary)] tabular-nums shrink-0">
                                                                   {idx + 1}.
                                                                 </span>
                                                                 {canExpandGroup ? (
@@ -3648,23 +3654,26 @@ export default function App() {
                                                                   className="size-1.5 rounded-full shrink-0"
                                                                   style={{ backgroundColor: g.dotColor }}
                                                                 />
-                                                                <span className="font-medium text-[var(--ink-primary)]">
+                                                                <span
+                                                                  className="font-medium text-[var(--ink-primary)] truncate"
+                                                                  title={g.baseName}
+                                                                >
                                                                   {g.baseName}
                                                                 </span>
                                                                 {g.orchestratorRoles ? (
                                                                   <span
-                                                                    className="px-1.5 py-0 rounded text-[9.5px] bg-[var(--accent-teal-soft)] border border-[var(--accent-teal-border)] text-[var(--accent-teal)] font-medium"
+                                                                    className="px-1.5 py-0 rounded text-[9.5px] bg-[var(--accent-teal-soft)] border border-[var(--accent-teal-border)] text-[var(--accent-teal)] font-medium shrink-0"
                                                                     title={`${g.orchestratorRoles.planner.turns} Planner turns · ${g.orchestratorRoles.executor.turns} Executor turns`}
                                                                   >
                                                                     {g.orchestratorRoles.planner.turns}P /{' '}
                                                                     {g.orchestratorRoles.executor.turns}E
                                                                   </span>
                                                                 ) : g.variants.length === 1 && g.variants[0].effort ? (
-                                                                  <span className="px-1.5 py-0 rounded text-[9.5px] uppercase bg-[var(--bg-subcard)] border border-[var(--border-hairline)] text-[var(--ink-secondary)]">
+                                                                  <span className="px-1.5 py-0 rounded text-[9.5px] uppercase bg-[var(--bg-subcard)] border border-[var(--border-hairline)] text-[var(--ink-secondary)] shrink-0">
                                                                     {g.variants[0].effort}
                                                                   </span>
                                                                 ) : g.variants.length > 1 ? (
-                                                                  <span className="inline-flex items-center gap-1">
+                                                                  <span className="inline-flex items-center gap-1 shrink-0">
                                                                     {g.variants.map((v) => (
                                                                       <span
                                                                         key={v.item.modelLabel}
@@ -3677,7 +3686,7 @@ export default function App() {
                                                                 ) : null}
                                                                 {isPromoActive(modelRate) && (
                                                                   <span
-                                                                    className="px-1.5 py-0 rounded text-[9px] font-mono font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)]"
+                                                                    className="px-1.5 py-0 rounded text-[9px] font-mono font-semibold bg-[var(--accent-amber-soft)] text-[var(--accent-amber)] border border-[var(--accent-amber-border)] shrink-0"
                                                                     title={
                                                                       modelRate?.promoNote || 'Active promotional rate'
                                                                     }
@@ -3748,21 +3757,24 @@ export default function App() {
                                                                 <tr
                                                                   key={`${rowKey}:${roleItem.key}`}
                                                                   style={{ animationDelay: roleDelay }}
-                                                                  className="animate-burn-subrow bg-[var(--bg-subcard)]/50 text-[10.5px] hover:bg-[var(--table-hover)]"
+                                                                  className="burn-detail-subrow animate-burn-subrow bg-[var(--bg-subcard)]/50 text-[10.5px] hover:bg-[var(--table-hover)]"
                                                                 >
                                                                   <th
                                                                     scope="row"
-                                                                    className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-1.5 pl-10 pr-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)] text-[10.5px]"
+                                                                    className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] max-w-[220px] lg:max-w-[280px] xl:max-w-[340px] py-1.5 pl-10 pr-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)] text-[10.5px]"
                                                                   >
                                                                     <div
                                                                       style={{ animationDelay: roleDelay }}
-                                                                      className="inline-flex items-center gap-1.5 animate-burn-subrow-inner"
+                                                                      className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 min-w-0 max-w-full animate-burn-subrow-inner"
                                                                     >
-                                                                      <span className="text-[var(--ink-tertiary)]">↳</span>
-                                                                      <span className={`font-semibold ${roleItem.tone}`}>
+                                                                      <span className="text-[var(--ink-tertiary)] shrink-0">↳</span>
+                                                                      <span className={`font-semibold shrink-0 ${roleItem.tone}`}>
                                                                         {roleItem.label}
                                                                       </span>
-                                                                      <span className="text-[var(--ink-tertiary)]">
+                                                                      <span
+                                                                        className="text-[var(--ink-tertiary)] truncate"
+                                                                        title={physName}
+                                                                      >
                                                                         ({physName})
                                                                       </span>
                                                                     </div>
@@ -3812,11 +3824,11 @@ export default function App() {
                                                                 <tr
                                                                   key={`${rowKey}::${v.item.modelLabel}`}
                                                                   style={{ animationDelay: vDelay }}
-                                                                  className="animate-burn-subrow bg-[var(--bg-subcard)]/50 text-[10.5px] hover:bg-[var(--table-hover)]"
+                                                                  className="burn-detail-subrow animate-burn-subrow bg-[var(--bg-subcard)]/50 text-[10.5px] hover:bg-[var(--table-hover)]"
                                                                 >
                                                                   <th
                                                                     scope="row"
-                                                                    className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-1.5 pl-10 pr-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)] text-[10.5px]"
+                                                                    className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] max-w-[220px] lg:max-w-[280px] xl:max-w-[340px] py-1.5 pl-10 pr-2.5 font-mono font-normal text-left whitespace-nowrap border-b border-[var(--border-hairline)] text-[10.5px]"
                                                                   >
                                                                     <div
                                                                       style={{ animationDelay: vDelay }}
@@ -3865,10 +3877,10 @@ export default function App() {
                                                   </tbody>
                                                   {groupedChatModels.length > 1 && (
                                                     <tfoot>
-                                                      <tr className="bg-[var(--table-head)] font-mono tabular text-[11px]">
+                                                      <tr className="burn-detail-tfoot-row bg-[var(--table-head)] font-mono tabular text-[11px]">
                                                         <th
                                                           scope="row"
-                                                          className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-semibold text-left text-[var(--ink-secondary)] whitespace-nowrap"
+                                                          className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] max-w-[220px] lg:max-w-[280px] xl:max-w-[340px] py-2 px-2.5 font-mono font-semibold text-left text-[var(--ink-secondary)] whitespace-nowrap"
                                                         >
                                                           Total ({groupedChatModels.length} models)
                                                         </th>
@@ -3929,9 +3941,9 @@ export default function App() {
                                                   tabIndex={0}
                                                   role="region"
                                                   aria-labelledby={subagentsHeadingId}
-                                                  className="table-scroll table-scroll-fade-inner w-0 min-w-full max-w-full overflow-x-auto max-h-80 overflow-y-auto"
+                                                  className="burn-detail-table-wrap table-scroll w-full min-w-0 max-w-full overflow-x-auto md:max-h-80 md:overflow-y-auto [container-type:inline-size]"
                                                 >
-                                                  <table className="w-full min-w-[720px] text-left border-separate border-spacing-0 text-xs">
+                                                  <table className="burn-detail-table w-full min-w-[680px] text-left border-separate border-spacing-0 text-xs">
                                                     <thead className="sticky top-0 z-[2]">
                                                       <tr>
                                                         <th
@@ -4000,7 +4012,7 @@ export default function App() {
                                                           <tr className="hover:bg-[var(--table-hover)]">
                                                             <th
                                                               scope="row"
-                                                              className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-medium text-[var(--ink-primary)] text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
+                                                              className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] max-w-[220px] lg:max-w-[280px] xl:max-w-[340px] py-2 px-2.5 font-mono font-medium text-[var(--ink-primary)] text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
                                                             >
                                                               <div className="inline-flex items-center gap-1.5">
                                                                 <span className="size-1.5 rounded-full bg-[var(--tool-antigravity)] shrink-0" />
@@ -4057,10 +4069,10 @@ export default function App() {
                                                             >
                                                               <th
                                                                 scope="row"
-                                                                className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-2 px-2.5 font-mono font-medium text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
+                                                                className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] max-w-[220px] lg:max-w-[280px] xl:max-w-[340px] py-2 px-2.5 font-mono font-medium text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
                                                                 style={{ color: subAccent }}
                                                               >
-                                                                <div className="inline-flex items-center gap-1.5">
+                                                                <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 min-w-0 max-w-full">
                                                                   {canExpandRuns ? (
                                                                     <ChevronRight
                                                                       className={`w-3 h-3 shrink-0 transition-transform duration-150 ease-burn-out motion-reduce:transition-none ${
@@ -4068,21 +4080,24 @@ export default function App() {
                                                                       }`}
                                                                     />
                                                                   ) : (
-                                                                    <span>↳</span>
+                                                                    <span className="shrink-0">↳</span>
                                                                   )}
                                                                   {isBtw ? (
                                                                     <MessageSquare className="w-3 h-3 shrink-0" />
                                                                   ) : (
                                                                     <Bot className="w-3 h-3 shrink-0" />
                                                                   )}
-                                                                  <span title={sub.subagentId}>
+                                                                  <span className="shrink-0" title={sub.subagentId}>
                                                                     {sub.subagentName}
                                                                     {canExpandRuns && sub.runs!.length > 1
                                                                       ? ` (${sub.runs!.length})`
                                                                       : ''}
                                                                   </span>
                                                                   {sub.models.length > 0 && (
-                                                                    <span className="text-[10px] font-normal text-[var(--ink-tertiary)]">
+                                                                    <span
+                                                                      className="text-[10px] font-normal text-[var(--ink-tertiary)] truncate"
+                                                                      title={sub.models.map((m) => m.modelLabel).join(', ')}
+                                                                    >
                                                                       ({sub.models.map((m) => m.modelLabel).join(', ')})
                                                                     </span>
                                                                   )}
@@ -4125,15 +4140,15 @@ export default function App() {
                                                                   <tr
                                                                     key={`${sub.subagentId}-${run.runId}`}
                                                                     style={{ animationDelay: runDelay }}
-                                                                    className="animate-burn-subrow bg-[var(--accent-sky-soft)] hover:brightness-105"
+                                                                    className="burn-detail-subrow animate-burn-subrow bg-[var(--accent-sky-soft)] hover:brightness-105"
                                                                   >
                                                                     <th
                                                                       scope="row"
-                                                                      className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] py-1.5 pl-8 pr-2.5 font-mono font-normal text-[11px] text-[var(--ink-primary)] text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
+                                                                      className="sticky left-0 z-[1] sticky-col-fade bg-[var(--bg-tooltip)] max-w-[220px] lg:max-w-[280px] xl:max-w-[340px] py-1.5 pl-8 pr-2.5 font-mono font-normal text-[11px] text-[var(--ink-primary)] text-left whitespace-nowrap border-b border-[var(--border-hairline)]"
                                                                     >
                                                                       <div
                                                                         style={{ animationDelay: runDelay }}
-                                                                        className="inline-flex items-center gap-1.5 min-w-0 animate-burn-subrow-inner"
+                                                                        className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 min-w-0 max-w-full animate-burn-subrow-inner"
                                                                       >
                                                                         <span className="text-[var(--accent-sky)] shrink-0">↳</span>
                                                                         <span
@@ -4207,7 +4222,7 @@ export default function App() {
 
               {tableData.workspaces.length === 0 && (
                 <tbody className="text-xs">
-                  <tr>
+                  <tr className="ws-empty-row">
                     <td colSpan={12} className="py-10 text-center text-[var(--ink-tertiary)] font-mono">
                       No matching workspaces or chats found.
                     </td>

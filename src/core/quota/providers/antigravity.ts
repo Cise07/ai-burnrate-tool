@@ -26,9 +26,18 @@ export function resolveAntigravityBinary(): string {
   if (override) return override;
 
   const home = os.homedir();
-  const binName = process.platform === 'win32' ? 'agy.exe' : 'agy';
-  const candidate = path.join(home, '.gemini', 'antigravity-cli', 'bin', binName);
-  if (fs.existsSync(candidate)) return candidate;
+  const isWin = process.platform === 'win32';
+  const binName = isWin ? 'agy.exe' : 'agy';
+  const candidates: string[] = [];
+  if (isWin) {
+    const localAppData = process.env.LOCALAPPDATA?.trim() || path.join(home, 'AppData', 'Local');
+    candidates.push(path.join(localAppData, 'agy', 'bin', binName));
+  }
+  candidates.push(path.join(home, '.gemini', 'antigravity-cli', 'bin', binName));
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
   return 'agy';
 }
 
@@ -243,7 +252,7 @@ export function parseAntigravityCliUsageJson(
     );
   }
 
-  const isExhausted = windows.some((w) => w.remainingPercent !== null && w.remainingPercent <= 0);
+  const isExhausted = isGeminiPoolExhausted(windows);
   return {
     provider: 'antigravity',
     planLabel: opts.planLabel ?? null,
@@ -322,7 +331,7 @@ export function parseAntigravityStatuslinePayload(
   if (windows.length === 0) return null;
   windows.sort((a, b) => windowSortRank(a) - windowSortRank(b));
 
-  const isExhausted = windows.some((w) => w.remainingPercent !== null && w.remainingPercent <= 0);
+  const isExhausted = isGeminiPoolExhausted(windows);
   return {
     provider: 'antigravity',
     planLabel,
@@ -343,6 +352,17 @@ export function parseAntigravityCreditsJson(rawInput: unknown): number | null {
   const data = cmd?.data && typeof cmd.data === 'object' ? (cmd.data as Record<string, unknown>) : null;
   const credits = data?.remaining_credits;
   return typeof credits === 'number' && Number.isFinite(credits) ? credits : null;
+}
+
+function getAntigravityPrimaryWindows(windows: QuotaWindow[]): QuotaWindow[] {
+  const geminiWindows = windows.filter((w) => w.groupId === 'gemini');
+  return geminiWindows.length > 0 ? geminiWindows : windows;
+}
+
+function isGeminiPoolExhausted(windows: QuotaWindow[]): boolean {
+  return getAntigravityPrimaryWindows(windows).some(
+    (w) => w.remainingPercent !== null && w.remainingPercent <= 0
+  );
 }
 
 export function projectAntigravitySnapshotAtTime(
@@ -367,11 +387,21 @@ export function projectAntigravitySnapshotAtTime(
   }
 
   const nowCorrected = evalNowMs + (stored.clockSkewMs ?? 0);
+  const anyPrimaryExpired = getAntigravityPrimaryWindows(stored.windows).some(
+    (w) => w.resetAtMs !== null && nowCorrected >= w.resetAtMs
+  );
   const anyExpired = stored.windows.some(
     (w) => w.resetAtMs !== null && nowCorrected >= w.resetAtMs
   );
 
-  const nextStatus = anyExpired && stored.status !== 'auth_error' ? 'stale' : stored.status;
+  const baseStatus: ProviderQuotaSnapshot['status'] =
+    stored.status === 'ok' || stored.status === 'exhausted'
+      ? isGeminiPoolExhausted(stored.windows)
+        ? 'exhausted'
+        : 'ok'
+      : stored.status;
+
+  const nextStatus = anyPrimaryExpired && baseStatus !== 'auth_error' ? 'stale' : baseStatus;
   return {
     snapshot: {
       ...stored,
@@ -400,6 +430,65 @@ function parseJsonFromStdout(stdout: string): unknown {
     }
     return null;
   }
+}
+
+function ensureIsolatedAgyProbeDir(): string {
+  const probeDir = path.join(os.homedir(), '.burnrate', '.agy-probe');
+  const agyDataDir = path.join(probeDir, '.gemini', 'antigravity-cli');
+  fs.mkdirSync(agyDataDir, { recursive: true, mode: 0o700 });
+  const tsFile = path.join(agyDataDir, 'last_check.timestamp');
+  try {
+    const now = new Date();
+    if (fs.existsSync(tsFile)) {
+      fs.utimesSync(tsFile, now, now);
+    } else {
+      fs.writeFileSync(tsFile, '', { mode: 0o600 });
+    }
+  } catch {
+    // ignore timestamp touch errors
+  }
+  return probeDir;
+}
+
+function isG1CreditsEnabled(geminiDir?: string): boolean {
+  try {
+    const baseGemini = geminiDir || path.join(os.homedir(), '.gemini');
+    const settingsPath = path.join(baseGemini, 'antigravity-cli', 'settings.json');
+    if (!fs.existsSync(settingsPath)) return false;
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { useG1Credits?: unknown };
+    return parsed?.useG1Credits === true;
+  } catch {
+    return false;
+  }
+}
+
+async function runAgySlashCommand(
+  agyBin: string,
+  slashCmd: '/usage' | '/credits',
+  opts: { probeDir: string; timeoutMs: number; maxBuffer: number; inheritEnv?: boolean }
+): Promise<{ stdout: string; stderr: string }> {
+  const args = [
+    '-p',
+    slashCmd,
+    '--output-format',
+    'json',
+    '--log-file',
+    path.join(opts.probeDir, 'probe.log'),
+  ];
+  const env = opts.inheritEnv
+    ? process.env
+    : {
+        ...process.env,
+        USERPROFILE: opts.probeDir,
+        HOME: opts.probeDir,
+      };
+  return execFileAsync(agyBin, args, {
+    timeout: opts.timeoutMs,
+    maxBuffer: opts.maxBuffer,
+    cwd: opts.probeDir,
+    env,
+    windowsHide: true,
+  });
 }
 
 export async function fetchAntigravityLiveQuota(opts: {
@@ -452,23 +541,29 @@ export async function fetchAntigravityLiveQuota(opts: {
 
   const agyBin = resolveAntigravityBinary();
   const timeout = opts.timeoutMs ?? 8000;
+  const probeDir = ensureIsolatedAgyProbeDir();
+  const fetchCredits = isG1CreditsEnabled(opts.geminiDir);
 
-  try {
+  const executeProbe = async (inheritEnv: boolean) => {
     const [usageRes, creditsRes] = await Promise.allSettled([
-      execFileAsync(agyBin, ['-p', '/usage', '--output-format', 'json'], {
-        timeout,
+      runAgySlashCommand(agyBin, '/usage', {
+        probeDir,
+        timeoutMs: timeout,
         maxBuffer: 2 * 1024 * 1024,
-        windowsHide: true,
+        inheritEnv,
       }),
-      execFileAsync(agyBin, ['-p', '/credits', '--output-format', 'json'], {
-        timeout: Math.min(timeout, 5000),
-        maxBuffer: 512 * 1024,
-        windowsHide: true,
-      }),
+      fetchCredits
+        ? runAgySlashCommand(agyBin, '/credits', {
+            probeDir,
+            timeoutMs: Math.min(timeout, 5000),
+            maxBuffer: 512 * 1024,
+            inheritEnv,
+          })
+        : Promise.resolve(null),
     ]);
 
     let creditsBalance: number | null = opts.previous?.creditsBalance ?? null;
-    if (creditsRes.status === 'fulfilled') {
+    if (creditsRes.status === 'fulfilled' && creditsRes.value) {
       const parsedCredits = parseAntigravityCreditsJson(parseJsonFromStdout(creditsRes.value.stdout));
       if (parsedCredits !== null) creditsBalance = parsedCredits;
     }
@@ -483,7 +578,11 @@ export async function fetchAntigravityLiveQuota(opts: {
           planLabel: previousPlanLabel,
           creditsBalance,
         });
-        return { snapshot: parsedErrSnap, rawPayloadSanitized: sanitizeRawPayload(stdoutParsed) };
+        return {
+          snapshot: parsedErrSnap,
+          rawPayloadSanitized: sanitizeRawPayload(stdoutParsed),
+          authFailed: parsedErrSnap.status === 'auth_error',
+        };
       }
 
       const rawMsg = (errObj?.stderr || errObj?.message || 'agy -p /usage failed').trim();
@@ -492,11 +591,12 @@ export async function fetchAntigravityLiveQuota(opts: {
         return {
           snapshot: {
             ...opts.previous,
-            status: 'stale',
+            status: 'stale' as const,
             serverNowMs: fetchedAtMs,
             error: { code: 'REFRESH_FAILED', message: rawMsg },
           },
           rawPayloadSanitized: loadQuotaStore().rawPayloads?.antigravity ?? null,
+          authFailed: false,
         };
       }
       return {
@@ -507,6 +607,7 @@ export async function fetchAntigravityLiveQuota(opts: {
           rawMsg
         ),
         rawPayloadSanitized: { error: rawMsg },
+        authFailed: authErr,
       };
     }
 
@@ -522,18 +623,30 @@ export async function fetchAntigravityLiveQuota(opts: {
       return {
         snapshot: {
           ...opts.previous,
-          status: 'stale',
+          status: 'stale' as const,
           serverNowMs: Date.now(),
           error: snap.error,
         },
         rawPayloadSanitized: sanitizeRawPayload(rawUsageJson),
+        authFailed: false,
       };
     }
 
     return {
       snapshot: snap,
       rawPayloadSanitized: sanitizeRawPayload(rawUsageJson),
+      authFailed: snap.status === 'auth_error',
     };
+  };
+
+  try {
+    const isolated = await executeProbe(false);
+    // On POSIX systems without an OS keyring, retry once with inherited HOME if isolated HOME lacked credentials
+    if (isolated.authFailed && process.platform !== 'win32') {
+      const inherited = await executeProbe(true);
+      return { snapshot: inherited.snapshot, rawPayloadSanitized: inherited.rawPayloadSanitized };
+    }
+    return { snapshot: isolated.snapshot, rawPayloadSanitized: isolated.rawPayloadSanitized };
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : 'Unexpected Antigravity fetch failure';
     return {

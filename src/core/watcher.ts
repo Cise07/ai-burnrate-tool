@@ -16,7 +16,13 @@ function stableQuotasFingerprint(quotas: BurnrateSnapshot['quotas']): string {
   const normalized: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(quotas)) {
     if (!v) continue;
-    const { serverNowMs: _ignoreNow, ...rest } = v;
+    // Exclude volatile timestamps so placeholder/unchanged snapshots never trigger spurious SSE updates
+    const {
+      serverNowMs: _ignoreNow,
+      fetchedAtMs: _ignoreFetched,
+      sourceUpdatedAtMs: _ignoreSourceUpdated,
+      ...rest
+    } = v;
     normalized[k] = rest;
   }
   return JSON.stringify(normalized);
@@ -26,7 +32,7 @@ function computeSnapshotFingerprint(snapshot: BurnrateSnapshot): string {
   const activePart = snapshot.sessions
     .map(
       (s) =>
-        `${s.source}:${s.sessionId}:${s.turns}:${s.totalTokens}:${Number(s.costUSD || 0).toFixed(4)}:${s.sessionTitle}`
+        `${s.source}:${s.sessionId}:${s.turns}:${s.totalTokens}:${Number(s.costUSD || 0).toFixed(4)}:${s.primaryModel}:${s.sessionTitle}`
     )
     .join('|');
   const deletedPart = (snapshot.deletedSessions || [])
@@ -36,8 +42,9 @@ function computeSnapshotFingerprint(snapshot: BurnrateSnapshot): string {
     )
     .join('|');
   const settingsPart = JSON.stringify(snapshot.settings || null);
+  const hooksPart = JSON.stringify(snapshot.hooksStatus || null);
   const quotaPart = stableQuotasFingerprint(snapshot.quotas);
-  return `${snapshot.sessions.length}#${(snapshot.deletedSessions || []).length}#${activePart}##${deletedPart}##${settingsPart}##${quotaPart}`;
+  return `${snapshot.sessions.length}#${(snapshot.deletedSessions || []).length}#${activePart}##${deletedPart}##${settingsPart}##${hooksPart}##${quotaPart}`;
 }
 
 function isRelevantWatchEvent(filePath: string, eventType: string): boolean {
@@ -117,19 +124,21 @@ export function startLogWatcher(
   const triggerUpdate = (eventType: string) => (filePath: string) => {
     if (!isRelevantWatchEvent(filePath, eventType)) return;
 
-    const changedTool = detectChangedProvider(filePath);
-    if (changedTool === 'antigravity' && (eventType === 'add' || eventType === 'change')) {
-      defaultQuotaEngine.notifyActivity('antigravity');
-    } else if (changedTool === 'codex' && (eventType === 'add' || eventType === 'change')) {
-      defaultQuotaEngine.notifyActivity('codex');
+    const norm = filePath.replace(/\\/g, '/').toLowerCase();
+    // Only real session transcript writes count as AI activity (ignore history.jsonl & SQLite WAL churn from agy itself)
+    if (eventType === 'add' || eventType === 'change') {
+      const changedTool = detectChangedProvider(filePath);
+      if (changedTool === 'antigravity' && norm.endsWith('/transcript.jsonl')) {
+        defaultQuotaEngine.notifyActivity('antigravity');
+      } else if (changedTool === 'codex' && norm.includes('/sessions/') && norm.endsWith('.jsonl')) {
+        defaultQuotaEngine.notifyActivity('codex');
+      }
     }
 
     lastChangedPath = toRelativeHomePath(filePath);
     if (debounceTimer) clearTimeout(debounceTimer);
-    const isNoiseProne =
-      eventType === 'change' && filePath.toLowerCase().includes('conversation_summaries.db');
     debounceTimer = setTimeout(() => {
-      runScanAndNotify(lastChangedPath, isNoiseProne);
+      runScanAndNotify(lastChangedPath, true);
     }, 180);
   };
 

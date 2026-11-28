@@ -113,14 +113,19 @@ function getStatusBadge(
 
 function pickBottleneckWindow(snap: ProviderQuotaSnapshot): QuotaWindow | null {
   if (!snap.windows || snap.windows.length === 0) return null;
+  const scoped =
+    snap.provider === 'antigravity'
+      ? snap.windows.filter((w) => w.groupId === 'gemini')
+      : snap.windows;
+  const candidates = scoped.length > 0 ? scoped : snap.windows;
   let worst: QuotaWindow | null = null;
-  for (const w of snap.windows) {
+  for (const w of candidates) {
     if (w.remainingPercent === null) continue;
     if (!worst || worst.remainingPercent === null || w.remainingPercent < worst.remainingPercent) {
       worst = w;
     }
   }
-  return worst ?? snap.windows[0];
+  return worst ?? candidates[0];
 }
 
 function windowPreviewRank(win: QuotaWindow): number {

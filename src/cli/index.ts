@@ -10,7 +10,7 @@ import { filterSessions, type TimeRange, type ToolFilter } from '../core/analyti
 import { exportBackupToFile, importBackupFromFile } from '../core/backup.js';
 import { resolveNpmUpdateSpec, runGlobalNpmCommand } from '../core/cli-security.js';
 import { installAutoArchiveHooks, uninstallAutoArchiveHooks } from '../core/hooks.js';
-import { getWatchRoots, scanAllLogs, syncSingleTranscriptToLedger } from '../core/parser.js';
+import { scanAllLogs, syncSingleTranscriptToLedger } from '../core/parser.js';
 import {
   getPackageRoot,
   PRICING_SYNC_TTL_MS,
@@ -41,6 +41,29 @@ function getPackageVersion(): string {
   } catch {
     return '1.0.0';
   }
+}
+
+function openBrowserSilently(url: string): Promise<void> {
+  if (
+    process.platform === 'win32' &&
+    /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)/i.test(url)
+  ) {
+    return new Promise((resolve, reject) => {
+      const child = spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.once('error', () => {
+        open(url).then(() => resolve(), reject);
+      });
+      child.once('spawn', () => {
+        child.unref();
+        resolve();
+      });
+    });
+  }
+  return open(url).then(() => undefined);
 }
 
 function renderTerminalQr(url: string, indent = '  '): string[] {
@@ -524,21 +547,26 @@ async function main() {
     installAutoArchiveHooks();
   }
 
-  if (loadUserSettings().experimentalQuota !== false) {
-    await defaultQuotaEngine.refreshAll({ force: false, reason: 'startup' });
-  }
-
-  const syncResult = await syncOfficialPricing();
-  if (syncResult.updated && syncResult.effectiveFrom && !(opts.cli && opts.json)) {
-    console.log(
-      `  ${pc.cyan('↻')} Official pricing updated (new tariff active for turns from ${pc.bold(syncResult.effectiveFrom)}; past turns preserved).`
-    );
-  }
-
-  const snapshot = scanAllLogs(true);
-
   if (opts.cli) {
-    printCliReport(snapshot, {
+    const quotaEnabled = loadUserSettings().experimentalQuota !== false;
+    const [, pricingOutcome] = await Promise.allSettled([
+      quotaEnabled
+        ? defaultQuotaEngine.refreshAll({ force: false, reason: 'cli' })
+        : Promise.resolve(null),
+      syncOfficialPricing(),
+    ]);
+    if (
+      pricingOutcome.status === 'fulfilled' &&
+      pricingOutcome.value.updated &&
+      pricingOutcome.value.effectiveFrom &&
+      !opts.json
+    ) {
+      console.log(
+        `  ${pc.cyan('↻')} Official pricing updated (new tariff active for turns from ${pc.bold(pricingOutcome.value.effectiveFrom)}; past turns preserved).`
+      );
+    }
+    const cliSnapshot = scanAllLogs(true);
+    printCliReport(cliSnapshot, {
       currency: opts.eur ? 'EUR' : 'USD',
       toolFilter: toolFilter as ToolFilter,
       timeRange: timeRange as TimeRange,
@@ -546,6 +574,8 @@ async function main() {
     });
     process.exit(0);
   }
+
+  const snapshot = scanAllLogs(true);
 
   const preferredPort = Number.parseInt(String(opts.port || '4321'), 10) || 4321;
   const launchDefaults: LaunchDefaults = {};
@@ -602,6 +632,11 @@ async function main() {
   );
   console.log(`  ${pc.dim('─'.repeat(58))}`);
   console.log(`  ${pc.bold('Dashboard URL:')}  ${pc.cyan(pc.underline(dashboardUrl))}`);
+  if (server.port !== preferredPort) {
+    console.log(
+      `  ${pc.yellow('!')} ${pc.yellow(`Port ${preferredPort} busy → bound to ${server.port} (close any older running \`burn\` terminal).`)}`
+    );
+  }
   if (server.localOnly) {
     console.log(`  ${pc.bold('Network Bind:')}   ${pc.dim(`127.0.0.1:${server.port} (local-only mode · --no-lan)`)}`);
   } else if (server.mdnsUrl) {
@@ -639,11 +674,27 @@ async function main() {
 
   if (opts.open !== false) {
     try {
-      await open(dashboardUrl);
+      await openBrowserSilently(dashboardUrl);
     } catch {
       console.log(`  ${pc.yellow('!')} Could not auto-open browser. Open ${pc.cyan(dashboardUrl)} manually.`);
     }
   }
+
+  // Non-blocking background sync for fresh telemetry & tariffs right after opening UI
+  if (loadUserSettings().experimentalQuota !== false) {
+    void defaultQuotaEngine
+      .refreshAll({ force: false, reason: 'startup' })
+      .then(() => server.broadcast(scanAllLogs(false), 'quota-startup'))
+      .catch(() => undefined);
+  }
+
+  void syncOfficialPricing()
+    .then((syncRes) => {
+      if (syncRes.updated) {
+        server.broadcast(scanAllLogs(true), 'pricing-startup');
+      }
+    })
+    .catch(() => undefined);
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {

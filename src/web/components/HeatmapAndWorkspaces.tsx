@@ -118,7 +118,7 @@ export function HeatmapAndWorkspaces({
           )}
         </div>
 
-        <div className="overflow-x-auto pb-1">
+        <div className="table-scroll overflow-x-auto pb-1">
           <div className="inline-flex flex-col gap-1.5 min-w-full">
             <div className="flex items-center pl-8 text-[10px] font-mono text-[var(--ink-tertiary)] h-4 relative">
               {monthLabels.map((m) => (

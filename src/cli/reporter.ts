@@ -311,7 +311,12 @@ export function printCliReport(snapshot: BurnrateSnapshot, options: CliReportOpt
 
     for (const q of providers) {
       const skew = q.clockSkewMs ?? 0;
-      const worstWin = q.windows.reduce<QuotaWindow | null>((best, w) => {
+      const headlineWindows =
+        q.provider === 'antigravity'
+          ? q.windows.filter((w) => w.groupId === 'gemini')
+          : q.windows;
+      const scopedWindows = headlineWindows.length > 0 ? headlineWindows : q.windows;
+      const worstWin = scopedWindows.reduce<QuotaWindow | null>((best, w) => {
         if (w.remainingPercent === null) return best;
         if (!best || best.remainingPercent === null || w.remainingPercent < best.remainingPercent) {
           return w;

@@ -61,6 +61,7 @@ export function runGlobalNpmCommand(args: string[], extraEnv: Record<string, str
     execFileSync(process.execPath, [npmCliScript, ...args], {
       stdio: 'inherit',
       shell: false,
+      windowsHide: true,
       env: mergedEnv,
     });
     return;
@@ -70,6 +71,7 @@ export function runGlobalNpmCommand(args: string[], extraEnv: Record<string, str
     const result = spawnSync('npm.cmd', args, {
       stdio: 'inherit',
       shell: true,
+      windowsHide: true,
       env: mergedEnv,
     });
     if (result.error) {
